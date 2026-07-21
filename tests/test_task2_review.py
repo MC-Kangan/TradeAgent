@@ -64,6 +64,49 @@ def test_skill_registry_rejects_nested_mutable_definitions_and_is_frozen() -> No
         registry._names = ("changed",)  # type: ignore[misc]
 
 
+def test_registry_snapshot_is_unaffected_by_builtin_class_reassignment() -> None:
+    instrument = InstrumentId(symbol="ACME", market="US")
+    prices = tuple(_price(index, float(index + 100), 100.0) for index in range(40))
+    providers = ProviderRegistry(
+        {
+            "fundamentals": StaticProvider(),
+            "prices": StaticProvider(prices=prices),
+        }
+    )
+    registry = SkillRegistry((FundamentalSkill(), TechnicalSkill()))
+    original_fundamental_name = FundamentalSkill.name
+    original_technical_name = TechnicalSkill.name
+    missing = object()
+    original_rsi_window = getattr(TechnicalSkill, "RSI_WINDOW", missing)
+    original_volume_window = getattr(TechnicalSkill, "VOLUME_WINDOW", missing)
+
+    try:
+        FundamentalSkill.name = "changed-fundamental"  # type: ignore[misc]
+        TechnicalSkill.name = "changed-technical"  # type: ignore[misc]
+        TechnicalSkill.RSI_WINDOW = 2  # type: ignore[attr-defined]
+        TechnicalSkill.VOLUME_WINDOW = 2  # type: ignore[attr-defined]
+
+        fundamental = registry.require("fundamental").analyze(instrument, providers)
+        technical = registry.require("technical").analyze(instrument, providers)
+    finally:
+        FundamentalSkill.name = original_fundamental_name  # type: ignore[misc]
+        TechnicalSkill.name = original_technical_name  # type: ignore[misc]
+        if original_rsi_window is missing:
+            delattr(TechnicalSkill, "RSI_WINDOW")
+        else:
+            TechnicalSkill.RSI_WINDOW = original_rsi_window  # type: ignore[attr-defined]
+        if original_volume_window is missing:
+            delattr(TechnicalSkill, "VOLUME_WINDOW")
+        else:
+            TechnicalSkill.VOLUME_WINDOW = original_volume_window  # type: ignore[attr-defined]
+
+    assert registry.names == ("fundamental", "technical")
+    assert fundamental.analyst == "fundamental"
+    assert technical.analyst == "technical"
+    assert any(item.metric == "relative_strength_index_14" for item in technical.observations)
+    assert any(item.metric == "volume_trend_20" for item in technical.observations)
+
+
 def test_fundamental_skill_calculates_complete_required_factor_set() -> None:
     instrument = InstrumentId(symbol="ACME", market="NASDAQ")
     observations = (
@@ -97,6 +140,61 @@ def test_fundamental_skill_calculates_complete_required_factor_set() -> None:
         "revenue_growth": 0.2,
     }
     assert result.summary == "complete data: all required inputs available"
+
+
+def test_fundamental_skill_rejects_incompatible_periods_currencies_and_snapshots() -> None:
+    instrument = InstrumentId(symbol="ACME", market="NASDAQ")
+    observations = (
+        _observation(instrument, "revenue", 120.0, period="current"),
+        _observation(
+            instrument,
+            "revenue",
+            100.0,
+            period="prior",
+            period_type="quarterly",
+            period_id="2024-Q4",
+        ),
+        _observation(
+            instrument,
+            "operating_income",
+            18.0,
+            period="current",
+            period_type="quarterly",
+            period_id="2025-Q4",
+        ),
+        _observation(
+            instrument,
+            "net_income",
+            12.0,
+            period="current",
+            currency="EUR",
+        ),
+        _observation(instrument, "shareholders_equity", 60.0, period="current"),
+        _observation(instrument, "free_cash_flow", 18.0, period="current"),
+        _observation(instrument, "total_debt", 30.0, period="current"),
+        _observation(
+            instrument,
+            "market_cap",
+            180.0,
+            snapshot_id="valuation-snapshot",
+        ),
+        _observation(instrument, "enterprise_value", 240.0),
+        _observation(instrument, "ebitda", 24.0, period="current"),
+    )
+
+    result = FundamentalSkill().analyze(
+        instrument,
+        ProviderRegistry({"fundamentals": StaticProvider(observations=observations)}),
+    )
+    metrics = {item.metric for item in result.observations}
+
+    assert "revenue_growth" not in metrics
+    assert "operating_margin" not in metrics
+    assert "net_margin" not in metrics
+    assert "return_on_equity" not in metrics
+    assert "price_to_earnings" not in metrics
+    assert result.summary.startswith("partial data")
+    assert "incompatible" in result.summary
 
 
 def test_factor_provenance_contains_exact_inputs_and_factor_specific_as_of() -> None:
@@ -138,6 +236,13 @@ def test_factor_provenance_contains_exact_inputs_and_factor_specific_as_of() -> 
         {
             "metric": "revenue",
             "period": "current",
+            "period_end": "2025-12-31",
+            "period_type": "annual",
+            "period_id": "FY2025",
+            "prior_period_id": "FY2024",
+            "snapshot_id": "snapshot-2026-01-01",
+            "currency": "USD",
+            "valuation_as_of": None,
             "observed_at": current.observed_at.isoformat(),
             "value": 120.0,
             "source": "bloomberg-mock",
@@ -146,6 +251,13 @@ def test_factor_provenance_contains_exact_inputs_and_factor_specific_as_of() -> 
         {
             "metric": "revenue",
             "period": "prior",
+            "period_end": "2024-12-31",
+            "period_type": "annual",
+            "period_id": "FY2024",
+            "prior_period_id": None,
+            "snapshot_id": "snapshot-2026-01-01",
+            "currency": "USD",
+            "valuation_as_of": None,
             "observed_at": prior.observed_at.isoformat(),
             "value": 100.0,
             "source": "bloomberg-mock",
@@ -225,6 +337,46 @@ def test_incomplete_ohlcv_produces_available_close_factors_and_partial_summary()
     assert result.summary.startswith("partial data")
 
 
+def test_derived_provenance_allow_list_drops_sensitive_structured_fields() -> None:
+    instrument = InstrumentId(symbol="ACME", market="US")
+    prices = tuple(
+        PricePoint(
+            observed_at=AS_OF + timedelta(days=index),
+            open=float(index + 99.5),
+            high=float(index + 101),
+            low=float(index + 99),
+            close=float(index + 100),
+            volume=100.0,
+            source="fixture-source",
+            provenance={
+                "field": "OHLCV",
+                "source_id": "safe-fixture",
+                "path": "/Users/alice-account/private/prices.csv",
+                "account_id": "broker-account-123",
+                "api_key": "secret-token",
+                "client_ip": "203.0.113.9",
+                "positions": "ACME:1000",
+            },
+        )
+        for index in range(40)
+    )
+
+    result = TechnicalSkill().analyze(
+        instrument, ProviderRegistry({"prices": StaticProvider(prices=prices)})
+    )
+    payload = result.model_dump_json()
+
+    assert "safe-fixture" in payload
+    for sensitive in (
+        "alice-account",
+        "broker-account-123",
+        "secret-token",
+        "203.0.113.9",
+        "ACME:1000",
+    ):
+        assert sensitive not in payload
+
+
 @pytest.mark.parametrize(
     ("provider", "instrument", "expected"),
     [
@@ -264,10 +416,26 @@ def _observation(
     period: str | None = None,
     observed_at: datetime = AS_OF,
     field: str | None = None,
+    period_end: str | None = None,
+    period_type: str = "annual",
+    period_id: str | None = None,
+    prior_period_id: str | None = None,
+    snapshot_id: str = "snapshot-2026-01-01",
+    currency: str = "USD",
+    valuation_as_of: str | None = None,
 ) -> Observation:
-    provenance = {}
+    provenance = {"snapshot_id": snapshot_id, "currency": currency}
     if period is not None:
         provenance["period"] = period
+        provenance["period_end"] = period_end or (
+            "2025-12-31" if period == "current" else "2024-12-31"
+        )
+        provenance["period_type"] = period_type
+        provenance["period_id"] = period_id or ("FY2025" if period == "current" else "FY2024")
+        if period == "current":
+            provenance["prior_period_id"] = prior_period_id or "FY2024"
+    else:
+        provenance["valuation_as_of"] = valuation_as_of or observed_at.isoformat()
     if field is not None:
         provenance["field"] = field
     return Observation(

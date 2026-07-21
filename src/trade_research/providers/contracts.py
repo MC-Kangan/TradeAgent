@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Literal, NotRequired, Protocol, TypedDict, runtime_checkable
 
 from trade_research.domain import Evidence, InstrumentId, Observation, Position
 
@@ -16,6 +16,30 @@ class ProviderConfigurationError(RuntimeError):
 
 class OptionalProviderDependencyError(ProviderConfigurationError):
     """Raised when an optional provider's dependency has not been installed."""
+
+
+class FundamentalStatementMetadata(TypedDict):
+    """Required provenance for one statement-period observation."""
+
+    snapshot_id: str
+    period: Literal["current", "prior"]
+    period_end: str
+    period_type: Literal["annual", "quarterly", "ttm"]
+    period_id: str
+    currency: str
+    prior_period_id: NotRequired[str]
+    field: NotRequired[str]
+    filing_id: NotRequired[str]
+
+
+class FundamentalValuationMetadata(TypedDict):
+    """Required provenance for a point-in-time market valuation observation."""
+
+    snapshot_id: str
+    valuation_as_of: str
+    currency: str
+    field: NotRequired[str]
+    provider_id: NotRequired[str]
 
 
 @dataclass(frozen=True)
@@ -50,7 +74,14 @@ class PriceProvider(Protocol):
 
 @runtime_checkable
 class FundamentalProvider(Protocol):
-    """A bounded capability for company or fund accounting observations."""
+    """A bounded capability for company or fund accounting observations.
+
+    Statement observations carry ``FundamentalStatementMetadata``. Market-cap
+    and enterprise-value observations carry ``FundamentalValuationMetadata``.
+    A valuation may be combined with a statement value only when currency and
+    snapshot identity match and its as-of timestamp falls between the statement
+    period end and the valuation observation's collection timestamp.
+    """
 
     def fundamentals(self, instrument: InstrumentId) -> tuple[Observation, ...]: ...
 

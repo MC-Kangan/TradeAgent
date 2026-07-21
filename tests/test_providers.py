@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import sqlite3
 from pathlib import Path
 
@@ -32,7 +33,10 @@ def test_local_csv_provider_returns_provenance_bearing_prices(tmp_path: Path) ->
 
     assert [price.close for price in prices] == [100.0]
     assert prices[0].source == "local-csv"
-    assert prices[0].provenance == {"path": str(path), "field": "close"}
+    assert prices[0].provenance["source_id"] == "local-csv"
+    assert prices[0].provenance["field"] == "close"
+    assert len(prices[0].provenance["reference_hash"]) == 64
+    assert str(path) not in json.dumps(dict(prices[0].provenance))
 
 
 def test_local_csv_provider_reads_complete_ohlcv_when_present(tmp_path: Path) -> None:
@@ -66,6 +70,30 @@ def test_local_csv_provider_reads_complete_ohlcv_when_present(tmp_path: Path) ->
         101.0,
         1000.0,
     )
+
+
+def test_local_provider_uses_source_handle_and_hash_not_account_bearing_path(
+    tmp_path: Path,
+) -> None:
+    account_directory = tmp_path / "Users" / "alice-account" / "private"
+    account_directory.mkdir(parents=True)
+    path = account_directory / "prices.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("symbol", "observed_at", "close"))
+        writer.writeheader()
+        writer.writerow(
+            {"symbol": "ACME", "observed_at": "2026-01-02T00:00:00+00:00", "close": "100"}
+        )
+
+    point = LocalCsvParquetPriceProvider(path, source_id="daily-prices").price_history(
+        InstrumentId(symbol="ACME", market="US")
+    )[0]
+    payload = json.dumps(dict(point.provenance), sort_keys=True)
+
+    assert point.provenance["source_id"] == "daily-prices"
+    assert len(point.provenance["reference_hash"]) == 64
+    assert "alice-account" not in payload
+    assert str(path) not in payload
 
 
 def test_sql_provider_uses_a_fixed_parameterized_read_only_query(tmp_path: Path) -> None:

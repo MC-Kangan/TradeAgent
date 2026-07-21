@@ -83,6 +83,40 @@ def test_observation_store_round_trips_parquet(tmp_path: Path) -> None:
     assert store.load(run_id) == observations
 
 
+def test_observation_store_allow_lists_provenance_before_persistence(tmp_path: Path) -> None:
+    store = ObservationStore(tmp_path / "observations")
+    run_id = uuid4()
+    observation = Observation(
+        instrument=InstrumentId(symbol="ACME", market="US"),
+        metric="close",
+        value=123.45,
+        source="fixture",
+        observed_at=datetime(2026, 7, 21, tzinfo=UTC),
+        provenance={
+            "dataset": "safe-prices",
+            "path": "/Users/alice-account/private/prices.csv",
+            "account_id": "broker-account-123",
+            "api_key": "secret-token",
+            "client_ip": "203.0.113.9",
+            "positions": [{"symbol": "ACME", "quantity": 1000}],
+        },
+    )
+
+    store.save(run_id, (observation,))
+    loaded = store.load(run_id)[0]
+    payload = loaded.model_dump_json()
+
+    assert loaded.provenance == {"dataset": "safe-prices"}
+    for sensitive in (
+        "alice-account",
+        "broker-account-123",
+        "secret-token",
+        "203.0.113.9",
+        "quantity",
+    ):
+        assert sensitive not in payload
+
+
 @pytest.mark.parametrize("run_id", ["/tmp/target", "../outside", "not-a-uuid"])
 def test_observation_store_rejects_non_uuid_run_ids(tmp_path: Path, run_id: str) -> None:
     store = ObservationStore(tmp_path / "observations")

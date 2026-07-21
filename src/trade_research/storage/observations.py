@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from trade_research.domain import Observation
+from trade_research.domain.provenance import sanitize_provenance
 
 
 class ObservationStore:
@@ -33,7 +34,12 @@ class ObservationStore:
     def save(self, run_id: UUID | str, observations: Iterable[Observation]) -> Path:
         """Write the given observations under one run identifier."""
         path = self.path_for(run_id)
-        rows = [observation.model_dump_json() for observation in observations]
+        rows = [
+            observation.model_copy(
+                update={"provenance": sanitize_provenance(observation.provenance)}
+            ).model_dump_json()
+            for observation in observations
+        ]
         pq.write_table(pa.table({"observation_json": rows}), path)
         return path
 

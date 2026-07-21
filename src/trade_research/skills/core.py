@@ -6,11 +6,13 @@ import math
 import statistics
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
+from datetime import UTC, date, datetime
 from types import MappingProxyType
-from typing import Any, ClassVar, Protocol, cast
+from typing import Any, Protocol, cast
 
 from trade_research.domain import AnalystResult, InstrumentId, Observation
+from trade_research.domain.provenance import sanitize_provider_reference
 from trade_research.providers import (
     FundamentalProvider,
     PricePoint,
@@ -68,7 +70,16 @@ class SkillRegistry:
 class FundamentalSkill:
     """Calculate the required growth, quality, cash-flow, and valuation factors."""
 
-    name: ClassVar[str] = "fundamental"
+    _name: str = field(default="fundamental", init=False, repr=False)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __getattribute__(self, attribute: str) -> object:
+        if attribute == "name":
+            return object.__getattribute__(self, "_name")
+        return object.__getattribute__(self, attribute)
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
         provider = cast(FundamentalProvider, providers.require("fundamentals"))
@@ -111,11 +122,28 @@ class FundamentalSkill:
             "operating_margin",
             operating_income,
             revenue,
+            compatibility="statement",
         )
-        _append_ratio(factors, missing, instrument, "net_margin", earnings, revenue)
-        _append_ratio(factors, missing, instrument, "return_on_equity", earnings, equity)
-        if free_cash_flow is None:
-            missing.append("free_cash_flow")
+        _append_ratio(
+            factors,
+            missing,
+            instrument,
+            "net_margin",
+            earnings,
+            revenue,
+            compatibility="statement",
+        )
+        _append_ratio(
+            factors,
+            missing,
+            instrument,
+            "return_on_equity",
+            earnings,
+            equity,
+            compatibility="statement",
+        )
+        if free_cash_flow is None or _statement_context(free_cash_flow) is None:
+            missing.append("free_cash_flow incompatible input metadata")
         else:
             factors.append(
                 _factor(
@@ -129,8 +157,17 @@ class FundamentalSkill:
             "free_cash_flow_margin",
             free_cash_flow,
             revenue,
+            compatibility="statement",
         )
-        _append_ratio(factors, missing, instrument, "leverage", debt, equity)
+        _append_ratio(
+            factors,
+            missing,
+            instrument,
+            "leverage",
+            debt,
+            equity,
+            compatibility="statement",
+        )
         _append_ratio(
             factors,
             missing,
@@ -138,6 +175,7 @@ class FundamentalSkill:
             "price_to_earnings",
             market_cap,
             earnings,
+            compatibility="valuation",
         )
         _append_ratio(
             factors,
@@ -146,6 +184,7 @@ class FundamentalSkill:
             "enterprise_value_to_ebitda",
             enterprise_value,
             ebitda,
+            compatibility="valuation",
         )
         _append_ratio(
             factors,
@@ -154,10 +193,11 @@ class FundamentalSkill:
             "free_cash_flow_yield",
             free_cash_flow,
             market_cap,
+            compatibility="valuation_inverse",
         )
 
         return AnalystResult(
-            analyst=self.name,
+            analyst=self._name,
             instrument=instrument,
             summary=_summary(missing),
             observations=tuple(factors),
@@ -168,22 +208,33 @@ class FundamentalSkill:
 class TechnicalSkill:
     """Calculate deterministic indicators from sorted, validated OHLCV history."""
 
-    name: ClassVar[str] = "technical"
     window: int = 20
-    RSI_WINDOW: ClassVar[int] = 14
-    MACD_FAST: ClassVar[int] = 12
-    MACD_SLOW: ClassVar[int] = 26
-    MACD_SIGNAL: ClassVar[int] = 9
-    ATR_WINDOW: ClassVar[int] = 14
-    MOMENTUM_WINDOW: ClassVar[int] = 10
-    VOLATILITY_WINDOW: ClassVar[int] = 20
-    VOLUME_WINDOW: ClassVar[int] = 20
-    BOLLINGER_DEVIATIONS: ClassVar[float] = 2.0
-    ANNUALIZATION_DAYS: ClassVar[int] = 252
+    _name: str = field(default="technical", init=False, repr=False)
+    _window: int = field(init=False, repr=False)
+    _rsi_window: int = field(default=14, init=False, repr=False)
+    _macd_fast: int = field(default=12, init=False, repr=False)
+    _macd_slow: int = field(default=26, init=False, repr=False)
+    _macd_signal: int = field(default=9, init=False, repr=False)
+    _atr_window: int = field(default=14, init=False, repr=False)
+    _momentum_window: int = field(default=10, init=False, repr=False)
+    _volatility_window: int = field(default=20, init=False, repr=False)
+    _volume_window: int = field(default=20, init=False, repr=False)
+    _bollinger_deviations: float = field(default=2.0, init=False, repr=False)
+    _annualization_days: int = field(default=252, init=False, repr=False)
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError("technical window must be at least two observations")
+        object.__setattr__(self, "_window", self.window)
+
+    def __getattribute__(self, attribute: str) -> object:
+        if attribute == "name":
+            return object.__getattribute__(self, "_name")
+        return object.__getattribute__(self, attribute)
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
         provider = cast(PriceProvider, providers.require("prices"))
@@ -211,8 +262,8 @@ class TechnicalSkill:
         else:
             missing.append("price_return")
 
-        if len(prices) >= self.window:
-            average_prices = prices[-self.window :]
+        if len(prices) >= self._window:
+            average_prices = prices[-self._window :]
             sma = statistics.fmean(point.close for point in average_prices)
             _append_price_factor(
                 factors,
@@ -221,97 +272,97 @@ class TechnicalSkill:
                 sma,
                 average_prices,
                 "close",
-                f"{self.window}_observations",
+                f"{self._window}_observations",
             )
             _append_price_factor(
                 factors,
                 instrument,
-                f"simple_moving_average_{self.window}",
+                f"simple_moving_average_{self._window}",
                 sma,
                 average_prices,
                 "close",
-                f"{self.window}_observations",
+                f"{self._window}_observations",
             )
-            ema = _ema_series([point.close for point in prices], self.window)[-1]
+            ema = _ema_series([point.close for point in prices], self._window)[-1]
             _append_price_factor(
                 factors,
                 instrument,
-                f"exponential_moving_average_{self.window}",
+                f"exponential_moving_average_{self._window}",
                 ema,
                 prices,
                 "close",
-                f"{self.window}_observations",
+                f"{self._window}_observations",
             )
             deviation = statistics.pstdev(point.close for point in average_prices)
             _append_price_factor(
                 factors,
                 instrument,
-                f"bollinger_middle_{self.window}",
+                f"bollinger_middle_{self._window}",
                 sma,
                 average_prices,
                 "close",
-                f"{self.window}_observations",
+                f"{self._window}_observations",
             )
             _append_price_factor(
                 factors,
                 instrument,
-                f"bollinger_upper_{self.window}_2",
-                sma + self.BOLLINGER_DEVIATIONS * deviation,
+                f"bollinger_upper_{self._window}_2",
+                sma + self._bollinger_deviations * deviation,
                 average_prices,
                 "close",
-                f"{self.window}_observations_2_standard_deviations",
+                f"{self._window}_observations_2_standard_deviations",
             )
             _append_price_factor(
                 factors,
                 instrument,
-                f"bollinger_lower_{self.window}_2",
-                sma - self.BOLLINGER_DEVIATIONS * deviation,
+                f"bollinger_lower_{self._window}_2",
+                sma - self._bollinger_deviations * deviation,
                 average_prices,
                 "close",
-                f"{self.window}_observations_2_standard_deviations",
+                f"{self._window}_observations_2_standard_deviations",
             )
         else:
             missing.extend(
                 ("simple_moving_average", "exponential_moving_average", "bollinger_bands")
             )
 
-        if len(prices) >= self.RSI_WINDOW + 1:
+        if len(prices) >= self._rsi_window + 1:
             _append_price_factor(
                 factors,
                 instrument,
-                f"relative_strength_index_{self.RSI_WINDOW}",
-                _rsi([point.close for point in prices], self.RSI_WINDOW),
+                f"relative_strength_index_{self._rsi_window}",
+                _rsi([point.close for point in prices], self._rsi_window),
                 prices,
                 "close",
-                f"wilder_{self.RSI_WINDOW}_observations",
+                f"wilder_{self._rsi_window}_observations",
             )
         else:
             missing.append("relative_strength_index")
 
         macd_values = _macd_series(
-            [point.close for point in prices], self.MACD_FAST, self.MACD_SLOW
+            [point.close for point in prices], self._macd_fast, self._macd_slow
         )
-        if len(macd_values) >= self.MACD_SIGNAL:
-            signal_values = _ema_series(macd_values, self.MACD_SIGNAL)
+        if len(macd_values) >= self._macd_signal:
+            signal_values = _ema_series(macd_values, self._macd_signal)
             macd = macd_values[-1]
             signal = signal_values[-1]
             _append_price_factor(
                 factors,
                 instrument,
-                f"macd_{self.MACD_FAST}_{self.MACD_SLOW}",
+                f"macd_{self._macd_fast}_{self._macd_slow}",
                 macd,
                 prices,
                 "close",
-                f"ema_{self.MACD_FAST}_minus_ema_{self.MACD_SLOW}",
+                f"ema_{self._macd_fast}_minus_ema_{self._macd_slow}",
             )
             _append_price_factor(
                 factors,
                 instrument,
-                f"macd_signal_{self.MACD_SIGNAL}",
+                f"macd_signal_{self._macd_signal}",
                 signal,
                 prices,
                 "close",
-                f"ema_{self.MACD_SIGNAL}_of_macd",
+                f"ema_{self._macd_signal}_of_macd",
             )
             _append_price_factor(
                 factors,
@@ -326,70 +377,70 @@ class TechnicalSkill:
             missing.append("macd")
 
         ohlcv_prices = tuple(point for point in prices if _has_complete_ohlcv(point))
-        if len(ohlcv_prices) >= self.ATR_WINDOW:
+        if len(ohlcv_prices) >= self._atr_window:
             _append_price_factor(
                 factors,
                 instrument,
-                f"average_true_range_{self.ATR_WINDOW}",
-                _atr(ohlcv_prices, self.ATR_WINDOW),
+                f"average_true_range_{self._atr_window}",
+                _atr(ohlcv_prices, self._atr_window),
                 ohlcv_prices,
                 "ohlcv",
-                f"wilder_{self.ATR_WINDOW}_observations",
+                f"wilder_{self._atr_window}_observations",
             )
         else:
             missing.append("average_true_range")
 
-        if len(prices) >= self.MOMENTUM_WINDOW + 1:
-            momentum_prices = (prices[-self.MOMENTUM_WINDOW - 1], prices[-1])
+        if len(prices) >= self._momentum_window + 1:
+            momentum_prices = (prices[-self._momentum_window - 1], prices[-1])
             _append_price_factor(
                 factors,
                 instrument,
-                f"momentum_{self.MOMENTUM_WINDOW}",
+                f"momentum_{self._momentum_window}",
                 momentum_prices[-1].close / momentum_prices[0].close - 1,
                 momentum_prices,
                 "close",
-                f"{self.MOMENTUM_WINDOW}_period_return",
+                f"{self._momentum_window}_period_return",
             )
         else:
             missing.append("momentum")
 
-        if len(prices) >= self.VOLATILITY_WINDOW + 1:
-            volatility_prices = prices[-self.VOLATILITY_WINDOW - 1 :]
+        if len(prices) >= self._volatility_window + 1:
+            volatility_prices = prices[-self._volatility_window - 1 :]
             returns = [
                 volatility_prices[index].close / volatility_prices[index - 1].close - 1
                 for index in range(1, len(volatility_prices))
             ]
-            volatility = statistics.stdev(returns) * math.sqrt(self.ANNUALIZATION_DAYS)
+            volatility = statistics.stdev(returns) * math.sqrt(self._annualization_days)
             _append_price_factor(
                 factors,
                 instrument,
-                f"annualized_volatility_{self.VOLATILITY_WINDOW}",
+                f"annualized_volatility_{self._volatility_window}",
                 volatility,
                 volatility_prices,
                 "close",
-                f"{self.VOLATILITY_WINDOW}_returns_sqrt_{self.ANNUALIZATION_DAYS}",
+                f"{self._volatility_window}_returns_sqrt_{self._annualization_days}",
             )
         else:
             missing.append("annualized_volatility")
 
         volume_prices = tuple(point for point in prices if point.volume is not None)
-        if len(volume_prices) >= self.VOLUME_WINDOW * 2:
-            volume_window_prices = volume_prices[-self.VOLUME_WINDOW * 2 :]
+        if len(volume_prices) >= self._volume_window * 2:
+            volume_window_prices = volume_prices[-self._volume_window * 2 :]
             prior_average = statistics.fmean(
-                cast(float, point.volume) for point in volume_window_prices[: self.VOLUME_WINDOW]
+                cast(float, point.volume) for point in volume_window_prices[: self._volume_window]
             )
             current_average = statistics.fmean(
-                cast(float, point.volume) for point in volume_window_prices[self.VOLUME_WINDOW :]
+                cast(float, point.volume) for point in volume_window_prices[self._volume_window :]
             )
             if prior_average != 0:
                 _append_price_factor(
                     factors,
                     instrument,
-                    f"volume_trend_{self.VOLUME_WINDOW}",
+                    f"volume_trend_{self._volume_window}",
                     current_average / prior_average - 1,
                     volume_window_prices,
                     "volume",
-                    f"last_{self.VOLUME_WINDOW}_versus_prior_{self.VOLUME_WINDOW}",
+                    f"last_{self._volume_window}_versus_prior_{self._volume_window}",
                 )
             else:
                 missing.append("volume_trend non-zero prior volume")
@@ -397,7 +448,7 @@ class TechnicalSkill:
             missing.append("volume_trend")
 
         return AnalystResult(
-            analyst=self.name,
+            analyst=self._name,
             instrument=instrument,
             summary=_summary(missing),
             observations=tuple(factors),
@@ -468,6 +519,9 @@ def _append_growth(
     if current is None or prior is None or _numeric_value(prior) == 0:
         missing.append(metric)
         return
+    if not _compatible_growth(current, prior):
+        missing.append(f"{metric} incompatible input metadata")
+        return
     value = (_numeric_value(current) - _numeric_value(prior)) / _numeric_value(prior)
     factors.append(_factor(instrument, metric, value, (current, prior)))
 
@@ -479,9 +533,22 @@ def _append_ratio(
     metric: str,
     numerator: Observation | None,
     denominator: Observation | None,
+    *,
+    compatibility: str,
 ) -> None:
     if numerator is None or denominator is None or _numeric_value(denominator) == 0:
         missing.append(metric)
+        return
+    if compatibility == "statement":
+        compatible = _compatible_statement_ratio(numerator, denominator)
+    elif compatibility == "valuation":
+        compatible = _compatible_valuation(numerator, denominator)
+    elif compatibility == "valuation_inverse":
+        compatible = _compatible_valuation(denominator, numerator)
+    else:  # pragma: no cover - internal call sites use fixed compatibility modes.
+        raise ValueError(f"unknown compatibility mode '{compatibility}'")
+    if not compatible:
+        missing.append(f"{metric} incompatible input metadata")
         return
     factors.append(
         _factor(
@@ -510,18 +577,157 @@ def _factor(
 
 
 def _observation_input(observation: Observation) -> dict[str, object]:
-    period = observation.provenance.get("period")
-    provider_reference = {
-        key: value for key, value in observation.provenance.items() if key != "period"
-    }
+    provider_reference = sanitize_provider_reference(observation.provenance)
     return {
         "metric": observation.metric,
-        "period": period,
+        "period": observation.provenance.get("period"),
+        "period_end": observation.provenance.get("period_end"),
+        "period_type": observation.provenance.get("period_type"),
+        "period_id": observation.provenance.get("period_id"),
+        "prior_period_id": observation.provenance.get("prior_period_id"),
+        "snapshot_id": observation.provenance.get("snapshot_id"),
+        "currency": observation.provenance.get("currency"),
+        "valuation_as_of": observation.provenance.get("valuation_as_of"),
         "observed_at": observation.observed_at.isoformat(),
         "value": observation.value,
         "source": observation.source,
         "provider_reference": provider_reference,
     }
+
+
+@dataclass(frozen=True, slots=True)
+class _StatementContext:
+    snapshot_id: str
+    period: str
+    period_end: date
+    period_type: str
+    period_id: str
+    prior_period_id: str | None
+    currency: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ValuationContext:
+    snapshot_id: str
+    valuation_as_of: datetime
+    currency: str
+
+
+def _statement_context(observation: Observation) -> _StatementContext | None:
+    provenance = observation.provenance
+    snapshot_id = _metadata_text(provenance.get("snapshot_id"))
+    period = _metadata_text(provenance.get("period"))
+    period_end_value = _metadata_text(provenance.get("period_end"))
+    period_type = _metadata_text(provenance.get("period_type"))
+    period_id = _metadata_text(provenance.get("period_id"))
+    currency = _metadata_text(provenance.get("currency"))
+    prior_period_id = _metadata_text(provenance.get("prior_period_id"))
+    if (
+        snapshot_id is None
+        or period not in {"current", "prior"}
+        or period_end_value is None
+        or period_type not in {"annual", "quarterly", "ttm"}
+        or period_id is None
+        or currency is None
+        or len(currency) != 3
+        or not currency.isalpha()
+        or currency != currency.upper()
+    ):
+        return None
+    try:
+        period_end = date.fromisoformat(period_end_value)
+    except ValueError:
+        return None
+    return _StatementContext(
+        snapshot_id=snapshot_id,
+        period=period,
+        period_end=period_end,
+        period_type=period_type,
+        period_id=period_id,
+        prior_period_id=prior_period_id,
+        currency=currency,
+    )
+
+
+def _valuation_context(observation: Observation) -> _ValuationContext | None:
+    provenance = observation.provenance
+    snapshot_id = _metadata_text(provenance.get("snapshot_id"))
+    valuation_as_of_value = _metadata_text(provenance.get("valuation_as_of"))
+    currency = _metadata_text(provenance.get("currency"))
+    if (
+        snapshot_id is None
+        or valuation_as_of_value is None
+        or currency is None
+        or len(currency) != 3
+        or not currency.isalpha()
+        or currency != currency.upper()
+    ):
+        return None
+    try:
+        valuation_as_of = datetime.fromisoformat(valuation_as_of_value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            valuation_as_of = datetime.combine(
+                date.fromisoformat(valuation_as_of_value), datetime.min.time(), tzinfo=UTC
+            )
+        except ValueError:
+            return None
+    if valuation_as_of.tzinfo is None or observation.observed_at.tzinfo is None:
+        return None
+    return _ValuationContext(
+        snapshot_id=snapshot_id,
+        valuation_as_of=valuation_as_of,
+        currency=currency,
+    )
+
+
+def _compatible_growth(current: Observation, prior: Observation) -> bool:
+    current_context = _statement_context(current)
+    prior_context = _statement_context(prior)
+    return (
+        current_context is not None
+        and prior_context is not None
+        and current_context.period == "current"
+        and prior_context.period == "prior"
+        and current_context.snapshot_id == prior_context.snapshot_id
+        and current_context.period_type == prior_context.period_type
+        and current_context.currency == prior_context.currency
+        and current_context.prior_period_id == prior_context.period_id
+        and current_context.period_end > prior_context.period_end
+    )
+
+
+def _compatible_statement_ratio(left: Observation, right: Observation) -> bool:
+    left_context = _statement_context(left)
+    right_context = _statement_context(right)
+    if left_context is None or right_context is None:
+        return False
+    return (
+        left_context.period == "current"
+        and right_context.period == "current"
+        and left_context.snapshot_id == right_context.snapshot_id
+        and left_context.period_end == right_context.period_end
+        and left_context.period_type == right_context.period_type
+        and left_context.period_id == right_context.period_id
+        and left_context.currency == right_context.currency
+    )
+
+
+def _compatible_valuation(market_value: Observation, statement_value: Observation) -> bool:
+    valuation = _valuation_context(market_value)
+    statement = _statement_context(statement_value)
+    if valuation is None or statement is None or statement.period != "current":
+        return False
+    statement_end = datetime.combine(statement.period_end, datetime.min.time(), tzinfo=UTC)
+    return (
+        valuation.snapshot_id == statement.snapshot_id
+        and valuation.currency == statement.currency
+        and statement_end <= valuation.valuation_as_of <= market_value.observed_at
+    )
+
+
+def _metadata_text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _validated_prices(
@@ -608,7 +814,7 @@ def _price_input(point: PricePoint, metric: str) -> dict[str, object]:
         "timestamp": point.observed_at.isoformat(),
         "value": value,
         "source": point.source,
-        "provider_reference": dict(point.provenance),
+        "provider_reference": sanitize_provider_reference(point.provenance),
     }
 
 

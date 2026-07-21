@@ -3,6 +3,8 @@
 from trade_research.providers.contracts import (
     FilingProvider,
     FundamentalProvider,
+    FundamentalStatementMetadata,
+    FundamentalValuationMetadata,
     OptionalProviderDependencyError,
     PortfolioProvider,
     PricePoint,
@@ -27,6 +29,8 @@ __all__ = [
     "CcxtPriceProvider",
     "FilingProvider",
     "FundamentalProvider",
+    "FundamentalStatementMetadata",
+    "FundamentalValuationMetadata",
     "LocalCsvParquetPriceProvider",
     "LocalPortfolioProvider",
     "OptionalProviderDependencyError",

@@ -24,9 +24,9 @@ class BloombergShapedMock:
         return (
             _observation(instrument, "revenue", 120.0, self.as_of, {"period": "current"}),
             _observation(instrument, "revenue", 100.0, self.as_of, {"period": "prior"}),
-            _observation(instrument, "net_income", 12.0, self.as_of),
+            _observation(instrument, "net_income", 12.0, self.as_of, {"period": "current"}),
             _observation(instrument, "market_cap", 180.0, self.as_of),
-            _observation(instrument, "free_cash_flow", 18.0, self.as_of),
+            _observation(instrument, "free_cash_flow", 18.0, self.as_of, {"period": "current"}),
         )
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
@@ -108,11 +108,26 @@ def _observation(
     observed_at: datetime,
     provenance: dict[str, str] | None = None,
 ) -> Observation:
+    metadata = dict(provenance or {})
+    period = metadata.get("period")
+    metadata.update({"snapshot_id": "snapshot-2026-01-01", "currency": "USD"})
+    if period in {"current", "prior"}:
+        metadata.update(
+            {
+                "period_end": "2025-12-31" if period == "current" else "2024-12-31",
+                "period_type": "annual",
+                "period_id": "FY2025" if period == "current" else "FY2024",
+            }
+        )
+        if period == "current":
+            metadata["prior_period_id"] = "FY2024"
+    else:
+        metadata["valuation_as_of"] = observed_at.isoformat()
     return Observation(
         instrument=instrument,
         metric=metric,
         value=value,
         source="bloomberg-mock",
         observed_at=observed_at,
-        provenance=provenance or {},
+        provenance=metadata,
     )
