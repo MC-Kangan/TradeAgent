@@ -13,3 +13,4 @@ __pycache__/
 
 # Retained only as ignored reference material.
 third_party/
+.superpowers/
