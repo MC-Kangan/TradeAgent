@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import FrozenInstanceError, dataclass
 from datetime import UTC, datetime, timedelta
 from math import isfinite
@@ -235,33 +236,38 @@ def test_factor_provenance_contains_exact_inputs_and_factor_specific_as_of() -> 
     assert factor.provenance["inputs"] == [
         {
             "metric": "revenue",
-            "period": "current",
+            "period_role": "current",
             "period_end": "2025-12-31",
             "period_type": "annual",
-            "period_id": "FY2025",
-            "prior_period_id": "FY2024",
-            "snapshot_id": "snapshot-2026-01-01",
+            "period_ref": _reference("FY2025"),
+            "prior_period_ref": _reference("FY2024"),
+            "snapshot_ref": _reference("snapshot-2026-01-01"),
             "currency": "USD",
-            "valuation_as_of": None,
             "observed_at": current.observed_at.isoformat(),
             "value": 120.0,
-            "source": "bloomberg-mock",
-            "provider_reference": {"field": "REVENUE_CURRENT"},
+            "provider_kind": "bloomberg",
+            "provider_reference": {
+                "provider_kind": "bloomberg",
+                "vendor_field": "REVENUE_CURRENT",
+                "reference": _reference(f"revenue:current:{current.observed_at.isoformat()}"),
+            },
         },
         {
             "metric": "revenue",
-            "period": "prior",
+            "period_role": "prior",
             "period_end": "2024-12-31",
             "period_type": "annual",
-            "period_id": "FY2024",
-            "prior_period_id": None,
-            "snapshot_id": "snapshot-2026-01-01",
+            "period_ref": _reference("FY2024"),
+            "snapshot_ref": _reference("snapshot-2026-01-01"),
             "currency": "USD",
-            "valuation_as_of": None,
             "observed_at": prior.observed_at.isoformat(),
             "value": 100.0,
-            "source": "bloomberg-mock",
-            "provider_reference": {"field": "REVENUE_PRIOR"},
+            "provider_kind": "bloomberg",
+            "provider_reference": {
+                "provider_kind": "bloomberg",
+                "vendor_field": "REVENUE_PRIOR",
+                "reference": _reference(f"revenue:prior:{prior.observed_at.isoformat()}"),
+            },
         },
     ]
 
@@ -321,8 +327,12 @@ def test_incomplete_ohlcv_produces_available_close_factors_and_partial_summary()
         PricePoint(
             observed_at=AS_OF + timedelta(days=index),
             close=float(index + 1),
-            source="legacy-provider",
-            provenance={"field": "PX_LAST"},
+            source="internal",
+            provenance={
+                "provider_kind": "internal",
+                "vendor_field": "PX_LAST",
+                "reference": _reference(f"legacy:{index}"),
+            },
         )
         for index in range(20)
     )
@@ -347,10 +357,11 @@ def test_derived_provenance_allow_list_drops_sensitive_structured_fields() -> No
             low=float(index + 99),
             close=float(index + 100),
             volume=100.0,
-            source="fixture-source",
+            source="fixture",
             provenance={
-                "field": "OHLCV",
-                "source_id": "safe-fixture",
+                "provider_kind": "fixture",
+                "vendor_field": "OHLCV",
+                "reference": _reference(f"safe-fixture:{index}"),
                 "path": "/Users/alice-account/private/prices.csv",
                 "account_id": "broker-account-123",
                 "api_key": "secret-token",
@@ -366,7 +377,8 @@ def test_derived_provenance_allow_list_drops_sensitive_structured_fields() -> No
     )
     payload = result.model_dump_json()
 
-    assert "safe-fixture" in payload
+    assert "fixture" in payload
+    assert "sha256:" in payload
     for sensitive in (
         "alice-account",
         "broker-account-123",
@@ -424,25 +436,34 @@ def _observation(
     currency: str = "USD",
     valuation_as_of: str | None = None,
 ) -> Observation:
-    provenance = {"snapshot_id": snapshot_id, "currency": currency}
+    provenance = {
+        "provider_kind": "bloomberg",
+        "snapshot_ref": _reference(snapshot_id),
+        "currency": currency,
+        "reference": _reference(f"{metric}:{period or 'valuation'}:{observed_at.isoformat()}"),
+    }
     if period is not None:
-        provenance["period"] = period
+        provenance["period_role"] = period
         provenance["period_end"] = period_end or (
             "2025-12-31" if period == "current" else "2024-12-31"
         )
         provenance["period_type"] = period_type
-        provenance["period_id"] = period_id or ("FY2025" if period == "current" else "FY2024")
+        provenance["period_ref"] = _reference(
+            period_id or ("FY2025" if period == "current" else "FY2024")
+        )
         if period == "current":
-            provenance["prior_period_id"] = prior_period_id or "FY2024"
+            provenance["prior_period_ref"] = _reference(prior_period_id or "FY2024")
     else:
         provenance["valuation_as_of"] = valuation_as_of or observed_at.isoformat()
     if field is not None:
-        provenance["field"] = field
+        provenance["vendor_field"] = field
+    else:
+        provenance["vendor_field"] = metric.upper()
     return Observation(
         instrument=instrument,
         metric=metric,
         value=value,
-        source="bloomberg-mock",
+        source="bloomberg",
         observed_at=observed_at,
         provenance=provenance,
     )
@@ -457,5 +478,13 @@ def _price(index: int, close: float, volume: float) -> PricePoint:
         close=close,
         volume=volume,
         source="fixture",
-        provenance={"field": "OHLCV", "row": str(index)},
+        provenance={
+            "provider_kind": "fixture",
+            "vendor_field": "OHLCV",
+            "reference": _reference(f"price:{index}"),
+        },
     )
+
+
+def _reference(value: str) -> str:
+    return f"sha256:{hashlib.sha256(value.encode()).hexdigest()}"

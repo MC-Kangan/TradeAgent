@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import Any, Protocol, cast
 
 from trade_research.domain import AnalystResult, InstrumentId, Observation
-from trade_research.domain.provenance import sanitize_provider_reference
+from trade_research.domain.provenance import normalize_provider_kind, sanitize_provider_reference
 from trade_research.providers import (
     FundamentalProvider,
     PricePoint,
@@ -274,53 +274,56 @@ class TechnicalSkill:
                 "close",
                 f"{self._window}_observations",
             )
-            _append_price_factor(
-                factors,
-                instrument,
-                f"simple_moving_average_{self._window}",
-                sma,
-                average_prices,
-                "close",
-                f"{self._window}_observations",
-            )
-            ema = _ema_series([point.close for point in prices], self._window)[-1]
-            _append_price_factor(
-                factors,
-                instrument,
-                f"exponential_moving_average_{self._window}",
-                ema,
-                prices,
-                "close",
-                f"{self._window}_observations",
-            )
-            deviation = statistics.pstdev(point.close for point in average_prices)
-            _append_price_factor(
-                factors,
-                instrument,
-                f"bollinger_middle_{self._window}",
-                sma,
-                average_prices,
-                "close",
-                f"{self._window}_observations",
-            )
-            _append_price_factor(
-                factors,
-                instrument,
-                f"bollinger_upper_{self._window}_2",
-                sma + self._bollinger_deviations * deviation,
-                average_prices,
-                "close",
-                f"{self._window}_observations_2_standard_deviations",
-            )
-            _append_price_factor(
-                factors,
-                instrument,
-                f"bollinger_lower_{self._window}_2",
-                sma - self._bollinger_deviations * deviation,
-                average_prices,
-                "close",
-                f"{self._window}_observations_2_standard_deviations",
-            )
+            if self._window == 20:
+                _append_price_factor(
+                    factors,
+                    instrument,
+                    "simple_moving_average_20",
+                    sma,
+                    average_prices,
+                    "close",
+                    "20_observations",
+                )
+                ema = _ema_series([point.close for point in prices], 20)[-1]
+                _append_price_factor(
+                    factors,
+                    instrument,
+                    "exponential_moving_average_20",
+                    ema,
+                    prices,
+                    "close",
+                    "20_observations",
+                )
+                deviation = statistics.pstdev(point.close for point in average_prices)
+                _append_price_factor(
+                    factors,
+                    instrument,
+                    "bollinger_middle_20",
+                    sma,
+                    average_prices,
+                    "close",
+                    "20_observations",
+                )
+                _append_price_factor(
+                    factors,
+                    instrument,
+                    "bollinger_upper_20_2",
+                    sma + self._bollinger_deviations * deviation,
+                    average_prices,
+                    "close",
+                    "20_observations_2_standard_deviations",
+                )
+                _append_price_factor(
+                    factors,
+                    instrument,
+                    "bollinger_lower_20_2",
+                    sma - self._bollinger_deviations * deviation,
+                    average_prices,
+                    "close",
+                    "20_observations_2_standard_deviations",
+                )
+            else:
+                missing.extend(("ema_20", "bollinger_bands_20"))
         else:
             missing.extend(
                 ("simple_moving_average", "exponential_moving_average", "bollinger_bands")
@@ -493,7 +496,7 @@ def _select_metric(
             for observation in observations
             if observation.metric == metric
             and _is_finite_number(observation.value)
-            and (period is None or observation.provenance.get("period") == period)
+            and (period is None or observation.provenance.get("period_role") == period)
         ]
         if not candidates and period == "current":
             candidates = [
@@ -501,7 +504,7 @@ def _select_metric(
                 for observation in observations
                 if observation.metric == metric
                 and _is_finite_number(observation.value)
-                and "period" not in observation.provenance
+                and "period_role" not in observation.provenance
             ]
         if candidates:
             return max(candidates, key=lambda observation: observation.observed_at)
@@ -570,7 +573,7 @@ def _factor(
         instrument=instrument,
         metric=metric,
         value=round(value, 10),
-        source="fundamental-skill",
+        source="derived",
         observed_at=max(item.observed_at for item in inputs),
         provenance={"inputs": [_observation_input(item) for item in inputs]},
     )
@@ -580,17 +583,17 @@ def _observation_input(observation: Observation) -> dict[str, object]:
     provider_reference = sanitize_provider_reference(observation.provenance)
     return {
         "metric": observation.metric,
-        "period": observation.provenance.get("period"),
+        "period_role": observation.provenance.get("period_role"),
         "period_end": observation.provenance.get("period_end"),
         "period_type": observation.provenance.get("period_type"),
-        "period_id": observation.provenance.get("period_id"),
-        "prior_period_id": observation.provenance.get("prior_period_id"),
-        "snapshot_id": observation.provenance.get("snapshot_id"),
+        "period_ref": observation.provenance.get("period_ref"),
+        "prior_period_ref": observation.provenance.get("prior_period_ref"),
+        "snapshot_ref": observation.provenance.get("snapshot_ref"),
         "currency": observation.provenance.get("currency"),
         "valuation_as_of": observation.provenance.get("valuation_as_of"),
         "observed_at": observation.observed_at.isoformat(),
         "value": observation.value,
-        "source": observation.source,
+        "provider_kind": observation.source.value,
         "provider_reference": provider_reference,
     }
 
@@ -615,13 +618,13 @@ class _ValuationContext:
 
 def _statement_context(observation: Observation) -> _StatementContext | None:
     provenance = observation.provenance
-    snapshot_id = _metadata_text(provenance.get("snapshot_id"))
-    period = _metadata_text(provenance.get("period"))
+    snapshot_id = _metadata_text(provenance.get("snapshot_ref"))
+    period = _metadata_text(provenance.get("period_role"))
     period_end_value = _metadata_text(provenance.get("period_end"))
     period_type = _metadata_text(provenance.get("period_type"))
-    period_id = _metadata_text(provenance.get("period_id"))
+    period_id = _metadata_text(provenance.get("period_ref"))
     currency = _metadata_text(provenance.get("currency"))
-    prior_period_id = _metadata_text(provenance.get("prior_period_id"))
+    prior_period_id = _metadata_text(provenance.get("prior_period_ref"))
     if (
         snapshot_id is None
         or period not in {"current", "prior"}
@@ -651,7 +654,7 @@ def _statement_context(observation: Observation) -> _StatementContext | None:
 
 def _valuation_context(observation: Observation) -> _ValuationContext | None:
     provenance = observation.provenance
-    snapshot_id = _metadata_text(provenance.get("snapshot_id"))
+    snapshot_id = _metadata_text(provenance.get("snapshot_ref"))
     valuation_as_of_value = _metadata_text(provenance.get("valuation_as_of"))
     currency = _metadata_text(provenance.get("currency"))
     if (
@@ -781,19 +784,16 @@ def _append_price_factor(
     value: float,
     prices: Sequence[PricePoint],
     input_metric: str,
-    lookback: str,
+    _lookback: str,
 ) -> None:
     factors.append(
         Observation(
             instrument=instrument,
             metric=metric,
             value=round(value, 10),
-            source="technical-skill",
+            source="derived",
             observed_at=max(point.observed_at for point in prices),
-            provenance={
-                "lookback": lookback,
-                "inputs": [_price_input(point, input_metric) for point in prices],
-            },
+            provenance={"inputs": [_price_input(point, input_metric) for point in prices]},
         )
     )
 
@@ -813,7 +813,7 @@ def _price_input(point: PricePoint, metric: str) -> dict[str, object]:
         "metric": metric,
         "timestamp": point.observed_at.isoformat(),
         "value": value,
-        "source": point.source,
+        "provider_kind": normalize_provider_kind(point.source).value,
         "provider_reference": sanitize_provider_reference(point.provenance),
     }
 

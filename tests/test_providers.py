@@ -32,10 +32,11 @@ def test_local_csv_provider_returns_provenance_bearing_prices(tmp_path: Path) ->
     )
 
     assert [price.close for price in prices] == [100.0]
-    assert prices[0].source == "local-csv"
-    assert prices[0].provenance["source_id"] == "local-csv"
-    assert prices[0].provenance["field"] == "close"
-    assert len(prices[0].provenance["reference_hash"]) == 64
+    assert prices[0].source == "local_csv"
+    assert prices[0].provenance["provider_kind"] == "local_csv"
+    assert prices[0].provenance["vendor_field"] == "CLOSE"
+    assert prices[0].provenance["reference"].startswith("sha256:")
+    assert len(prices[0].provenance["reference"]) == 71
     assert str(path) not in json.dumps(dict(prices[0].provenance))
 
 
@@ -72,7 +73,7 @@ def test_local_csv_provider_reads_complete_ohlcv_when_present(tmp_path: Path) ->
     )
 
 
-def test_local_provider_uses_source_handle_and_hash_not_account_bearing_path(
+def test_local_provider_uses_provider_kind_and_hash_not_account_bearing_path(
     tmp_path: Path,
 ) -> None:
     account_directory = tmp_path / "Users" / "alice-account" / "private"
@@ -85,13 +86,14 @@ def test_local_provider_uses_source_handle_and_hash_not_account_bearing_path(
             {"symbol": "ACME", "observed_at": "2026-01-02T00:00:00+00:00", "close": "100"}
         )
 
-    point = LocalCsvParquetPriceProvider(path, source_id="daily-prices").price_history(
+    point = LocalCsvParquetPriceProvider(path).price_history(
         InstrumentId(symbol="ACME", market="US")
     )[0]
     payload = json.dumps(dict(point.provenance), sort_keys=True)
 
-    assert point.provenance["source_id"] == "daily-prices"
-    assert len(point.provenance["reference_hash"]) == 64
+    assert point.provenance["provider_kind"] == "local_csv"
+    assert point.provenance["reference"].startswith("sha256:")
+    assert len(point.provenance["reference"]) == 71
     assert "alice-account" not in payload
     assert str(path) not in payload
 

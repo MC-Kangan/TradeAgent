@@ -1,78 +1,174 @@
-"""Structural provenance allow-list shared by reports and persistence."""
+"""Closed, typed provenance schema shared by reports and persistence."""
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Mapping
+from datetime import date, datetime
+from enum import StrEnum
 from typing import cast
 
 from pydantic import JsonValue
 
-_ROOT_SCALAR_FIELDS = frozenset(
+
+class ProviderKind(StrEnum):
+    """Provider identities permitted to cross report and persistence boundaries."""
+
+    LOCAL_CSV = "local_csv"
+    LOCAL_PARQUET = "local_parquet"
+    LOCAL_SQL = "local_sql"
+    YAHOO = "yahoo"
+    STOOQ = "stooq"
+    SEC = "sec"
+    CCXT = "ccxt"
+    BLOOMBERG = "bloomberg"
+    INTERNAL = "internal"
+    FIXTURE = "fixture"
+    DERIVED = "derived"
+
+
+class MetricKind(StrEnum):
+    """Raw and derived v1 metrics permitted in observations and provenance."""
+
+    OPEN = "open"
+    HIGH = "high"
+    LOW = "low"
+    CLOSE = "close"
+    VOLUME = "volume"
+    OHLCV = "ohlcv"
+    REVENUE = "revenue"
+    NET_INCOME = "net_income"
+    EARNINGS = "earnings"
+    OPERATING_INCOME = "operating_income"
+    SHAREHOLDERS_EQUITY = "shareholders_equity"
+    TOTAL_EQUITY = "total_equity"
+    FREE_CASH_FLOW = "free_cash_flow"
+    TOTAL_DEBT = "total_debt"
+    MARKET_CAP = "market_cap"
+    ENTERPRISE_VALUE = "enterprise_value"
+    EBITDA = "ebitda"
+    GROSS_PROFIT = "gross_profit"
+    REVENUE_GROWTH = "revenue_growth"
+    EARNINGS_GROWTH = "earnings_growth"
+    OPERATING_MARGIN = "operating_margin"
+    NET_MARGIN = "net_margin"
+    RETURN_ON_EQUITY = "return_on_equity"
+    FREE_CASH_FLOW_MARGIN = "free_cash_flow_margin"
+    LEVERAGE = "leverage"
+    PRICE_TO_EARNINGS = "price_to_earnings"
+    ENTERPRISE_VALUE_TO_EBITDA = "enterprise_value_to_ebitda"
+    FREE_CASH_FLOW_YIELD = "free_cash_flow_yield"
+    PRICE_RETURN = "price_return"
+    SIMPLE_MOVING_AVERAGE = "simple_moving_average"
+    SIMPLE_MOVING_AVERAGE_20 = "simple_moving_average_20"
+    EXPONENTIAL_MOVING_AVERAGE_20 = "exponential_moving_average_20"
+    RELATIVE_STRENGTH_INDEX_14 = "relative_strength_index_14"
+    MACD_12_26 = "macd_12_26"
+    MACD_SIGNAL_9 = "macd_signal_9"
+    MACD_HISTOGRAM = "macd_histogram"
+    BOLLINGER_MIDDLE_20 = "bollinger_middle_20"
+    BOLLINGER_UPPER_20_2 = "bollinger_upper_20_2"
+    BOLLINGER_LOWER_20_2 = "bollinger_lower_20_2"
+    AVERAGE_TRUE_RANGE_14 = "average_true_range_14"
+    MOMENTUM_10 = "momentum_10"
+    ANNUALIZED_VOLATILITY_20 = "annualized_volatility_20"
+    VOLUME_TREND_20 = "volume_trend_20"
+
+
+class VendorField(StrEnum):
+    """Known v1 source fields; arbitrary vendor labels are never propagated."""
+
+    OHLCV = "OHLCV"
+    OPEN = "OPEN"
+    HIGH = "HIGH"
+    LOW = "LOW"
+    CLOSE = "CLOSE"
+    VOLUME = "VOLUME"
+    PX_LAST = "PX_LAST"
+    REVENUE = "REVENUE"
+    REVENUE_CURRENT = "REVENUE_CURRENT"
+    REVENUE_PRIOR = "REVENUE_PRIOR"
+    NET_INCOME = "NET_INCOME"
+    EARNINGS = "EARNINGS"
+    OPERATING_INCOME = "OPERATING_INCOME"
+    SHAREHOLDERS_EQUITY = "SHAREHOLDERS_EQUITY"
+    TOTAL_EQUITY = "TOTAL_EQUITY"
+    FREE_CASH_FLOW = "FREE_CASH_FLOW"
+    TOTAL_DEBT = "TOTAL_DEBT"
+    MARKET_CAP = "MARKET_CAP"
+    ENTERPRISE_VALUE = "ENTERPRISE_VALUE"
+    EBITDA = "EBITDA"
+    GROSS_PROFIT = "GROSS_PROFIT"
+
+
+class PeriodType(StrEnum):
+    ANNUAL = "annual"
+    QUARTERLY = "quarterly"
+    TTM = "ttm"
+
+
+class PeriodRole(StrEnum):
+    CURRENT = "current"
+    PRIOR = "prior"
+
+
+_REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+_CURRENCY_PATTERN = re.compile(r"[A-Z]{3}")
+_REFERENCE_KEYS = frozenset({"reference", "period_ref", "prior_period_ref", "snapshot_ref"})
+_TIMESTAMP_KEYS = frozenset({"observed_at", "timestamp", "valuation_as_of"})
+_CLOSED_SCALAR_KEYS = frozenset(
     {
-        "currency",
-        "dataset",
-        "field",
-        "filing_id",
-        "interval",
-        "lookback",
-        "period",
-        "period_end",
-        "period_id",
-        "period_type",
-        "prior_period_id",
-        "provider_id",
-        "reference_hash",
-        "row",
-        "snapshot_id",
-        "source_id",
-        "symbol",
-        "table",
-        "timeframe",
-        "valuation_as_of",
-    }
-)
-_INPUT_SCALAR_FIELDS = frozenset(
-    {
-        "currency",
+        "provider_kind",
         "metric",
-        "observed_at",
-        "period",
-        "period_end",
-        "period_id",
+        "vendor_field",
         "period_type",
-        "prior_period_id",
-        "snapshot_id",
-        "source",
-        "timestamp",
-        "valuation_as_of",
+        "period_role",
+        "currency",
+        "period_end",
+        *_TIMESTAMP_KEYS,
+        *_REFERENCE_KEYS,
     }
 )
-_REFERENCE_FIELDS = frozenset(
-    {
-        "dataset",
-        "endpoint",
-        "field",
-        "filing_id",
-        "interval",
-        "provider_id",
-        "reference_hash",
-        "row",
-        "source_id",
-        "symbol",
-        "table",
-        "timeframe",
-    }
-)
+_REFERENCE_FIELDS = frozenset({"provider_kind", "vendor_field", "reference"})
 _OHLCV_FIELDS = frozenset({"close", "high", "low", "open", "volume"})
 
 
+def normalize_provider_kind(value: object) -> ProviderKind:
+    """Normalize a known provider kind or reject a free-form source label."""
+
+    if isinstance(value, ProviderKind):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("source must be a known provider kind")
+    try:
+        return ProviderKind(value.strip().lower())
+    except ValueError as error:
+        raise ValueError("source must be a known provider kind") from error
+
+
+def normalize_metric_kind(value: object) -> MetricKind:
+    """Normalize a known v1 metric or reject a free-form metric label."""
+
+    if isinstance(value, MetricKind):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("metric must be a known v1 metric")
+    try:
+        return MetricKind(value.strip().lower())
+    except ValueError as error:
+        raise ValueError("metric must be a known v1 metric") from error
+
+
 def sanitize_provenance(provenance: Mapping[str, object]) -> dict[str, JsonValue]:
-    """Keep only documented structured metadata fields and value shapes."""
+    """Retain only values accepted by the closed typed provenance schema."""
 
     sanitized: dict[str, JsonValue] = {}
     for key, value in provenance.items():
-        if key in _ROOT_SCALAR_FIELDS and _is_scalar(value):
-            sanitized[key] = cast(JsonValue, value)
+        if key in _CLOSED_SCALAR_KEYS:
+            validated = _sanitize_scalar(key, value)
+            if validated is not None:
+                sanitized[key] = validated
         elif key == "inputs" and isinstance(value, list | tuple):
             sanitized["inputs"] = [
                 item
@@ -83,46 +179,103 @@ def sanitize_provenance(provenance: Mapping[str, object]) -> dict[str, JsonValue
 
 
 def sanitize_provider_reference(provenance: Mapping[str, object]) -> dict[str, JsonValue]:
-    """Return only bounded provider handles, never filesystem or account metadata."""
+    """Retain only provider kind, known vendor field, and opaque content hash."""
 
-    return {
-        key: cast(JsonValue, value)
-        for key, value in provenance.items()
-        if key in _REFERENCE_FIELDS and _is_scalar(value)
-    }
+    sanitized = sanitize_provenance(provenance)
+    return {key: value for key, value in sanitized.items() if key in _REFERENCE_FIELDS}
 
 
 def _sanitize_input(value: object) -> dict[str, JsonValue] | None:
     if not isinstance(value, Mapping):
         return None
-    sanitized: dict[str, JsonValue] = {}
-    for key, candidate in value.items():
-        if not isinstance(key, str):
-            continue
-        if key in _INPUT_SCALAR_FIELDS and _is_scalar(candidate):
-            sanitized[key] = cast(JsonValue, candidate)
-        elif key == "value":
-            sanitized_value = _sanitize_input_value(candidate)
-            if sanitized_value is not None:
-                sanitized["value"] = sanitized_value
-        elif key == "provider_reference" and isinstance(candidate, Mapping):
-            sanitized["provider_reference"] = sanitize_provider_reference(
-                {str(item_key): item_value for item_key, item_value in candidate.items()}
-            )
+    sanitized = sanitize_provenance(
+        {str(key): candidate for key, candidate in value.items() if isinstance(key, str)}
+    )
+    if "value" in value:
+        sanitized_value = _sanitize_input_value(value["value"])
+        if sanitized_value is not None:
+            sanitized["value"] = sanitized_value
+    provider_reference = value.get("provider_reference")
+    if isinstance(provider_reference, Mapping):
+        sanitized["provider_reference"] = sanitize_provider_reference(
+            {
+                str(key): candidate
+                for key, candidate in provider_reference.items()
+                if isinstance(key, str)
+            }
+        )
     return sanitized
 
 
 def _sanitize_input_value(value: object) -> JsonValue | None:
-    if _is_scalar(value):
+    if _is_finite_number(value):
         return cast(JsonValue, value)
     if isinstance(value, Mapping):
         return {
             str(key): cast(JsonValue, candidate)
             for key, candidate in value.items()
-            if isinstance(key, str) and key in _OHLCV_FIELDS and _is_scalar(candidate)
+            if isinstance(key, str) and key in _OHLCV_FIELDS and _is_finite_number(candidate)
         }
     return None
 
 
-def _is_scalar(value: object) -> bool:
-    return value is None or isinstance(value, str | int | float | bool)
+def _enum_value(value: object, enum_type: type[StrEnum]) -> JsonValue | None:
+    if not isinstance(value, str | StrEnum):
+        return None
+    text = str(value)
+    try:
+        return cast(JsonValue, enum_type(text).value)
+    except ValueError:
+        return None
+
+
+def _sanitize_scalar(key: str, value: object) -> JsonValue | None:
+    if key == "provider_kind":
+        return _enum_value(value, ProviderKind)
+    if key == "metric":
+        return _enum_value(value, MetricKind)
+    if key == "vendor_field":
+        return _enum_value(value, VendorField)
+    if key == "period_type":
+        return _enum_value(value, PeriodType)
+    if key == "period_role":
+        return _enum_value(value, PeriodRole)
+    if key == "currency":
+        return _pattern_value(value, _CURRENCY_PATTERN)
+    if key == "period_end":
+        return _iso_date(value)
+    if key in _TIMESTAMP_KEYS:
+        return _iso_timestamp(value)
+    if key in _REFERENCE_KEYS:
+        return _pattern_value(value, _REFERENCE_PATTERN)
+    return None
+
+
+def _pattern_value(value: object, pattern: re.Pattern[str]) -> JsonValue | None:
+    return cast(JsonValue, value) if isinstance(value, str) and pattern.fullmatch(value) else None
+
+
+def _iso_date(value: object) -> JsonValue | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return cast(JsonValue, parsed.isoformat()) if parsed.isoformat() == value else None
+
+
+def _iso_timestamp(value: object) -> JsonValue | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return cast(JsonValue, parsed.isoformat())
+
+
+def _is_finite_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)

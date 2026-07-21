@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+
+from trade_research.domain.provenance import (
+    MetricKind,
+    ProviderKind,
+    normalize_metric_kind,
+    normalize_provider_kind,
+    sanitize_provenance,
+)
 
 SUPPORTED_MARKETS = frozenset(
     {
@@ -95,11 +104,30 @@ class Observation(DomainModel):
     """One provenance-bearing fact used as research input."""
 
     instrument: InstrumentId
-    metric: NonEmptyText
+    metric: MetricKind
     value: JsonValue
-    source: NonEmptyText
+    source: ProviderKind
     observed_at: datetime
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("metric", mode="before")
+    @classmethod
+    def validate_metric(cls, value: object) -> MetricKind:
+        return normalize_metric_kind(value)
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def validate_source(cls, value: object) -> ProviderKind:
+        return normalize_provider_kind(value)
+
+    @field_validator("provenance", mode="before")
+    @classmethod
+    def validate_provenance(cls, value: object) -> dict[str, JsonValue]:
+        if not isinstance(value, Mapping):
+            raise ValueError("provenance must be structured metadata")
+        return sanitize_provenance(
+            {str(key): candidate for key, candidate in value.items() if isinstance(key, str)}
+        )
 
 
 class Evidence(DomainModel):

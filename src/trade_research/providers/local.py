@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime
@@ -18,9 +17,8 @@ from trade_research.providers.contracts import PricePoint, ProviderConfiguration
 class LocalCsvParquetPriceProvider:
     """Read a narrow, documented price schema from local CSV or Parquet files."""
 
-    def __init__(self, path: Path, *, source_id: str | None = None) -> None:
+    def __init__(self, path: Path) -> None:
         self._path = path.resolve()
-        self._source_id = _source_id(source_id, f"local-{self._path.suffix.lstrip('.').lower()}")
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
         rows = self._rows()
@@ -29,11 +27,11 @@ class LocalCsvParquetPriceProvider:
             PricePoint(
                 observed_at=_parse_datetime(str(row["observed_at"])),
                 close=float(row["close"]),
-                source=f"local-{self._path.suffix.lstrip('.').lower()}",
+                source=f"local_{self._path.suffix.lstrip('.').lower()}",
                 provenance={
-                    "source_id": self._source_id,
-                    "reference_hash": reference_hash,
-                    "field": "OHLCV" if row.get("open") is not None else "close",
+                    "provider_kind": f"local_{self._path.suffix.lstrip('.').lower()}",
+                    "reference": reference_hash,
+                    "vendor_field": "OHLCV" if row.get("open") is not None else "CLOSE",
                 },
                 open=_optional_number(row.get("open")),
                 high=_optional_number(row.get("high")),
@@ -62,9 +60,8 @@ class LocalCsvParquetPriceProvider:
 class ReadOnlySqlPriceProvider:
     """Read only from the fixed ``prices`` table using a parameterized query."""
 
-    def __init__(self, database_path: Path, *, source_id: str | None = None) -> None:
+    def __init__(self, database_path: Path) -> None:
         self._database_path = database_path.resolve()
-        self._source_id = _source_id(source_id, "local-sql")
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
         if not self._database_path.is_file():
@@ -94,12 +91,11 @@ class ReadOnlySqlPriceProvider:
             PricePoint(
                 observed_at=_parse_datetime(str(observed_at)),
                 close=float(close),
-                source="local-sql",
+                source="local_sql",
                 provenance={
-                    "source_id": self._source_id,
-                    "reference_hash": reference_hash,
-                    "table": "prices",
-                    "field": "OHLCV" if open_value is not None else "close",
+                    "provider_kind": "local_sql",
+                    "reference": reference_hash,
+                    "vendor_field": "OHLCV" if open_value is not None else "CLOSE",
                 },
                 open=_optional_number(open_value),
                 high=_optional_number(high),
@@ -131,18 +127,9 @@ def _optional_number(value: object) -> float | None:
     return None if value in (None, "") else float(cast(Any, value))
 
 
-def _source_id(configured: str | None, default: str) -> str:
-    source_id = configured or default
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", source_id) is None:
-        raise ProviderConfigurationError(
-            "source_id must be a non-sensitive handle using letters, digits, '.', '_', ':', or '-'"
-        )
-    return source_id
-
-
 def _reference_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+    return f"sha256:{digest.hexdigest()}"

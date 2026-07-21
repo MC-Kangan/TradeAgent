@@ -5,9 +5,20 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, NotRequired, Protocol, TypedDict, runtime_checkable
+from types import MappingProxyType
+from typing import NotRequired, Protocol, TypedDict, runtime_checkable
+
+from pydantic import JsonValue
 
 from trade_research.domain import Evidence, InstrumentId, Observation, Position
+from trade_research.domain.provenance import (
+    PeriodRole,
+    PeriodType,
+    ProviderKind,
+    VendorField,
+    normalize_provider_kind,
+    sanitize_provenance,
+)
 
 
 class ProviderConfigurationError(RuntimeError):
@@ -21,25 +32,27 @@ class OptionalProviderDependencyError(ProviderConfigurationError):
 class FundamentalStatementMetadata(TypedDict):
     """Required provenance for one statement-period observation."""
 
-    snapshot_id: str
-    period: Literal["current", "prior"]
+    provider_kind: ProviderKind
+    snapshot_ref: str
+    period_role: PeriodRole
     period_end: str
-    period_type: Literal["annual", "quarterly", "ttm"]
-    period_id: str
+    period_type: PeriodType
+    period_ref: str
     currency: str
-    prior_period_id: NotRequired[str]
-    field: NotRequired[str]
-    filing_id: NotRequired[str]
+    prior_period_ref: NotRequired[str]
+    vendor_field: NotRequired[VendorField]
+    reference: NotRequired[str]
 
 
 class FundamentalValuationMetadata(TypedDict):
     """Required provenance for a point-in-time market valuation observation."""
 
-    snapshot_id: str
+    provider_kind: ProviderKind
+    snapshot_ref: str
     valuation_as_of: str
     currency: str
-    field: NotRequired[str]
-    provider_id: NotRequired[str]
+    vendor_field: NotRequired[VendorField]
+    reference: NotRequired[str]
 
 
 @dataclass(frozen=True)
@@ -53,12 +66,20 @@ class PricePoint:
 
     observed_at: datetime
     close: float
-    source: str
-    provenance: Mapping[str, str] = field(default_factory=dict)
+    source: ProviderKind | str
+    provenance: Mapping[str, JsonValue] = field(default_factory=dict)
     open: float | None = None
     high: float | None = None
     low: float | None = None
     volume: float | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source", normalize_provider_kind(self.source))
+        object.__setattr__(
+            self,
+            "provenance",
+            MappingProxyType(sanitize_provenance(self.provenance)),
+        )
 
 
 @runtime_checkable

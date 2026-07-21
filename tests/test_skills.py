@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -34,8 +35,12 @@ class BloombergShapedMock:
             PricePoint(
                 observed_at=self.as_of + timedelta(days=index),
                 close=close,
-                source="bloomberg-mock",
-                provenance={"field": "PX_LAST"},
+                source="bloomberg",
+                provenance={
+                    "provider_kind": "bloomberg",
+                    "vendor_field": "PX_LAST",
+                    "reference": _reference(f"price:{index}"),
+                },
             )
             for index, close in enumerate((100.0, 105.0, 110.0))
         )
@@ -109,25 +114,38 @@ def _observation(
     provenance: dict[str, str] | None = None,
 ) -> Observation:
     metadata = dict(provenance or {})
-    period = metadata.get("period")
-    metadata.update({"snapshot_id": "snapshot-2026-01-01", "currency": "USD"})
+    period = metadata.pop("period", None)
+    metadata.update(
+        {
+            "provider_kind": "bloomberg",
+            "snapshot_ref": _reference("snapshot-2026-01-01"),
+            "currency": "USD",
+            "vendor_field": metric.upper(),
+            "reference": _reference(f"{metric}:{period or 'valuation'}"),
+        }
+    )
     if period in {"current", "prior"}:
         metadata.update(
             {
+                "period_role": period,
                 "period_end": "2025-12-31" if period == "current" else "2024-12-31",
                 "period_type": "annual",
-                "period_id": "FY2025" if period == "current" else "FY2024",
+                "period_ref": _reference("FY2025" if period == "current" else "FY2024"),
             }
         )
         if period == "current":
-            metadata["prior_period_id"] = "FY2024"
+            metadata["prior_period_ref"] = _reference("FY2024")
     else:
         metadata["valuation_as_of"] = observed_at.isoformat()
     return Observation(
         instrument=instrument,
         metric=metric,
         value=value,
-        source="bloomberg-mock",
+        source="bloomberg",
         observed_at=observed_at,
         provenance=metadata,
     )
+
+
+def _reference(value: str) -> str:
+    return f"sha256:{hashlib.sha256(value.encode()).hexdigest()}"

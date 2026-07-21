@@ -11,6 +11,8 @@ import pytest
 from trade_research.domain import AnalysisRequest, InstrumentId, Observation, Position
 from trade_research.storage import ObservationStore, RunStore
 
+REFERENCE = "sha256:" + "a" * 64
+
 
 def test_run_store_enables_wal_and_persists_only_safe_request_dto(tmp_path: Path) -> None:
     database_path = tmp_path / "runs.sqlite3"
@@ -73,7 +75,11 @@ def test_observation_store_round_trips_parquet(tmp_path: Path) -> None:
             value=123.45,
             source="fixture",
             observed_at=datetime(2026, 7, 21, tzinfo=UTC),
-            provenance={"dataset": "prices"},
+            provenance={
+                "provider_kind": "fixture",
+                "vendor_field": "CLOSE",
+                "reference": REFERENCE,
+            },
         ),
     )
 
@@ -106,7 +112,7 @@ def test_observation_store_allow_lists_provenance_before_persistence(tmp_path: P
     loaded = store.load(run_id)[0]
     payload = loaded.model_dump_json()
 
-    assert loaded.provenance == {"dataset": "safe-prices"}
+    assert loaded.provenance == {}
     for sensitive in (
         "alice-account",
         "broker-account-123",
