@@ -20,17 +20,30 @@ class OptionalProviderDependencyError(ProviderConfigurationError):
 
 @dataclass(frozen=True)
 class PricePoint:
-    """One close price, including the source material needed to reproduce it."""
+    """One timestamped OHLCV sample with immutable provider provenance.
+
+    ``open``, ``high``, ``low``, and ``volume`` remain optional so close-only
+    provider implementations continue to satisfy the public protocol. Skills
+    label results partial when those fields are required by an indicator.
+    """
 
     observed_at: datetime
     close: float
     source: str
     provenance: Mapping[str, str] = field(default_factory=dict)
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: float | None = None
 
 
 @runtime_checkable
 class PriceProvider(Protocol):
-    """A bounded historical-price capability; callers cannot supply SQL or URLs."""
+    """A bounded historical OHLCV capability.
+
+    Providers may return samples in any order. Consumers must sort and validate
+    timestamps, duplicates, finite values, and OHLCV relationships.
+    """
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]: ...
 

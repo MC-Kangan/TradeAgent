@@ -20,6 +20,7 @@ from trade_research.providers.remote import (
     SecFilingsProvider,
     StooqPriceProvider,
     YahooPriceProvider,
+    resolve_provider_symbol,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "SecFilingsProvider",
     "StooqPriceProvider",
     "YahooPriceProvider",
+    "resolve_provider_symbol",
 ]

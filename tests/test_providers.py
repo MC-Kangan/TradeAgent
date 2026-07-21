@@ -12,6 +12,8 @@ from trade_research.providers import (
     LocalPortfolioProvider,
     ProviderRegistry,
     ReadOnlySqlPriceProvider,
+    StooqPriceProvider,
+    YahooPriceProvider,
 )
 
 
@@ -30,7 +32,40 @@ def test_local_csv_provider_returns_provenance_bearing_prices(tmp_path: Path) ->
 
     assert [price.close for price in prices] == [100.0]
     assert prices[0].source == "local-csv"
-    assert prices[0].provenance == {"path": str(path)}
+    assert prices[0].provenance == {"path": str(path), "field": "close"}
+
+
+def test_local_csv_provider_reads_complete_ohlcv_when_present(tmp_path: Path) -> None:
+    path = tmp_path / "ohlcv.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("symbol", "observed_at", "open", "high", "low", "close", "volume"),
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "symbol": "ACME",
+                "observed_at": "2026-01-02T00:00:00+00:00",
+                "open": "99",
+                "high": "102",
+                "low": "98",
+                "close": "101",
+                "volume": "1000",
+            }
+        )
+
+    point = LocalCsvParquetPriceProvider(path).price_history(
+        InstrumentId(symbol="ACME", market="US")
+    )[0]
+
+    assert (point.open, point.high, point.low, point.close, point.volume) == (
+        99.0,
+        102.0,
+        98.0,
+        101.0,
+        1000.0,
+    )
 
 
 def test_sql_provider_uses_a_fixed_parameterized_read_only_query(tmp_path: Path) -> None:
@@ -47,6 +82,71 @@ def test_sql_provider_uses_a_fixed_parameterized_read_only_query(tmp_path: Path)
     instrument = InstrumentId(symbol="ACME", market="NASDAQ")
     assert [price.close for price in provider.price_history(instrument)] == [101.5]
     assert not hasattr(provider, "query")
+
+
+def test_sql_provider_reads_fixed_ohlcv_schema_when_available(tmp_path: Path) -> None:
+    database = tmp_path / "ohlcv.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE prices ("
+            "symbol TEXT, observed_at TEXT, open REAL, high REAL, low REAL, "
+            "close REAL, volume REAL)"
+        )
+        connection.execute(
+            "INSERT INTO prices VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("ACME", "2026-01-02T00:00:00+00:00", 99, 102, 98, 101, 1000),
+        )
+
+    point = ReadOnlySqlPriceProvider(database).price_history(
+        InstrumentId(symbol="ACME", market="US")
+    )[0]
+
+    assert (point.open, point.high, point.low, point.close, point.volume) == (
+        99.0,
+        102.0,
+        98.0,
+        101.0,
+        1000.0,
+    )
+
+
+def test_remote_price_adapters_parse_ohlcv_and_resolved_symbols() -> None:
+    requested: list[str] = []
+
+    def yahoo_get(url: str, headers: object) -> str:
+        requested.append(url)
+        return (
+            '{"chart":{"result":[{"timestamp":[1767225600],"indicators":{"quote":[{'
+            '"open":[99],"high":[102],"low":[98],"close":[101],"volume":[1000]}]}}]}}'
+        )
+
+    def stooq_get(url: str, headers: object) -> str:
+        requested.append(url)
+        return "Date,Open,High,Low,Close,Volume\n2026-01-01,99,102,98,101,1000\n"
+
+    yahoo = YahooPriceProvider(http_get=yahoo_get).price_history(
+        InstrumentId(symbol="VOD", market="UK")
+    )[0]
+    stooq = StooqPriceProvider(http_get=stooq_get).price_history(
+        InstrumentId(symbol="SAP", market="XETRA")
+    )[0]
+
+    assert (yahoo.open, yahoo.high, yahoo.low, yahoo.close, yahoo.volume) == (
+        99.0,
+        102.0,
+        98.0,
+        101.0,
+        1000.0,
+    )
+    assert (stooq.open, stooq.high, stooq.low, stooq.close, stooq.volume) == (
+        99.0,
+        102.0,
+        98.0,
+        101.0,
+        1000.0,
+    )
+    assert "VOD.L" in requested[0]
+    assert "sap.de" in requested[1]
 
 
 def test_portfolio_provider_keeps_positions_in_memory() -> None:

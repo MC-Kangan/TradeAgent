@@ -48,7 +48,11 @@ def test_skills_depend_only_on_provider_protocols_and_calculate_factors() -> Non
 
     result = FundamentalSkill().analyze(instrument, providers)
 
-    assert {observation.metric: observation.value for observation in result.observations} == {
+    factors = {observation.metric: observation.value for observation in result.observations}
+    assert {
+        metric: factors[metric]
+        for metric in ("free_cash_flow_margin", "price_to_earnings", "revenue_growth")
+    } == {
         "free_cash_flow_margin": 0.15,
         "price_to_earnings": 15.0,
         "revenue_growth": 0.2,
@@ -67,11 +71,12 @@ def test_compiler_discovers_immutable_skills_and_reviewer_labels_partial_data() 
 
     assert skills.names == ("fundamental", "technical")
     assert [result.analyst for result in reviewed] == ["technical"]
-    assert {item.metric: item.value for item in reviewed[0].observations} == {
+    factors = {item.metric: item.value for item in reviewed[0].observations}
+    assert {metric: factors[metric] for metric in ("price_return", "simple_moving_average")} == {
         "price_return": 0.1,
         "simple_moving_average": 105.0,
     }
-    assert reviewed[0].summary.startswith("complete data")
+    assert reviewed[0].summary.startswith("partial data")
 
 
 def test_fundamental_skill_labels_missing_inputs_as_partial_data() -> None:

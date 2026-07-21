@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from trade_research.domain import InstrumentId, Position
 from trade_research.providers.contracts import PricePoint, ProviderConfigurationError
@@ -26,7 +26,14 @@ class LocalCsvParquetPriceProvider:
                 observed_at=_parse_datetime(str(row["observed_at"])),
                 close=float(row["close"]),
                 source=f"local-{self._path.suffix.lstrip('.').lower()}",
-                provenance={"path": str(self._path)},
+                provenance={
+                    "path": str(self._path),
+                    "field": "OHLCV" if row.get("open") is not None else "close",
+                },
+                open=_optional_number(row.get("open")),
+                high=_optional_number(row.get("high")),
+                low=_optional_number(row.get("low")),
+                volume=_optional_number(row.get("volume")),
             )
             for row in rows
             if str(row.get("symbol", "")).upper() == instrument.symbol
@@ -58,18 +65,40 @@ class ReadOnlySqlPriceProvider:
             raise ProviderConfigurationError("read-only price database does not exist")
         uri = f"{self._database_path.as_uri()}?mode=ro"
         with sqlite3.connect(uri, uri=True) as connection:
-            rows = connection.execute(
-                "SELECT observed_at, close FROM prices WHERE symbol = ? ORDER BY observed_at ASC",
-                (instrument.symbol,),
-            ).fetchall()
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(prices)").fetchall()
+            }
+            if {"open", "high", "low", "volume"}.issubset(columns):
+                rows = connection.execute(
+                    "SELECT observed_at, open, high, low, close, volume "
+                    "FROM prices WHERE symbol = ? ORDER BY observed_at ASC",
+                    (instrument.symbol,),
+                ).fetchall()
+            else:
+                rows = [
+                    (observed_at, None, None, None, close, None)
+                    for observed_at, close in connection.execute(
+                        "SELECT observed_at, close FROM prices "
+                        "WHERE symbol = ? ORDER BY observed_at ASC",
+                        (instrument.symbol,),
+                    ).fetchall()
+                ]
         return tuple(
             PricePoint(
                 observed_at=_parse_datetime(str(observed_at)),
                 close=float(close),
                 source="local-sql",
-                provenance={"database": str(self._database_path), "table": "prices"},
+                provenance={
+                    "database": str(self._database_path),
+                    "table": "prices",
+                    "field": "OHLCV",
+                },
+                open=_optional_number(open_value),
+                high=_optional_number(high),
+                low=_optional_number(low),
+                volume=_optional_number(volume),
             )
-            for observed_at, close in rows
+            for observed_at, open_value, high, low, close, volume in rows
         )
 
 
@@ -88,3 +117,7 @@ def _parse_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ProviderConfigurationError("price timestamps must include a timezone")
     return parsed
+
+
+def _optional_number(value: object) -> float | None:
+    return None if value in (None, "") else float(cast(Any, value))
