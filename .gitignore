@@ -1,0 +1,15 @@
+.venv/
+.venv*/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.sqlite3
+*.parquet
+.env
+.env.*
+!*.env.example
+
+# Retained only as ignored reference material.
+third_party/
