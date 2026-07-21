@@ -6,15 +6,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from trade_research.domain import AnalysisRequest, InstrumentId, Observation, Position
 from trade_research.storage import ObservationStore, RunStore
 
 
-def test_run_store_enables_wal_and_persists_secret_free_request(tmp_path: Path) -> None:
+def test_run_store_enables_wal_and_persists_only_safe_request_dto(tmp_path: Path) -> None:
     database_path = tmp_path / "runs.sqlite3"
     request = AnalysisRequest(
         instrument=InstrumentId(symbol="ACME", market="NASDAQ"),
-        metadata={"api_key": "do-not-persist", "strategy": "long-term"},
+        metadata={
+            "api_key": "do-not-persist",
+            "clientIp": "203.0.113.10",
+            "ip_address": "203.0.113.11",
+            "account": "account-123",
+            "portfolio": [{"quantity": 7}],
+            "positions": [{"quantity": 8}],
+            "strategy": "secret-value",
+        },
         positions=(
             Position(
                 instrument=InstrumentId(symbol="ACME", market="NASDAQ"),
@@ -32,10 +42,25 @@ def test_run_store_enables_wal_and_persists_secret_free_request(tmp_path: Path) 
         payload = json.loads(connection.execute("SELECT request_json FROM runs").fetchone()[0])
 
     assert journal_mode.lower() == "wal"
-    assert payload["metadata"] == {"strategy": "long-term"}
-    assert "positions" not in payload
-    assert "do-not-persist" not in json.dumps(payload)
-    assert store.load_request(request.request_id).instrument.symbol == "ACME"
+    assert payload == {
+        "analysts": ["fundamental", "technical"],
+        "instrument": {"market": "NASDAQ", "symbol": "ACME"},
+        "request_id": str(request.request_id),
+    }
+    serialized_payload = json.dumps(payload)
+    for sensitive_value in (
+        "do-not-persist",
+        "203.0.113.10",
+        "203.0.113.11",
+        "account-123",
+        "secret-value",
+    ):
+        assert sensitive_value not in serialized_payload
+
+    loaded_request = store.load_request(request.request_id)
+    assert loaded_request.instrument.symbol == "ACME"
+    assert loaded_request.metadata == {}
+    assert loaded_request.positions == ()
 
 
 def test_observation_store_round_trips_parquet(tmp_path: Path) -> None:
@@ -56,3 +81,11 @@ def test_observation_store_round_trips_parquet(tmp_path: Path) -> None:
 
     assert path.suffix == ".parquet"
     assert store.load(run_id) == observations
+
+
+@pytest.mark.parametrize("run_id", ["/tmp/target", "../outside", "not-a-uuid"])
+def test_observation_store_rejects_non_uuid_run_ids(tmp_path: Path, run_id: str) -> None:
+    store = ObservationStore(tmp_path / "observations")
+
+    with pytest.raises(ValueError, match="valid UUID"):
+        store.path_for(run_id)

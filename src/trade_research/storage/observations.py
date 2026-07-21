@@ -16,11 +16,19 @@ class ObservationStore:
     """Write and read a run's observations as portable Parquet data."""
 
     def __init__(self, root: Path | str) -> None:
-        self.root = Path(root)
+        self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, run_id: UUID | str) -> Path:
-        return self.root / f"{run_id}.parquet"
+        try:
+            parsed_run_id = UUID(str(run_id))
+        except ValueError as error:
+            raise ValueError("run_id must be a valid UUID") from error
+
+        path = (self.root / f"{parsed_run_id}.parquet").resolve()
+        if not path.is_relative_to(self.root):
+            raise ValueError("observation path must remain under the storage root")
+        return path
 
     def save(self, run_id: UUID | str, observations: Iterable[Observation]) -> Path:
         """Write the given observations under one run identifier."""
