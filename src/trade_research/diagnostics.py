@@ -10,6 +10,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from trade_research.providers import ProviderConfigurationError
+from trade_research.settings import Settings
+
 JsonObject = dict[str, Any]
 
 
@@ -22,7 +25,21 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
     wal = _probe_sqlite_wal(data_directory) if writable else False
     config_file = env.get("TRADE_RESEARCH_CONFIG")
     supported = (3, 12) <= sys.version_info[:2] < (3, 14)
-    checks_ok = supported and writable and wal
+    provider_configured = _configured(
+        env,
+        "TRADE_RESEARCH_PROVIDER",
+        "TRADE_RESEARCH_PRICE_PROVIDER",
+        "TRADE_RESEARCH_FUNDAMENTAL_PROVIDER",
+        "TRADE_RESEARCH_CONFIG",
+    )
+    try:
+        settings = Settings.from_environment(env)
+    except ProviderConfigurationError:
+        settings = None
+    prices_available = bool(settings and settings.price_provider)
+    fundamentals_available = bool(settings and settings.fundamental_provider)
+    provider_valid = settings is not None and prices_available and fundamentals_available
+    checks_ok = supported and writable and wal and provider_valid
     return {
         "research_only": True,
         "status": "ok" if checks_ok else "warning",
@@ -41,7 +58,10 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
         },
         "storage": {"writable": writable, "sqlite_wal": wal},
         "providers": {
-            "configured": _configured(env, "TRADE_RESEARCH_PROVIDER"),
+            "configured": provider_configured,
+            "valid": provider_valid,
+            "prices_available": prices_available,
+            "fundamentals_available": fundamentals_available,
             "connectivity": "not_attempted",
         },
         "llm": {

@@ -9,5 +9,5 @@ Runtime skills are immutable. Use only the `run_skill` or `start_research` bound
 
 1. Confirm symbol and market; reject Asian exchanges and execution requests.
 2. Select the `technical` analyst.
-3. Keep observation windows, missing data, and provenance visible.
+3. Keep algorithm names, observation windows, complete-series hashes, source kinds, missing metrics, and limitations visible.
 4. Present indicators as research evidence, not as an instruction to transact. Never infer an order size or account action.

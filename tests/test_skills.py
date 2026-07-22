@@ -33,6 +33,7 @@ class BloombergShapedMock:
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
         return tuple(
             PricePoint(
+                instrument=instrument,
                 observed_at=self.as_of + timedelta(days=index),
                 close=close,
                 source="bloomberg",
@@ -90,12 +91,12 @@ def test_fundamental_skill_labels_missing_inputs_as_partial_data() -> None:
     class SparseFundamentals:
         def fundamentals(self, provided: InstrumentId) -> tuple[Observation, ...]:
             return (
-                Observation(
-                    instrument=provided,
-                    metric="net_income",
-                    value=10.0,
-                    source="fixture",
-                    observed_at=datetime(2026, 1, 1, tzinfo=UTC),
+                _observation(
+                    provided,
+                    "net_income",
+                    10.0,
+                    datetime(2026, 1, 1, tzinfo=UTC),
+                    {"period": "current"},
                 ),
             )
 

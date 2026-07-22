@@ -1,6 +1,11 @@
 """Provider protocols, registries, and optional local/remote adapters."""
 
 from trade_research.providers.contracts import (
+    MAX_FILING_ROWS,
+    MAX_FUNDAMENTAL_ROWS,
+    MAX_HTTP_BYTES,
+    MAX_LOCAL_BYTES,
+    MAX_PRICE_POINTS,
     FilingProvider,
     FundamentalProvider,
     FundamentalStatementMetadata,
@@ -10,13 +15,16 @@ from trade_research.providers.contracts import (
     PricePoint,
     PriceProvider,
     ProviderConfigurationError,
+    ProviderContractError,
 )
 from trade_research.providers.local import (
+    LocalCsvParquetFundamentalProvider,
     LocalCsvParquetPriceProvider,
     LocalPortfolioProvider,
+    ReadOnlySqlFundamentalProvider,
     ReadOnlySqlPriceProvider,
 )
-from trade_research.providers.registry import ProviderRegistry
+from trade_research.providers.registry import CapabilityName, ProviderRegistry
 from trade_research.providers.remote import (
     CcxtPriceProvider,
     SecFilingsProvider,
@@ -27,18 +35,27 @@ from trade_research.providers.remote import (
 
 __all__ = [
     "CcxtPriceProvider",
+    "CapabilityName",
     "FilingProvider",
     "FundamentalProvider",
     "FundamentalStatementMetadata",
     "FundamentalValuationMetadata",
+    "LocalCsvParquetFundamentalProvider",
     "LocalCsvParquetPriceProvider",
     "LocalPortfolioProvider",
+    "MAX_FILING_ROWS",
+    "MAX_FUNDAMENTAL_ROWS",
+    "MAX_HTTP_BYTES",
+    "MAX_LOCAL_BYTES",
+    "MAX_PRICE_POINTS",
     "OptionalProviderDependencyError",
     "PortfolioProvider",
     "PricePoint",
     "PriceProvider",
     "ProviderConfigurationError",
+    "ProviderContractError",
     "ProviderRegistry",
+    "ReadOnlySqlFundamentalProvider",
     "ReadOnlySqlPriceProvider",
     "SecFilingsProvider",
     "StooqPriceProvider",

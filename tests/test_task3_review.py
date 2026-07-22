@@ -28,7 +28,7 @@ from trade_research.engine import ResearchEngine
 from trade_research.http import create_app
 from trade_research.mcp_server import build_mcp_server
 from trade_research.notifications import DiscordNotifier
-from trade_research.providers import ProviderRegistry
+from trade_research.providers import CapabilityName, ProviderRegistry
 from trade_research.queue import JobQueue, LostLease, RequestConflict
 from trade_research.reporting import ReportStore, render_json, render_markdown
 from trade_research.skills import SkillRegistry
@@ -38,6 +38,7 @@ from trade_research.storage import RunStore
 @dataclass(frozen=True)
 class FixedSkill:
     name: str = "fundamental"
+    required_capabilities: tuple[CapabilityName, ...] = ()
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
         return AnalystResult(
@@ -239,7 +240,7 @@ async def test_duplicate_analysts_fail_mcp_validation(tmp_path: Path) -> None:
                 }
             },
         )
-    assert "unique" in str(captured.value)
+    assert str(captured.value) == "tool request rejected"
 
 
 @pytest.mark.asyncio
@@ -352,7 +353,7 @@ async def test_mcp_conflict_error_is_bounded(tmp_path: Path) -> None:
             },
         )
 
-    assert "request id conflicts with an existing request" in str(captured.value)
+    assert str(captured.value) == "tool request rejected"
     assert "ACME" not in str(captured.value)
 
 
@@ -599,7 +600,7 @@ async def test_semantic_projection_blocks_credentials_and_shorthand_positions(
     for output in outputs[:4]:
         assert "revenue_growth" in output
         assert "0.125" in output
-        assert "safe-language analysis complete with 0 observations" in output
+        assert "safe-language analysis partial with 0 numeric factors" in output
     assert set(sent[0]) == {"content"}
     assert "Research report ready" in sent[0]["content"]
 
@@ -751,14 +752,14 @@ async def test_export_projection_only_serializes_closed_research_values(tmp_path
             assert narrative_text not in output
 
     for output in serialized_outputs[:-1]:
-        assert "event-driven analysis complete with 2 observations" in output
+        assert "event-driven analysis complete with 2 numeric factors" in output
         assert "revenue_growth" in output
         assert "0.125" in output
         assert "complete" in output
         assert "bullish" in output
         assert "USD" in output
         assert "untrusted" in output
-        assert "[CONTENT OMITTED]" in output
+        assert "sha256:" in output
         assert "NaN" not in output
         assert "Infinity" not in output
     exported = json.loads(serialized_outputs[0])
@@ -865,7 +866,8 @@ def test_export_projection_caps_report_collections_in_raw_storage(tmp_path: Path
     for payload in map(json.loads, (rendered, queued_json, stored_json)):
         assert len(payload["results"]) == 16
         assert all(len(result["observations"]) == 256 for result in payload["results"])
-        assert all(len(result["evidence"]) == 64 for result in payload["results"])
+        assert all(result["evidence"] == [] for result in payload["results"])
+        assert all(len(result["citations"]) == 1 for result in payload["results"])
 
 
 def test_export_projection_bounds_provenance_in_raw_storage(tmp_path: Path) -> None:

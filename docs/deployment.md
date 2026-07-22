@@ -15,18 +15,52 @@ TRADE_RESEARCH_API_TOKEN_FILE=/secure/path/api-token \
 
 Run a separately supervised worker with `.venv/bin/trade-research worker`. Both processes use `TRADE_RESEARCH_DATA_DIR` and the same SQLite/report schema.
 
-## Docker Compose
-
-Create `secrets/api-token` locally (the ignored `secrets/` directory is never committed), then validate without executing anything:
+Configure both built-in analysts with allowlisted settings. This deterministic local example uses
+normalized CSV files; `.parquet` and fixed read-only SQLite `prices`/`fundamentals` tables are also
+supported:
 
 ```sh
-docker compose config --quiet
+TRADE_RESEARCH_PRICE_PROVIDER=local_csv \
+TRADE_RESEARCH_PRICE_PATH=/authorized/prices.csv \
+TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=local_csv \
+TRADE_RESEARCH_FUNDAMENTAL_PATH=/authorized/fundamentals.csv \
+  .venv/bin/trade-research doctor
 ```
 
-`compose.yaml` has `research-api` and `research-worker`, one named data volume, a read-only root filesystem, and no host ports. Start only after reviewing the rendered configuration:
+Yahoo or Stooq may replace the local price provider. CCXT additionally requires
+`TRADE_RESEARCH_CCXT_EXCHANGE`. If a selected analyst's capability is absent, submission fails with
+a typed configuration error and no empty successful report is created.
+
+## Docker Compose
+
+Create `secrets/api-token` locally (the ignored `secrets/` directory is never committed). Put
+authorized normalized inputs and a closed `config.json` in a separate host directory. Paths in
+that JSON are container paths, not host paths. For example:
+
+```json
+{
+  "price_provider": "local_csv",
+  "price_path": "/var/lib/trade-research-sources/prices.csv",
+  "fundamental_provider": "local_csv",
+  "fundamental_path": "/var/lib/trade-research-sources/fundamentals.csv"
+}
+```
+
+Select the directory and validate without executing anything:
 
 ```sh
-docker compose up --build
+TRADE_RESEARCH_SOURCE_DIR=/authorized/trade-research-sources docker compose config --quiet
+```
+
+Both the API and worker mount `TRADE_RESEARCH_SOURCE_DIR` read-only at the stable
+`/var/lib/trade-research-sources` path and read
+`/var/lib/trade-research-sources/config.json` by default. Reports and the queue use the distinct
+writable `research-data` volume at `/var/lib/trade-research`; licensed source files never enter
+that volume. `compose.yaml` also uses a read-only root filesystem and publishes no host ports.
+Start only after reviewing the rendered configuration:
+
+```sh
+TRADE_RESEARCH_SOURCE_DIR=/authorized/trade-research-sources docker compose up --build
 ```
 
 For workstation access, add the explicit override:
@@ -35,7 +69,18 @@ For workstation access, add the explicit override:
 docker compose -f compose.yaml -f compose.override.local.yaml up --build
 ```
 
-It binds `127.0.0.1:8000` by default. For a private WireGuard/Tailscale/other VPN, set `TRADE_RESEARCH_BIND_ADDRESS` to the host's private VPN address before rendering and review the result. Do not use `0.0.0.0` or expose this service to the public internet. Bearer authentication remains mandatory.
+It always binds `127.0.0.1:8000`; the address is intentionally not environment-variable
+controlled. For a private WireGuard/Tailscale/other VPN, render a validated override and
+review it before use:
+
+```sh
+.venv/bin/python scripts/compose_private_override.py 100.64.0.9 > /tmp/trade-research-private.yaml
+docker compose -f compose.yaml -f /tmp/trade-research-private.yaml config --quiet
+docker compose -f compose.yaml -f /tmp/trade-research-private.yaml up --build
+```
+
+The renderer rejects wildcard, multicast, hostname, and public IPv4/IPv6 targets. Bearer
+authentication remains mandatory.
 
 ## Hermes profile
 

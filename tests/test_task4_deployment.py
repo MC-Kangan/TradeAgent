@@ -61,6 +61,9 @@ def test_lockfiles_cover_all_declared_dependencies_and_build_tool() -> None:
     assert set(configuration["project"]["optional-dependencies"]["dev"]) <= development
     assert "editables==0.5" in production
     assert "build==1.3.0" in development
+    assert configuration["project"]["scripts"]["trade-research"] == (
+        "trade_research.cli:main"
+    )
 
 
 def test_bootstrap_dry_run_plans_recreate_for_stale_venv_without_mutation(
@@ -219,6 +222,18 @@ def test_compose_defaults_are_non_public_and_share_named_storage() -> None:
     assert compose["volumes"]["research-data"] is None
     for service in (services["research-api"], services["research-worker"]):
         assert "research-data:/var/lib/trade-research" in service["volumes"]
+        source_mount = next(
+            volume
+            for volume in service["volumes"]
+            if isinstance(volume, dict)
+            and volume.get("target") == "/var/lib/trade-research-sources"
+        )
+        assert source_mount["type"] == "bind"
+        assert source_mount["read_only"] is True
+        assert source_mount["source"] == "${TRADE_RESEARCH_SOURCE_DIR:-./sources}"
+        assert service["environment"]["TRADE_RESEARCH_CONFIG"] == (
+            "${TRADE_RESEARCH_CONFIG:-/var/lib/trade-research-sources/config.json}"
+        )
         assert service.get("privileged") is not True
         assert service.get("read_only") is True
         assert service.get("network_mode") != "host"
@@ -236,6 +251,38 @@ def test_compose_defaults_are_non_public_and_share_named_storage() -> None:
     assert hermes["environment"]["TRADE_RESEARCH_API_URL"] == "http://research-api:8000"
     assert hermes["environment"]["TRADE_RESEARCH_API_TOKEN_FILE"] == "/run/secrets/api-token"
     assert hermes["environment"]["HERMES_IMAGE_CONFIGURED"] == "${HERMES_IMAGE:-}"
+
+
+def test_rendered_compose_keeps_authorized_sources_read_only_for_api_and_worker() -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("Docker Compose is unavailable")
+    completed = subprocess.run(
+        ["docker", "compose", "config"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    rendered = yaml.safe_load(completed.stdout)
+    expected_source = str((ROOT / "sources").resolve())
+    for service_name in ("research-api", "research-worker"):
+        service = rendered["services"][service_name]
+        source_mount = next(
+            volume
+            for volume in service["volumes"]
+            if volume.get("target") == "/var/lib/trade-research-sources"
+        )
+        assert source_mount == {
+            "type": "bind",
+            "source": expected_source,
+            "target": "/var/lib/trade-research-sources",
+            "read_only": True,
+        }
+        assert (
+            service["environment"]["TRADE_RESEARCH_CONFIG"]
+            == "/var/lib/trade-research-sources/config.json"
+        )
 
 
 def test_hermes_profile_preflight_and_compose_render(tmp_path: Path) -> None:
@@ -285,7 +332,7 @@ def test_hermes_profile_preflight_and_compose_render(tmp_path: Path) -> None:
 def test_local_compose_override_binds_loopback_by_default() -> None:
     override = yaml.safe_load((ROOT / "compose.override.local.yaml").read_text())
     ports = override["services"]["research-api"]["ports"]
-    assert ports == ["${TRADE_RESEARCH_BIND_ADDRESS:-127.0.0.1}:${TRADE_RESEARCH_PORT:-8000}:8000"]
+    assert ports == ["127.0.0.1:${TRADE_RESEARCH_PORT:-8000}:8000"]
 
 
 def test_plugin_manifests_and_skills_are_discoverable() -> None:
@@ -482,7 +529,7 @@ def test_docker_and_native_entrypoints_use_the_same_distribution() -> None:
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
     pyproject = (ROOT / "pyproject.toml").read_text()
 
-    assert 'trade-research = "trade_research.cli:app"' in pyproject
+    assert 'trade-research = "trade_research.cli:main"' in pyproject
     assert "requirements.lock" in dockerfile
     assert "pip install" in dockerfile
     assert "--no-build-isolation" in dockerfile

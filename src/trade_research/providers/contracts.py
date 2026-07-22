@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
-from typing import NotRequired, Protocol, TypedDict, runtime_checkable
+from typing import Final, NotRequired, Protocol, TypedDict, runtime_checkable
 
 from pydantic import JsonValue
 
@@ -23,6 +23,17 @@ from trade_research.domain.provenance import (
 
 class ProviderConfigurationError(RuntimeError):
     """Raised when an optional provider cannot be used safely."""
+
+
+class ProviderContractError(ProviderConfigurationError):
+    """Raised when a provider violates a bounded typed return contract."""
+
+
+MAX_HTTP_BYTES: Final = 4 * 1024 * 1024
+MAX_LOCAL_BYTES: Final = 16 * 1024 * 1024
+MAX_PRICE_POINTS: Final = 4096
+MAX_FUNDAMENTAL_ROWS: Final = 1024
+MAX_FILING_ROWS: Final = 64
 
 
 class OptionalProviderDependencyError(ProviderConfigurationError):
@@ -72,6 +83,7 @@ class PricePoint:
     high: float | None = None
     low: float | None = None
     volume: float | None = None
+    instrument: InstrumentId | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source", normalize_provider_kind(self.source))

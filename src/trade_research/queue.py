@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
@@ -60,9 +62,13 @@ class JobQueue:
         recovery_after_seconds: float = 300,
     ) -> None:
         self.database_path = Path(database_path)
-        self.recovery_after_seconds = max(0, recovery_after_seconds)
+        self._recovery_after_seconds = max(0, recovery_after_seconds)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+
+    @property
+    def recovery_after_seconds(self) -> float:
+        return self._recovery_after_seconds
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.database_path, timeout=30)
@@ -171,6 +177,20 @@ class JobQueue:
             if cursor.rowcount != 1:
                 raise LostLease("job lease is no longer owned by this worker")
 
+    def renew(self, request_id: UUID, claim_token: UUID) -> None:
+        """Renew one fenced running lease without changing its generation."""
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET claimed_at = ?
+                WHERE request_id = ? AND status = 'running' AND claim_token = ?
+                """,
+                (time.time(), str(request_id), str(claim_token)),
+            )
+            if cursor.rowcount != 1:
+                raise LostLease("job lease is no longer owned by this worker")
+
     def fail(self, request_id: UUID, error: Exception, claim_token: UUID) -> None:
         with self._connect() as connection:
             cursor = connection.execute(
@@ -218,9 +238,21 @@ class JobQueue:
 class ResearchWorker:
     """Process at most one queue item per call for deterministic supervision."""
 
-    def __init__(self, queue: JobQueue, engine: ResearchEngine) -> None:
+    def __init__(
+        self,
+        queue: JobQueue,
+        engine: ResearchEngine,
+        *,
+        heartbeat_interval_seconds: float | None = None,
+    ) -> None:
         self._queue = queue
         self._engine = engine
+        default_interval = max(0.001, queue.recovery_after_seconds / 3)
+        self._heartbeat_interval_seconds = (
+            default_interval
+            if heartbeat_interval_seconds is None
+            else max(0.001, heartbeat_interval_seconds)
+        )
 
     async def run_once(self) -> bool:
         job = self._queue.claim_next()
@@ -228,10 +260,36 @@ class ResearchWorker:
             return False
         if job.claim_token is None:
             raise LostLease("claimed job has no fencing token")
+        lost_lease = asyncio.Event()
+        heartbeat = asyncio.create_task(
+            self._heartbeat(job.request.request_id, job.claim_token, lost_lease)
+        )
         try:
             report = await self._engine.analyze(job.request.to_request())
         except Exception as error:
-            self._queue.fail(job.request.request_id, error, job.claim_token)
+            if not lost_lease.is_set():
+                with suppress(LostLease):
+                    self._queue.fail(job.request.request_id, error, job.claim_token)
         else:
-            self._queue.complete(job.request.request_id, report, job.claim_token)
+            if not lost_lease.is_set():
+                with suppress(LostLease):
+                    self._queue.complete(job.request.request_id, report, job.claim_token)
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
         return True
+
+    async def _heartbeat(
+        self,
+        request_id: UUID,
+        claim_token: UUID,
+        lost_lease: asyncio.Event,
+    ) -> None:
+        while True:
+            await asyncio.sleep(self._heartbeat_interval_seconds)
+            try:
+                await asyncio.to_thread(self._queue.renew, request_id, claim_token)
+            except LostLease:
+                lost_lease.set()
+                return

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import statistics
 from collections import Counter
@@ -11,20 +13,27 @@ from datetime import UTC, date, datetime
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
-from trade_research.domain import AnalystResult, InstrumentId, Observation
-from trade_research.domain.provenance import normalize_provider_kind, sanitize_provider_reference
-from trade_research.providers import (
-    FundamentalProvider,
-    PricePoint,
-    PriceProvider,
-    ProviderRegistry,
+from trade_research.domain import (
+    AnalystResult,
+    InstrumentId,
+    LimitationKind,
+    MetricKind,
+    Observation,
+    ReportStatus,
 )
+from trade_research.domain.provenance import (
+    MAX_PROVENANCE_ITEMS,
+    normalize_provider_kind,
+    sanitize_provider_reference,
+)
+from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
 
 
 class ResearchSkill(Protocol):
     """An immutable analyst capability selected by its stable name."""
 
     name: str
+    required_capabilities: tuple[CapabilityName, ...]
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult: ...
 
@@ -39,6 +48,16 @@ class SkillRegistry:
     def __init__(self, skills: Iterable[ResearchSkill]) -> None:
         skill_items = tuple(skills)
         for skill in skill_items:
+            required_capabilities = getattr(skill, "required_capabilities", None)
+            if not isinstance(required_capabilities, tuple) or any(
+                not isinstance(capability, CapabilityName)
+                for capability in required_capabilities
+            ):
+                raise TypeError(
+                    f"skill '{skill.name}' required_capabilities must be a tuple of CapabilityName"
+                )
+            if len(set(required_capabilities)) != len(required_capabilities):
+                raise TypeError(f"skill '{skill.name}' declares duplicate required_capabilities")
             parameters = getattr(type(skill), "__dataclass_params__", None)
             if parameters is None or not parameters.frozen:
                 raise TypeError(f"skill '{skill.name}' must be a frozen dataclass")
@@ -76,14 +95,17 @@ class FundamentalSkill:
     def name(self) -> str:
         return self._name
 
+    @property
+    def required_capabilities(self) -> tuple[CapabilityName, ...]:
+        return (CapabilityName.FUNDAMENTALS,)
+
     def __getattribute__(self, attribute: str) -> object:
         if attribute == "name":
             return object.__getattribute__(self, "_name")
         return object.__getattribute__(self, attribute)
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
-        provider = cast(FundamentalProvider, providers.require("fundamentals"))
-        observations = provider.fundamentals(instrument)
+        observations = providers.fundamentals(instrument)
         factors: list[Observation] = []
         missing: list[str] = []
 
@@ -147,7 +169,12 @@ class FundamentalSkill:
         else:
             factors.append(
                 _factor(
-                    instrument, "free_cash_flow", _numeric_value(free_cash_flow), (free_cash_flow,)
+                    instrument,
+                    "free_cash_flow",
+                    _numeric_value(free_cash_flow),
+                    (free_cash_flow,),
+                    algorithm="direct_value",
+                    window="current_period",
                 )
             )
         _append_ratio(
@@ -200,6 +227,9 @@ class FundamentalSkill:
             analyst=self._name,
             instrument=instrument,
             summary=_summary(missing),
+            status=ReportStatus.PARTIAL if missing else ReportStatus.COMPLETE,
+            missing_metrics=_missing_metric_kinds(missing),
+            limitations=_limitations(missing),
             observations=tuple(factors),
         )
 
@@ -226,6 +256,10 @@ class TechnicalSkill:
     def name(self) -> str:
         return self._name
 
+    @property
+    def required_capabilities(self) -> tuple[CapabilityName, ...]:
+        return (CapabilityName.PRICES,)
+
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError("technical window must be at least two observations")
@@ -237,8 +271,7 @@ class TechnicalSkill:
         return object.__getattribute__(self, attribute)
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
-        provider = cast(PriceProvider, providers.require("prices"))
-        supplied = provider.price_history(instrument)
+        supplied = providers.prices(instrument)
         prices, discarded, incomplete_ohlcv = _validated_prices(supplied)
         factors: list[Observation] = []
         missing: list[str] = []
@@ -454,6 +487,9 @@ class TechnicalSkill:
             analyst=self._name,
             instrument=instrument,
             summary=_summary(missing),
+            status=ReportStatus.PARTIAL if missing else ReportStatus.COMPLETE,
+            missing_metrics=_missing_metric_kinds(missing),
+            limitations=_limitations(missing),
             observations=tuple(factors),
         )
 
@@ -526,7 +562,16 @@ def _append_growth(
         missing.append(f"{metric} incompatible input metadata")
         return
     value = (_numeric_value(current) - _numeric_value(prior)) / _numeric_value(prior)
-    factors.append(_factor(instrument, metric, value, (current, prior)))
+    factors.append(
+        _factor(
+            instrument,
+            metric,
+            value,
+            (current, prior),
+            algorithm="period_growth",
+            window="current_vs_prior",
+        )
+    )
 
 
 def _append_ratio(
@@ -559,6 +604,10 @@ def _append_ratio(
             metric,
             _numeric_value(numerator) / _numeric_value(denominator),
             (numerator, denominator),
+            algorithm="ratio",
+            window=(
+                "same_period" if compatibility == "statement" else "valuation_and_period"
+            ),
         )
     )
 
@@ -568,6 +617,9 @@ def _factor(
     metric: str,
     value: float,
     inputs: tuple[Observation, ...],
+    *,
+    algorithm: str,
+    window: str,
 ) -> Observation:
     return Observation(
         instrument=instrument,
@@ -575,7 +627,11 @@ def _factor(
         value=round(value, 10),
         source="derived",
         observed_at=max(item.observed_at for item in inputs),
-        provenance={"inputs": [_observation_input(item) for item in inputs]},
+        provenance={
+            "algorithm": algorithm,
+            "window": window,
+            "inputs": [_observation_input(item) for item in inputs],
+        },
     )
 
 
@@ -784,8 +840,19 @@ def _append_price_factor(
     value: float,
     prices: Sequence[PricePoint],
     input_metric: str,
-    _lookback: str,
+    lookback: str,
 ) -> None:
+    provenance: dict[str, object] = {
+        "algorithm": _algorithm_for_metric(metric),
+        "window": lookback,
+        "point_count": len(prices),
+        "start_at": min(point.observed_at for point in prices).isoformat(),
+        "end_at": max(point.observed_at for point in prices).isoformat(),
+        "series_ref": _price_series_reference(prices, input_metric),
+        "input_provider_kind": normalize_provider_kind(prices[0].source).value,
+    }
+    if len(prices) <= MAX_PROVENANCE_ITEMS:
+        provenance["inputs"] = [_price_input(point, input_metric) for point in prices]
     factors.append(
         Observation(
             instrument=instrument,
@@ -793,9 +860,43 @@ def _append_price_factor(
             value=round(value, 10),
             source="derived",
             observed_at=max(point.observed_at for point in prices),
-            provenance={"inputs": [_price_input(point, input_metric) for point in prices]},
+            provenance=provenance,
         )
     )
+
+
+def _algorithm_for_metric(metric: str) -> str:
+    if metric == "price_return":
+        return "full_history_return"
+    if metric.startswith("simple_moving_average"):
+        return "simple_moving_average"
+    if metric.startswith("exponential_moving_average"):
+        return "exponential_moving_average"
+    if metric.startswith("relative_strength_index"):
+        return "wilder_rsi"
+    if metric.startswith("macd_signal"):
+        return "macd_signal"
+    if metric == "macd_histogram":
+        return "macd_histogram"
+    if metric.startswith("macd"):
+        return "macd"
+    if metric.startswith("bollinger"):
+        return "bollinger_band"
+    if metric.startswith("average_true_range"):
+        return "wilder_atr"
+    if metric.startswith("momentum"):
+        return "momentum"
+    if metric.startswith("annualized_volatility"):
+        return "annualized_volatility"
+    if metric.startswith("volume_trend"):
+        return "volume_trend"
+    raise ValueError(f"unknown derived price metric '{metric}'")
+
+
+def _price_series_reference(prices: Sequence[PricePoint], metric: str) -> str:
+    values = [_price_input(point, metric) for point in prices]
+    canonical = json.dumps(values, separators=(",", ":"), sort_keys=True)
+    return f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
 
 
 def _price_input(point: PricePoint, metric: str) -> dict[str, object]:
@@ -897,3 +998,56 @@ def _summary(missing: Sequence[str]) -> str:
     if missing:
         return f"partial data: missing {', '.join(dict.fromkeys(missing))}"
     return "complete data: all required inputs available"
+
+
+def _missing_metric_kinds(missing: Sequence[str]) -> tuple[MetricKind, ...]:
+    aliases: dict[str, tuple[MetricKind, ...]] = {
+        "ema_20": (MetricKind.EXPONENTIAL_MOVING_AVERAGE_20,),
+        "exponential_moving_average": (MetricKind.EXPONENTIAL_MOVING_AVERAGE_20,),
+        "bollinger_bands": (
+            MetricKind.BOLLINGER_MIDDLE_20,
+            MetricKind.BOLLINGER_UPPER_20_2,
+            MetricKind.BOLLINGER_LOWER_20_2,
+        ),
+        "bollinger_bands_20": (
+            MetricKind.BOLLINGER_MIDDLE_20,
+            MetricKind.BOLLINGER_UPPER_20_2,
+            MetricKind.BOLLINGER_LOWER_20_2,
+        ),
+        "relative_strength_index": (MetricKind.RELATIVE_STRENGTH_INDEX_14,),
+        "macd": (MetricKind.MACD_12_26, MetricKind.MACD_SIGNAL_9, MetricKind.MACD_HISTOGRAM),
+        "average_true_range": (MetricKind.AVERAGE_TRUE_RANGE_14,),
+        "momentum": (MetricKind.MOMENTUM_10,),
+        "annualized_volatility": (MetricKind.ANNUALIZED_VOLATILITY_20,),
+        "volume_trend": (MetricKind.VOLUME_TREND_20,),
+    }
+    found: list[MetricKind] = []
+    for item in missing:
+        prefix = item.split(" ", 1)[0]
+        try:
+            candidates: tuple[MetricKind, ...] = (MetricKind(prefix),)
+        except ValueError:
+            candidates = aliases.get(prefix, ())
+        for candidate in candidates:
+            if candidate not in found:
+                found.append(candidate)
+    return tuple(found)
+
+
+def _limitations(missing: Sequence[str]) -> tuple[LimitationKind, ...]:
+    limitations: list[LimitationKind] = []
+    joined = " ".join(missing)
+    if missing:
+        limitations.append(LimitationKind.MISSING_INPUTS)
+    if "incompatible" in joined:
+        limitations.append(LimitationKind.INCOMPATIBLE_INPUTS)
+    if "discarded" in joined:
+        limitations.append(LimitationKind.INVALID_ROWS_DISCARDED)
+    if "OHLCV" in joined:
+        limitations.append(LimitationKind.INCOMPLETE_OHLCV)
+    if any(
+        word in joined
+        for word in ("moving_average", "relative_strength", "macd", "momentum", "volatility")
+    ):
+        limitations.append(LimitationKind.INSUFFICIENT_HISTORY)
+    return tuple(dict.fromkeys(limitations))

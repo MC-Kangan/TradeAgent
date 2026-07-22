@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from math import isfinite
 
@@ -9,6 +9,7 @@ import pytest
 
 from trade_research.domain import InstrumentId, Observation
 from trade_research.providers import (
+    CapabilityName,
     CcxtPriceProvider,
     PricePoint,
     ProviderConfigurationError,
@@ -29,7 +30,7 @@ class StaticProvider:
         return self.observations
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
-        return self.prices
+        return tuple(replace(point, instrument=instrument) for point in self.prices)
 
 
 def test_builtin_skills_and_discovered_definitions_are_immutable() -> None:
@@ -51,6 +52,7 @@ def test_skill_registry_rejects_nested_mutable_definitions_and_is_frozen() -> No
     class MutableDefinition:
         name = "mutable"
         configuration: list[int]
+        required_capabilities: tuple[CapabilityName, ...] = ()
 
         def analyze(
             self, instrument: InstrumentId, providers: ProviderRegistry
@@ -312,13 +314,8 @@ def test_technical_skill_skips_duplicate_and_non_finite_rows_and_reports_partial
     non_finite = _price(50, float("nan"), 100.0)
     provider = StaticProvider(prices=(valid[-1], duplicate, non_finite, *valid[:-1]))
 
-    result = TechnicalSkill().analyze(instrument, ProviderRegistry({"prices": provider}))
-    factors = {item.metric: item.value for item in result.observations}
-
-    assert factors["price_return"] == 0.41
-    assert result.summary.startswith("partial data")
-    assert "discarded invalid or duplicate OHLCV" in result.summary
-    assert all(item.observed_at <= valid[-1].observed_at for item in result.observations)
+    with pytest.raises(ProviderConfigurationError, match="non-finite"):
+        TechnicalSkill().analyze(instrument, ProviderRegistry({"prices": provider}))
 
 
 def test_incomplete_ohlcv_produces_available_close_factors_and_partial_summary() -> None:

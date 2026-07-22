@@ -46,6 +46,7 @@ class ResearchApplication:
 
     async def run_skill(self, name: str, request: AnalysisRequest) -> JsonObject:
         selected = request.model_copy(update={"analysts": (name,)})
+        self.engine.validate_analysts(selected.analysts)
         return await self.research(selected)
 
     async def research(self, request: AnalysisRequest) -> JsonObject:
@@ -59,6 +60,7 @@ class ResearchApplication:
         if self.queue is None:
             raise RuntimeError("a job queue is required to start durable research")
         self.engine.skills.discover(request.analysts)
+        self.engine.validate_analysts(request.analysts)
         submission = self.queue.enqueue(request)
         return {"request_id": str(submission.request_id), "status": submission.status}
 

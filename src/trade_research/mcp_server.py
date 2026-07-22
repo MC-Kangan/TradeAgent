@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ContentBlock
 
 from trade_research.application import ResearchApplication
 from trade_research.domain import AnalysisRequest
@@ -21,6 +24,21 @@ BOUNDED_TOOL_NAMES = (
     "list_reports",
     "get_report",
 )
+
+
+class BoundedFastMCP(FastMCP):
+    """FastMCP boundary that never exposes rejected tool inputs or exception values."""
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        try:
+            result = await super().call_tool(name, arguments)
+        except Exception:
+            pass
+        else:
+            return result
+        raise ToolError("tool request rejected") from None
 
 
 class BoundedResearchTools:
@@ -65,11 +83,11 @@ class BoundedResearchTools:
         return self._application.get_report(request_id)
 
 
-def build_mcp_server(application: ResearchApplication) -> FastMCP:
+def build_mcp_server(application: ResearchApplication) -> BoundedFastMCP:
     """Register the exact public tool tuple with the official Python SDK."""
 
     tools = BoundedResearchTools(application)
-    server = FastMCP(
+    server = BoundedFastMCP(
         "trade-research",
         instructions="Bounded research and report retrieval only.",
         log_level="ERROR",

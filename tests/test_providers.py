@@ -11,6 +11,7 @@ from trade_research.domain import InstrumentId, Position
 from trade_research.providers import (
     LocalCsvParquetPriceProvider,
     LocalPortfolioProvider,
+    ProviderConfigurationError,
     ProviderRegistry,
     ReadOnlySqlPriceProvider,
     StooqPriceProvider,
@@ -188,10 +189,15 @@ def test_portfolio_provider_keeps_positions_in_memory() -> None:
 
 
 def test_provider_registry_is_immutable_and_requires_known_provider() -> None:
-    registry = ProviderRegistry({"prices": object()})
+    class Prices:
+        def price_history(self, instrument: InstrumentId) -> tuple[object, ...]:
+            del instrument
+            return ()
+
+    registry = ProviderRegistry({"prices": Prices()})  # type: ignore[dict-item]
 
     assert registry.require("prices") is registry.providers["prices"]
-    with pytest.raises(KeyError, match="prices_missing"):
-        registry.require("prices_missing")
+    with pytest.raises(ProviderConfigurationError, match="prices_missing"):
+        registry.require("prices_missing")  # type: ignore[arg-type]
     with pytest.raises(TypeError):
-        registry.providers["other"] = object()  # type: ignore[index]
+        registry.providers["other"] = Prices()  # type: ignore[index]

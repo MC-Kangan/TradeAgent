@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Mapping
+from datetime import datetime
 from enum import Enum
 from itertools import islice
 from pathlib import Path
@@ -10,12 +13,18 @@ from typing import Final
 from uuid import UUID
 
 from trade_research.domain import (
+    AnalysisMethod,
     AnalystResult,
-    Evidence,
+    Citation,
+    FailureCategory,
     InstrumentId,
+    LimitationKind,
     Observation,
+    ProviderKind,
+    ReportStatus,
     ResearchReport,
 )
+from trade_research.domain.provenance import normalize_provider_kind
 from trade_research.projection import project_observation_value
 
 MAX_EXPORT_RESULTS: Final = 16
@@ -43,40 +52,135 @@ def sanitize_report(report: ResearchReport) -> ResearchReport:
         request_id=report.request_id,
         instrument=safe_instrument,
         results=tuple(
-            _project_result(result) for result in islice(report.results, MAX_EXPORT_RESULTS)
+            _project_result(result, safe_instrument)
+            for result in islice(report.results, MAX_EXPORT_RESULTS)
         ),
         generated_at=report.generated_at,
     )
 
 
-def _project_result(result: AnalystResult) -> AnalystResult:
+def _project_result(result: AnalystResult, instrument: InstrumentId) -> AnalystResult:
     observations = tuple(
-        _project_observation(item) for item in islice(result.observations, MAX_EXPORT_OBSERVATIONS)
+        _project_observation(item, instrument)
+        for item in islice(result.observations, MAX_EXPORT_OBSERVATIONS)
     )
-    partial_summary = isinstance(result.summary, str) and (
-        result.summary.startswith("partial data")
-        or result.summary.startswith(f"{result.analyst} analysis partial with ")
-    )
-    state = "partial" if partial_summary else "complete"
+    if result.status is ReportStatus.FAILED:
+        status = ReportStatus.FAILED
+    elif result.status is ReportStatus.PARTIAL or not observations:
+        status = ReportStatus.PARTIAL
+    else:
+        status = ReportStatus.COMPLETE
+    failure_category = result.failure_category
+    if status is ReportStatus.PARTIAL and failure_category is FailureCategory.NONE:
+        failure_category = FailureCategory.INSUFFICIENT_DATA
+    limitations = list(result.limitations)
+    if not observations and LimitationKind.MISSING_INPUTS not in limitations:
+        limitations.append(LimitationKind.MISSING_INPUTS)
+    if result.evidence and LimitationKind.EVIDENCE_OMITTED not in limitations:
+        limitations.append(LimitationKind.EVIDENCE_OMITTED)
+    methods = list(result.methods)
+    for observation in observations:
+        algorithm = observation.provenance.get("algorithm")
+        window = observation.provenance.get("window")
+        if isinstance(algorithm, str) and isinstance(window, str):
+            method = AnalysisMethod(algorithm=algorithm, window=window)
+            if method not in methods:
+                methods.append(method)
+    citations = list(result.citations)
+    for observation in observations:
+        series_citation = _series_citation(observation)
+        if series_citation is not None and series_citation not in citations:
+            citations.append(series_citation)
+        for citation in _input_citations(observation):
+            if citation not in citations:
+                citations.append(citation)
+            if len(citations) >= MAX_EXPORT_EVIDENCE:
+                break
+        if len(citations) >= MAX_EXPORT_EVIDENCE:
+            break
+    for item in islice(result.evidence, MAX_EXPORT_EVIDENCE):
+        try:
+            provider = normalize_provider_kind(item.source)
+        except ValueError:
+            provider = ProviderKind.UNTRUSTED
+        citation = Citation(
+            provider=provider,
+            reference=f"sha256:{hashlib.sha256(item.content.encode()).hexdigest()}",
+            collected_at=item.collected_at,
+        )
+        if citation not in citations:
+            citations.append(citation)
     return AnalystResult(
         analyst=result.analyst,
-        instrument=_sanitize_instrument(result.instrument),
-        summary=f"{result.analyst} analysis {state} with {len(observations)} observations",
-        observations=observations,
-        evidence=tuple(
-            Evidence(
-                source="untrusted",
-                content="[CONTENT OMITTED]",
-                collected_at=item.collected_at,
-            )
-            for item in islice(result.evidence, MAX_EXPORT_EVIDENCE)
+        instrument=instrument,
+        summary=(
+            f"{result.analyst} analysis {status.value} with "
+            f"{len(observations)} numeric factors"
         ),
+        status=status,
+        missing_metrics=result.missing_metrics,
+        failure_category=failure_category,
+        limitations=tuple(limitations),
+        methods=tuple(methods),
+        inference=result.inference,
+        signal=result.signal,
+        citations=tuple(islice(citations, MAX_EXPORT_EVIDENCE)),
+        observations=observations,
+        evidence=(),
     )
 
 
-def _project_observation(observation: Observation) -> Observation:
+def _series_citation(observation: Observation) -> Citation | None:
+    provider_value = observation.provenance.get("input_provider_kind")
+    reference = observation.provenance.get("series_ref")
+    if not isinstance(reference, str):
+        return None
+    try:
+        return Citation(
+            provider=normalize_provider_kind(provider_value),
+            reference=reference,
+            collected_at=observation.observed_at,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _input_citations(observation: Observation) -> tuple[Citation, ...]:
+    inputs = observation.provenance.get("inputs")
+    if not isinstance(inputs, list):
+        return ()
+    citations: list[Citation] = []
+    for item in islice(inputs, MAX_EXPORT_EVIDENCE):
+        if not isinstance(item, Mapping):
+            continue
+        provider_reference = item.get("provider_reference")
+        if not isinstance(provider_reference, Mapping):
+            continue
+        provider_value = provider_reference.get("provider_kind")
+        if item.get("provider_kind") != provider_value:
+            continue
+        reference = provider_reference.get("reference")
+        observed_at = item.get("observed_at")
+        if not isinstance(reference, str) or not isinstance(observed_at, str):
+            continue
+        try:
+            provider = normalize_provider_kind(provider_value)
+            collected_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+            citation = Citation(
+                provider=provider,
+                reference=reference,
+                collected_at=collected_at,
+            )
+        except (TypeError, ValueError):
+            continue
+        if citation not in citations:
+            citations.append(citation)
+    return tuple(citations)
+
+
+def _project_observation(observation: Observation, instrument: InstrumentId) -> Observation:
     return Observation(
-        instrument=_sanitize_instrument(observation.instrument),
+        instrument=instrument,
         metric=observation.metric,
         value=project_observation_value(observation.value),
         source=observation.source,
@@ -104,24 +208,63 @@ def render_markdown(report: ResearchReport) -> str:
         f"- Generated: {safe.generated_at.isoformat()}",
     ]
     for result in safe.results:
-        lines.extend(("", f"## {result.analyst}", "", result.summary))
+        lines.extend(
+            (
+                "",
+                f"## {result.analyst}",
+                "",
+                result.summary,
+                "",
+                f"- Status: {result.status.value}",
+                f"- Failure category: {result.failure_category.value}",
+                f"- Inference: {result.inference.value}",
+                f"- Signal: {result.signal.value}",
+                "- Missing metrics: "
+                + (", ".join(item.value for item in result.missing_metrics) or "none"),
+                "- Limitations: "
+                + (", ".join(item.value for item in result.limitations) or "none"),
+            )
+        )
         if result.observations:
-            lines.extend(("", "| Metric | Value | As of |", "| --- | ---: | --- |"))
+            lines.extend(
+                (
+                    "",
+                    "| Metric | Value | As of | Source | Method | Window | Reference |",
+                    "| --- | ---: | --- | --- | --- | --- | --- |",
+                )
+            )
             for observation in result.observations:
                 value = json.dumps(observation.value, sort_keys=True)
                 observed_at = observation.observed_at.isoformat()
-                lines.append(f"| {observation.metric} | {value} | {observed_at} |")
-        if result.evidence:
-            lines.extend(("", "### Evidence"))
-            for evidence in result.evidence:
-                evidence_lines = evidence.content.splitlines() or [""]
-                source_lines = evidence.source.splitlines() or [""]
-                lines.extend(("", "> [UNTRUSTED EVIDENCE]"))
-                lines.extend(f"> {line}" for line in evidence_lines)
-                lines.extend(
-                    f"> {'Source: ' if index == 0 else ''}{line}"
-                    for index, line in enumerate(source_lines)
+                method = observation.provenance.get("algorithm", "-")
+                window = observation.provenance.get("window", "-")
+                reference = next(
+                    (
+                        observation.provenance[key]
+                        for key in ("series_ref", "reference", "snapshot_ref")
+                        if key in observation.provenance
+                    ),
+                    "-",
                 )
+                lines.append(
+                    f"| {observation.metric} | {value} | {observed_at} | "
+                    f"{observation.source.value} | {method} | {window} | {reference} |"
+                )
+        if result.citations:
+            lines.extend(
+                (
+                    "",
+                    "### Citations",
+                    "",
+                    "| Provider | Reference | Collected |",
+                    "| --- | --- | --- |",
+                )
+            )
+            lines.extend(
+                f"| {citation.provider.value} | {citation.reference} | "
+                f"{citation.collected_at.isoformat()} |"
+                for citation in result.citations
+            )
     return "\n".join(lines) + "\n"
 
 

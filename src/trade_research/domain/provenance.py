@@ -27,6 +27,7 @@ class ProviderKind(StrEnum):
     INTERNAL = "internal"
     FIXTURE = "fixture"
     DERIVED = "derived"
+    UNTRUSTED = "untrusted"
 
 
 class MetricKind(StrEnum):
@@ -114,13 +115,36 @@ class PeriodRole(StrEnum):
     PRIOR = "prior"
 
 
+class DerivedAlgorithm(StrEnum):
+    DIRECT_VALUE = "direct_value"
+    PERIOD_GROWTH = "period_growth"
+    RATIO = "ratio"
+    FULL_HISTORY_RETURN = "full_history_return"
+    SIMPLE_MOVING_AVERAGE = "simple_moving_average"
+    EXPONENTIAL_MOVING_AVERAGE = "exponential_moving_average"
+    WILDER_RSI = "wilder_rsi"
+    MACD = "macd"
+    MACD_SIGNAL = "macd_signal"
+    MACD_HISTOGRAM = "macd_histogram"
+    BOLLINGER_BAND = "bollinger_band"
+    WILDER_ATR = "wilder_atr"
+    MOMENTUM = "momentum"
+    ANNUALIZED_VOLATILITY = "annualized_volatility"
+    VOLUME_TREND = "volume_trend"
+
+
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 _CURRENCY_PATTERN = re.compile(r"[A-Z]{3}")
-_REFERENCE_KEYS = frozenset({"reference", "period_ref", "prior_period_ref", "snapshot_ref"})
-_TIMESTAMP_KEYS = frozenset({"observed_at", "timestamp", "valuation_as_of"})
+_REFERENCE_KEYS = frozenset(
+    {"reference", "period_ref", "prior_period_ref", "snapshot_ref", "series_ref"}
+)
+_TIMESTAMP_KEYS = frozenset(
+    {"observed_at", "timestamp", "valuation_as_of", "start_at", "end_at"}
+)
 _CLOSED_SCALAR_KEYS = frozenset(
     {
         "provider_kind",
+        "input_provider_kind",
         "metric",
         "vendor_field",
         "period_type",
@@ -129,6 +153,9 @@ _CLOSED_SCALAR_KEYS = frozenset(
         "period_end",
         *_TIMESTAMP_KEYS,
         *_REFERENCE_KEYS,
+        "algorithm",
+        "window",
+        "point_count",
     }
 )
 _REFERENCE_FIELDS = frozenset({"provider_kind", "vendor_field", "reference"})
@@ -249,7 +276,7 @@ def _enum_value(value: object, enum_type: type[StrEnum]) -> JsonValue | None:
 
 
 def _sanitize_scalar(key: str, value: object) -> JsonValue | None:
-    if key == "provider_kind":
+    if key in {"provider_kind", "input_provider_kind"}:
         return _enum_value(value, ProviderKind)
     if key == "metric":
         return _enum_value(value, MetricKind)
@@ -259,6 +286,20 @@ def _sanitize_scalar(key: str, value: object) -> JsonValue | None:
         return _enum_value(value, PeriodType)
     if key == "period_role":
         return _enum_value(value, PeriodRole)
+    if key == "algorithm":
+        return _enum_value(value, DerivedAlgorithm)
+    if key == "window":
+        return (
+            cast(JsonValue, value)
+            if isinstance(value, str) and re.fullmatch(r"[a-z0-9_]{1,64}", value)
+            else None
+        )
+    if key == "point_count":
+        return (
+            cast(JsonValue, value)
+            if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 4096
+            else None
+        )
     if key == "currency":
         return _pattern_value(value, _CURRENCY_PATTERN)
     if key == "period_end":

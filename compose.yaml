@@ -11,8 +11,14 @@ services:
     restart: unless-stopped
     environment:
       TRADE_RESEARCH_API_TOKEN_FILE: /run/secrets/api-token
+      TRADE_RESEARCH_CONTAINER_INTERNAL_BIND: compose-internal-v1
+      TRADE_RESEARCH_CONFIG: ${TRADE_RESEARCH_CONFIG:-/var/lib/trade-research-sources/config.json}
       TRADE_RESEARCH_DATA_DIR: /var/lib/trade-research
-      TRADE_RESEARCH_PROVIDER: ${TRADE_RESEARCH_PROVIDER:-}
+      TRADE_RESEARCH_PRICE_PROVIDER: ${TRADE_RESEARCH_PRICE_PROVIDER:-}
+      TRADE_RESEARCH_PRICE_PATH: ${TRADE_RESEARCH_PRICE_PATH:-}
+      TRADE_RESEARCH_FUNDAMENTAL_PROVIDER: ${TRADE_RESEARCH_FUNDAMENTAL_PROVIDER:-}
+      TRADE_RESEARCH_FUNDAMENTAL_PATH: ${TRADE_RESEARCH_FUNDAMENTAL_PATH:-}
+      TRADE_RESEARCH_CCXT_EXCHANGE: ${TRADE_RESEARCH_CCXT_EXCHANGE:-}
     secrets:
       - source: api-token
         target: api-token
@@ -21,6 +27,10 @@ services:
       - /tmp
     volumes:
       - research-data:/var/lib/trade-research
+      - type: bind
+        source: ${TRADE_RESEARCH_SOURCE_DIR:-./sources}
+        target: /var/lib/trade-research-sources
+        read_only: true
 
   research-worker:
     image: trade-research:local
@@ -34,11 +44,20 @@ services:
     restart: unless-stopped
     environment:
       TRADE_RESEARCH_DATA_DIR: /var/lib/trade-research
-      TRADE_RESEARCH_PROVIDER: ${TRADE_RESEARCH_PROVIDER:-}
+      TRADE_RESEARCH_CONFIG: ${TRADE_RESEARCH_CONFIG:-/var/lib/trade-research-sources/config.json}
+      TRADE_RESEARCH_PRICE_PROVIDER: ${TRADE_RESEARCH_PRICE_PROVIDER:-}
+      TRADE_RESEARCH_PRICE_PATH: ${TRADE_RESEARCH_PRICE_PATH:-}
+      TRADE_RESEARCH_FUNDAMENTAL_PROVIDER: ${TRADE_RESEARCH_FUNDAMENTAL_PROVIDER:-}
+      TRADE_RESEARCH_FUNDAMENTAL_PATH: ${TRADE_RESEARCH_FUNDAMENTAL_PATH:-}
+      TRADE_RESEARCH_CCXT_EXCHANGE: ${TRADE_RESEARCH_CCXT_EXCHANGE:-}
     tmpfs:
       - /tmp
     volumes:
       - research-data:/var/lib/trade-research
+      - type: bind
+        source: ${TRADE_RESEARCH_SOURCE_DIR:-./sources}
+        target: /var/lib/trade-research-sources
+        read_only: true
 
   hermes:
     profiles: ["hermes"]

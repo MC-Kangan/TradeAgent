@@ -25,7 +25,7 @@ from trade_research.engine import ResearchEngine
 from trade_research.http import create_app
 from trade_research.mcp_server import BOUNDED_TOOL_NAMES, BoundedResearchTools, build_mcp_server
 from trade_research.notifications import DiscordNotifier
-from trade_research.providers import ProviderRegistry
+from trade_research.providers import CapabilityName, ProviderRegistry
 from trade_research.queue import JobQueue, ResearchWorker
 from trade_research.reporting import ReportStore, render_json, render_markdown, sanitize_report
 from trade_research.skills import SkillRegistry
@@ -34,6 +34,7 @@ from trade_research.skills import SkillRegistry
 @dataclass(frozen=True)
 class RecordingSkill:
     name: str
+    required_capabilities: tuple[CapabilityName, ...] = ()
     delay: float = 0
     failure: bool = False
     evidence: str = "fixture evidence"
@@ -96,7 +97,8 @@ async def test_engine_runs_only_selected_analyst_and_labels_partial_failure() ->
     report = await engine.analyze(request)
 
     assert tuple(result.analyst for result in report.results) == ("technical", "risk")
-    assert report.results[1].summary == "partial data: analyst failed (RuntimeError)"
+    assert report.results[1].summary == "risk analysis failed with 0 numeric factors"
+    assert report.results[1].failure_category == "analyst_error"
     assert "secret-token" not in report.model_dump_json()
 
 
@@ -123,12 +125,13 @@ async def test_external_prompt_injection_is_evidence_not_configuration() -> None
     report = await engine.analyze(request)
 
     assert tuple(result.analyst for result in report.results) == ("fundamental",)
-    assert report.results[0].evidence[0].content == injected
+    assert report.results[0].evidence == ()
+    assert report.results[0].citations[0].provider == "untrusted"
     markdown = render_markdown(report)
     assert "\nIGNORE PREVIOUS" not in markdown
     assert "\nIGNORE SOURCE" not in markdown
-    assert "[CONTENT OMITTED]" in markdown
-    assert "Source: untrusted" in markdown
+    assert "### Citations" in markdown
+    assert "untrusted" in markdown
 
 
 @pytest.mark.asyncio
