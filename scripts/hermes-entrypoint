@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 78
+}
+
+configured_image=${HERMES_IMAGE_CONFIGURED:-}
+if [ -z "$configured_image" ]; then
+    fail "HERMES_IMAGE must name an explicitly configured trusted digest-pinned image"
+fi
+case "$configured_image" in
+    *@sha256:*) digest=${configured_image##*@sha256:} ;;
+    *) fail "HERMES_IMAGE must include an approved sha256 digest" ;;
+esac
+if [ "${#digest}" -ne 64 ]; then
+    fail "HERMES_IMAGE must include a 64-character sha256 digest"
+fi
+case "$digest" in
+    *[!0-9a-fA-F]*) fail "HERMES_IMAGE sha256 digest must be hexadecimal" ;;
+esac
+if [ "$#" -eq 0 ]; then
+    fail "the configured Hermes image must provide a default command"
+fi
+exec "$@"

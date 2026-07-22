@@ -60,4 +60,5 @@ if [ "${1:-}" = "--print-resolution" ]; then
     printf '%s\n' "$root"
     exit 0
 fi
+cd "$root"
 exec "$command_path" mcp

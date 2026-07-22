@@ -1,6 +1,10 @@
 services:
   research-api:
-    build: .
+    image: trade-research:local
+    build:
+      context: .
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     command: ["trade-research", "serve", "--host", "0.0.0.0", "--port", "8000"]
     read_only: true
     init: true
@@ -19,7 +23,11 @@ services:
       - research-data:/var/lib/trade-research
 
   research-worker:
-    build: .
+    image: trade-research:local
+    build:
+      context: .
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     command: ["trade-research", "worker"]
     read_only: true
     init: true
@@ -31,6 +39,29 @@ services:
       - /tmp
     volumes:
       - research-data:/var/lib/trade-research
+
+  hermes:
+    profiles: ["hermes"]
+    image: ${HERMES_IMAGE:-trade-research:local}
+    entrypoint: ["/trade-research/hermes-entrypoint"]
+    read_only: true
+    init: true
+    restart: unless-stopped
+    depends_on:
+      research-api:
+        condition: service_started
+    environment:
+      HERMES_IMAGE_CONFIGURED: ${HERMES_IMAGE:-}
+      TRADE_RESEARCH_API_URL: http://research-api:8000
+      TRADE_RESEARCH_API_TOKEN_FILE: /run/secrets/api-token
+    secrets:
+      - source: api-token
+        target: api-token
+        mode: 0444
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./scripts/hermes-entrypoint:/trade-research/hermes-entrypoint:ro
 
 volumes:
   research-data:

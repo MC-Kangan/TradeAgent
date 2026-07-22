@@ -4,13 +4,30 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import shlex
+import shutil
 import subprocess
 import sys
+import uuid
+from enum import Enum
 from pathlib import Path
 
 SUPPORTED_PLATFORMS = frozenset({"darwin", "linux"})
 SUPPORTED_PYTHON = {(3, 12), (3, 13)}
+_INTERPRETER_PROBE = (
+    "import json,sys; "
+    'print(json.dumps({"version": list(sys.version_info[:2]), "prefix": sys.prefix}))'
+)
+
+
+class EnvironmentState(Enum):
+    ABSENT = "absent"
+    EMPTY = "empty"
+    CURRENT = "current"
+    STALE = "stale"
+    UNKNOWN = "unknown"
 
 
 def main() -> int:
@@ -30,9 +47,9 @@ def main() -> int:
     project_root = (options.project_root or Path(__file__).resolve().parents[1]).resolve()
     _require_project(project_root)
     environment = project_root / ".venv"
+    prepare_environment(environment, dry_run=options.dry_run)
     python = environment / "bin" / "python"
     commands = [
-        _venv_command(environment),
         [
             str(python),
             "-m",
@@ -80,19 +97,89 @@ def _require_project(project_root: Path) -> None:
         raise SystemExit(f"project root is missing required files: {', '.join(missing)}")
 
 
-def _venv_command(environment: Path) -> list[str]:
-    if environment.is_symlink():
-        raise SystemExit("refusing to use a symlinked .venv directory")
-    if environment.exists() and not environment.is_dir():
-        raise SystemExit("refusing to replace a non-directory .venv path")
-    command = [sys.executable, "-m", "venv"]
-    if environment.exists() and _venv_version(environment) != sys.version_info[:2]:
-        command.append("--clear")
-    command.append(str(environment))
-    return command
+def prepare_environment(environment: Path, *, dry_run: bool) -> None:
+    """Create or safely replace one interpreter-validated virtual environment."""
+
+    state = _environment_state(environment)
+    if state is EnvironmentState.UNKNOWN:
+        raise SystemExit("refusing to modify unknown non-empty .venv directory")
+    if state is EnvironmentState.CURRENT:
+        print(f"reuse validated virtual environment: {environment}")
+        return
+    if state in {EnvironmentState.ABSENT, EnvironmentState.EMPTY}:
+        command = [sys.executable, "-m", "venv", str(environment)]
+        print(shlex.join(command))
+        if not dry_run:
+            subprocess.run(command, check=True)
+            _require_current_environment(environment)
+        return
+    _replace_stale_environment(environment, dry_run=dry_run)
 
 
-def _venv_version(environment: Path) -> tuple[int, int] | None:
+def _replace_stale_environment(environment: Path, *, dry_run: bool) -> None:
+    token = uuid.uuid4().hex
+    replacement = environment.parent / f".venv.bootstrap-new-{token}"
+    backup = environment.parent / f".venv.bootstrap-backup-{token}"
+    create = [sys.executable, "-m", "venv", str(replacement)]
+    refresh = [sys.executable, "-m", "venv", "--upgrade", str(environment)]
+    print(f"create replacement virtual environment: {shlex.join(create)}")
+    print(f"atomically replace: {environment} -> {backup}; {replacement} -> {environment}")
+    print(f"refresh replacement at final path: {shlex.join(refresh)}")
+    print(f"remove validated backup after successful replacement: {backup}")
+    if dry_run:
+        return
+
+    backup_created = False
+    replacement_installed = False
+    try:
+        subprocess.run(create, check=True)
+        _require_current_environment(replacement)
+        environment.rename(backup)
+        backup_created = True
+        replacement.rename(environment)
+        replacement_installed = True
+        subprocess.run(refresh, check=True)
+        _require_current_environment(environment)
+    except Exception:
+        if replacement_installed:
+            if environment.exists() and not environment.is_symlink():
+                shutil.rmtree(environment)
+        if backup_created:
+            backup.rename(environment)
+        raise
+    finally:
+        if replacement.exists() and not replacement.is_symlink():
+            shutil.rmtree(replacement)
+    shutil.rmtree(backup)
+
+
+def _environment_state(environment: Path) -> EnvironmentState:
+    if not environment.exists() and not environment.is_symlink():
+        return EnvironmentState.ABSENT
+    if environment.is_symlink() or not environment.is_dir():
+        return EnvironmentState.UNKNOWN
+    try:
+        if next(environment.iterdir(), None) is None:
+            return EnvironmentState.EMPTY
+    except OSError:
+        return EnvironmentState.UNKNOWN
+    configured = _configured_version(environment)
+    actual = _probe_interpreter(environment)
+    if configured is None or actual is None:
+        return EnvironmentState.UNKNOWN
+    actual_version, actual_prefix = actual
+    try:
+        prefix_matches = actual_prefix.resolve() == environment.resolve()
+    except OSError:
+        return EnvironmentState.UNKNOWN
+    if not prefix_matches:
+        return EnvironmentState.UNKNOWN
+    if configured == sys.version_info[:2] and actual_version == sys.version_info[:2]:
+        return EnvironmentState.CURRENT
+    return EnvironmentState.STALE
+
+
+def _configured_version(environment: Path) -> tuple[int, int] | None:
     try:
         lines = (environment / "pyvenv.cfg").read_text().splitlines()[:32]
     except OSError:
@@ -106,6 +193,41 @@ def _venv_version(environment: Path) -> tuple[int, int] | None:
             except (IndexError, ValueError):
                 return None
     return None
+
+
+def _probe_interpreter(environment: Path) -> tuple[tuple[int, int], Path] | None:
+    interpreter = environment / "bin" / "python"
+    if not interpreter.exists() or not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+        return None
+    try:
+        completed = subprocess.run(
+            [str(interpreter), "-c", _INTERPRETER_PROBE],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        payload = json.loads(completed.stdout)
+        version = payload["version"]
+        prefix = payload["prefix"]
+        if not isinstance(version, list) or len(version) != 2 or not isinstance(prefix, str):
+            return None
+        parsed_version = int(version[0]), int(version[1])
+    except (
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        subprocess.SubprocessError,
+    ):
+        return None
+    return parsed_version, Path(prefix)
+
+
+def _require_current_environment(environment: Path) -> None:
+    if _environment_state(environment) is not EnvironmentState.CURRENT:
+        raise RuntimeError("new virtual environment failed interpreter validation")
 
 
 if __name__ == "__main__":
