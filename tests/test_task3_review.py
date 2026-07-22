@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +45,24 @@ class FixedSkill:
             instrument=instrument,
             summary="complete",
         )
+
+
+class CountingMapping(Mapping[str, object]):
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self.iterations = 0
+
+    def __getitem__(self, key: str) -> object:
+        del key
+        return "unknown narrative"
+
+    def __iter__(self) -> Iterator[str]:
+        for index in range(self.size):
+            self.iterations += 1
+            yield f"unknown-{index}"
+
+    def __len__(self) -> int:
+        return self.size
 
 
 def _engine() -> ResearchEngine:
@@ -345,7 +365,7 @@ async def test_closed_output_projection_drops_sensitive_families_everywhere(
         instrument=request.instrument,
         metric="close",
         value={
-            "safeMetric": 42,
+            "score": 42,
             "position": {"quantity": 900, "average_cost": 2},
             "positions": ["ACME 900"],
             "portfolio": {"value": 1},
@@ -449,7 +469,7 @@ async def test_closed_output_projection_drops_sensitive_families_everywhere(
     for output in outputs:
         for value in forbidden:
             assert value not in output
-    assert '"safeMetric": 42' in outputs[0]
+    assert '"score": 42' in outputs[0]
 
 
 @pytest.mark.asyncio
@@ -567,6 +587,9 @@ async def test_semantic_projection_blocks_credentials_and_shorthand_positions(
             "hunter2-secret",
             "ACME 900 @ 2",
             "owned 900 ACME at average cost 2",
+            "short interest 10 percent",
+            "long term 10 year growth",
+            "token is bullish",
         ):
             assert forbidden not in output
         compacted = output.replace(" ", "")
@@ -576,11 +599,374 @@ async def test_semantic_projection_blocks_credentials_and_shorthand_positions(
     for output in outputs[:4]:
         assert "revenue_growth" in output
         assert "0.125" in output
-        assert "short interest 10 percent" in output
-        assert "long term 10 year growth" in output
-        assert "token is bullish" in output
+        assert "safe-language analysis complete with 0 observations" in output
     assert set(sent[0]) == {"content"}
     assert "Research report ready" in sent[0]["content"]
+
+
+@pytest.mark.parametrize(
+    "analyst",
+    (
+        "Fundamental",
+        "risk analyst",
+        "risk_analyst",
+        "token=is-secret",
+        "-risk",
+        "risk-",
+        "a" * 65,
+    ),
+)
+def test_analyst_names_are_bounded_slug_identifiers(analyst: str) -> None:
+    instrument = InstrumentId(symbol="ACME", market="US")
+
+    with pytest.raises(ValidationError):
+        AnalysisRequest(instrument=instrument, analysts=(analyst,))
+    with pytest.raises(ValidationError):
+        AnalystResult(
+            analyst=analyst,
+            instrument=instrument,
+            summary="complete",
+        )
+
+    unsafe_result = AnalystResult.model_construct(
+        analyst=analyst,
+        instrument=instrument,
+        summary="complete",
+        observations=(),
+        evidence=(),
+    )
+    unsafe_report = ResearchReport(
+        request_id=uuid4(),
+        instrument=instrument,
+        results=(unsafe_result,),
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    with pytest.raises(ValidationError):
+        render_json(unsafe_report)
+
+
+@pytest.mark.asyncio
+async def test_export_projection_only_serializes_closed_research_values(tmp_path: Path) -> None:
+    request = _request()
+    forbidden = (
+        "token is token-live-987654",
+        "secret is moonbase-secret",
+        "bought 900 ACME at 2",
+        "900 stock units of ACME",
+        "unclassified provider narrative",
+        "unknown-shaped-leaf",
+    )
+    factor = Observation(
+        instrument=request.instrument,
+        metric="revenue_growth",
+        value={
+            "value": 0.125,
+            "values": [
+                1.0,
+                True,
+                None,
+                {"score": 0.75, "status": "partial"},
+                forbidden[-1],
+                {"value": forbidden[4]},
+                float("nan"),
+                float("inf"),
+                *range(100),
+            ],
+            "status": "complete",
+            "signal": "bullish",
+            "currency": "USD",
+            "label": "ACME",
+            "note": forbidden[0],
+            "payload": list(forbidden[1:]),
+            "unit": "stock",
+            "arbitrary": {"value": 900, "label": forbidden[-1]},
+        },
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    narrative = Observation(
+        instrument=request.instrument,
+        metric="close",
+        value="; ".join(forbidden),
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    result = AnalystResult(
+        analyst="event-driven",
+        instrument=request.instrument,
+        summary="; ".join(forbidden),
+        observations=(factor, narrative),
+        evidence=(
+            Evidence(
+                source=f"provider {forbidden[0]}",
+                content="; ".join(forbidden),
+                collected_at=datetime(2026, 7, 22, tzinfo=UTC),
+            ),
+        ),
+    )
+    report = ResearchReport(
+        request_id=request.request_id,
+        instrument=request.instrument,
+        results=(result,),
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    queue_path = tmp_path / "jobs.sqlite3"
+    queue = JobQueue(queue_path)
+    submission = queue.enqueue(request)
+    claim = queue.claim_next()
+    assert claim is not None and claim.claim_token is not None
+    queue.complete(request.request_id, report, claim.claim_token)
+    with sqlite3.connect(queue_path) as connection:
+        queued_json = connection.execute(
+            "SELECT result_json FROM jobs WHERE request_id = ?", (str(request.request_id),)
+        ).fetchone()[0]
+
+    report_directory = tmp_path / "reports"
+    store = ReportStore(report_directory)
+    store.save(report)
+
+    sent: list[dict[str, str]] = []
+
+    async def sender(target: str, payload: dict[str, str]) -> None:
+        del target
+        sent.append(payload)
+
+    await DiscordNotifier("https://discord.test/webhook", sender=sender).notify(
+        report, f"report:{request.request_id}"
+    )
+
+    serialized_outputs = (
+        render_json(report),
+        render_markdown(report),
+        queued_json,
+        queue.get(submission.request_id).result.model_dump_json(),  # type: ignore[union-attr]
+        (report_directory / f"{request.request_id}.json").read_text(encoding="utf-8"),
+        (report_directory / f"{request.request_id}.md").read_text(encoding="utf-8"),
+        store.get(str(request.request_id)).model_dump_json(),
+        json.dumps(sent[0]),
+    )
+    for output in serialized_outputs:
+        for narrative_text in forbidden:
+            assert narrative_text not in output
+
+    for output in serialized_outputs[:-1]:
+        assert "event-driven analysis complete with 2 observations" in output
+        assert "revenue_growth" in output
+        assert "0.125" in output
+        assert "complete" in output
+        assert "bullish" in output
+        assert "USD" in output
+        assert "untrusted" in output
+        assert "[CONTENT OMITTED]" in output
+        assert "NaN" not in output
+        assert "Infinity" not in output
+    exported = json.loads(serialized_outputs[0])
+    exported_observations = exported["results"][0]["observations"]
+    assert exported_observations[0]["value"] == {
+        "currency": "USD",
+        "signal": "bullish",
+        "status": "complete",
+        "value": 0.125,
+        "values": [1.0, True, None, {"score": 0.75, "status": "partial"}, {}, *range(56)],
+    }
+    assert exported_observations[1]["value"] is None
+    assert sent == [{"content": f"Research report ready: ACME | report:{request.request_id}"}]
+
+
+def test_export_projection_bounds_integer_magnitude_for_persistence(tmp_path: Path) -> None:
+    request = _request()
+    observation = Observation(
+        instrument=request.instrument,
+        metric="revenue_growth",
+        value={"value": 10**5000, "score": 1},
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    result = AnalystResult(
+        analyst="fundamental",
+        instrument=request.instrument,
+        summary="provider supplied an oversized integer",
+        observations=(observation,),
+    )
+    report = ResearchReport(
+        request_id=request.request_id,
+        instrument=request.instrument,
+        results=(result,),
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    rendered = render_json(report)
+    queue = JobQueue(tmp_path / "jobs.sqlite3")
+    queue.enqueue(request)
+    claim = queue.claim_next()
+    assert claim is not None and claim.claim_token is not None
+    queue.complete(request.request_id, report, claim.claim_token)
+    store = ReportStore(tmp_path / "reports")
+    store.save(report)
+
+    direct_value = json.loads(rendered)["results"][0]["observations"][0]["value"]
+    queued = queue.get(request.request_id)
+    stored = store.get(str(request.request_id))
+    assert direct_value == {"score": 1}
+    assert queued.status == "succeeded"
+    assert queued.result is not None
+    assert queued.result.results[0].observations[0].value == {"score": 1}
+    assert stored.results[0].observations[0].value == {"score": 1}
+
+
+def test_export_projection_caps_report_collections_in_raw_storage(tmp_path: Path) -> None:
+    request = _request()
+    observation = Observation(
+        instrument=request.instrument,
+        metric="revenue_growth",
+        value=0.125,
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    evidence = Evidence(
+        source="provider narrative",
+        content="unknown narrative",
+        collected_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    results = tuple(
+        AnalystResult(
+            analyst=f"analyst-{index}",
+            instrument=request.instrument,
+            summary="provider narrative",
+            observations=(observation,) * 300,
+            evidence=(evidence,) * 70,
+        )
+        for index in range(20)
+    )
+    report = ResearchReport(
+        request_id=request.request_id,
+        instrument=request.instrument,
+        results=results,
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    rendered = render_json(report)
+    queue_path = tmp_path / "jobs.sqlite3"
+    queue = JobQueue(queue_path)
+    queue.enqueue(request)
+    claim = queue.claim_next()
+    assert claim is not None and claim.claim_token is not None
+    queue.complete(request.request_id, report, claim.claim_token)
+    with sqlite3.connect(queue_path) as connection:
+        queued_json = connection.execute(
+            "SELECT result_json FROM jobs WHERE request_id = ?", (str(request.request_id),)
+        ).fetchone()[0]
+
+    report_directory = tmp_path / "reports"
+    ReportStore(report_directory).save(report)
+    stored_json = (report_directory / f"{request.request_id}.json").read_text(encoding="utf-8")
+
+    for payload in map(json.loads, (rendered, queued_json, stored_json)):
+        assert len(payload["results"]) == 16
+        assert all(len(result["observations"]) == 256 for result in payload["results"])
+        assert all(len(result["evidence"]) == 64 for result in payload["results"])
+
+
+def test_export_projection_bounds_provenance_in_raw_storage(tmp_path: Path) -> None:
+    request = _request()
+    bounded = Observation(
+        instrument=request.instrument,
+        metric="revenue_growth",
+        value=0.125,
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+        provenance={
+            "inputs": [
+                {
+                    "metric": "revenue_growth",
+                    "value": index,
+                    "inputs": [{"value": index}] * 100,
+                }
+                for index in range(1000)
+            ]
+        },
+    )
+    constructed = bounded.model_copy(
+        update={
+            "provenance": {
+                "inputs": [
+                    {"value": 10**5000},
+                    {"inputs": [{"inputs": [{"inputs": [{"value": 42}]}]}]},
+                ]
+            }
+        }
+    )
+    result = AnalystResult(
+        analyst="fundamental",
+        instrument=request.instrument,
+        summary="provider narrative",
+        observations=(bounded, constructed),
+    )
+    report = ResearchReport(
+        request_id=request.request_id,
+        instrument=request.instrument,
+        results=(result,),
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    rendered = render_json(report)
+    queue_path = tmp_path / "jobs.sqlite3"
+    queue = JobQueue(queue_path)
+    queue.enqueue(request)
+    claim = queue.claim_next()
+    assert claim is not None and claim.claim_token is not None
+    queue.complete(request.request_id, report, claim.claim_token)
+    with sqlite3.connect(queue_path) as connection:
+        queued_json = connection.execute(
+            "SELECT result_json FROM jobs WHERE request_id = ?", (str(request.request_id),)
+        ).fetchone()[0]
+
+    report_directory = tmp_path / "reports"
+    ReportStore(report_directory).save(report)
+    stored_json = (report_directory / f"{request.request_id}.json").read_text(encoding="utf-8")
+
+    for payload in map(json.loads, (rendered, queued_json, stored_json)):
+        observations = payload["results"][0]["observations"]
+        inputs = observations[0]["provenance"]["inputs"]
+        assert len(inputs) == 64
+        assert all(len(item["inputs"]) == 64 for item in inputs)
+        assert observations[1]["provenance"] == {}
+
+
+def test_export_projection_bounds_provider_reference_mapping_iteration() -> None:
+    request = _request()
+    provider_reference = CountingMapping(10_000)
+    observation = Observation(
+        instrument=request.instrument,
+        metric="revenue_growth",
+        value=0.125,
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    ).model_copy(
+        update={
+            "provenance": {
+                "inputs": [{"provider_reference": provider_reference}],
+            }
+        }
+    )
+    result = AnalystResult(
+        analyst="fundamental",
+        instrument=request.instrument,
+        summary="provider narrative",
+        observations=(observation,),
+    )
+    report = ResearchReport(
+        request_id=request.request_id,
+        instrument=request.instrument,
+        results=(result,),
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    payload = json.loads(render_json(report))
+
+    assert provider_reference.iterations == 64
+    assert payload["results"][0]["observations"][0]["provenance"] == {}
 
 
 def test_report_format_is_closed_and_http_distinguishes_422_from_404(tmp_path: Path) -> None:

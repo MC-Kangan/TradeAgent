@@ -45,6 +45,8 @@ ASIAN_MARKETS = frozenset(
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
 MAX_ANALYSTS = 16
+ANALYST_PATTERN = r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+AnalystName = Annotated[str, Field(min_length=1, max_length=64, pattern=ANALYST_PATTERN)]
 SYMBOL_PATTERN = r"[A-Za-z0-9^][A-Za-z0-9._:/^-]{0,31}"
 MarketSymbol = Annotated[str, Field(min_length=1, max_length=32, pattern=SYMBOL_PATTERN)]
 _SYMBOL_PATTERN = re.compile(SYMBOL_PATTERN, re.IGNORECASE)
@@ -120,7 +122,7 @@ class AnalysisRequest(DomainModel):
 
     request_id: UUID = Field(default_factory=uuid4)
     instrument: InstrumentId
-    analysts: tuple[NonEmptyText, ...] = Field(
+    analysts: tuple[AnalystName, ...] = Field(
         default=("fundamental", "technical"), min_length=1, max_length=MAX_ANALYSTS
     )
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
@@ -181,7 +183,7 @@ class Evidence(DomainModel):
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
-    analyst: NonEmptyText
+    analyst: AnalystName
     instrument: InstrumentId
     summary: NonEmptyText
     observations: tuple[Observation, ...] = ()

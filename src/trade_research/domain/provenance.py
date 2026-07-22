@@ -7,7 +7,8 @@ import re
 from collections.abc import Mapping
 from datetime import date, datetime
 from enum import StrEnum
-from typing import cast
+from itertools import islice
+from typing import Any, Final, cast
 
 from pydantic import JsonValue
 
@@ -132,6 +133,9 @@ _CLOSED_SCALAR_KEYS = frozenset(
 )
 _REFERENCE_FIELDS = frozenset({"provider_kind", "vendor_field", "reference"})
 _OHLCV_FIELDS = frozenset({"close", "high", "low", "open", "volume"})
+MAX_PROVENANCE_DEPTH: Final = 3
+MAX_PROVENANCE_ITEMS: Final = 64
+MAX_PROVENANCE_INTEGER: Final = 10**308 - 1
 
 
 def normalize_provider_kind(value: object) -> ProviderKind:
@@ -163,48 +167,63 @@ def normalize_metric_kind(value: object) -> MetricKind:
 def sanitize_provenance(provenance: Mapping[str, object]) -> dict[str, JsonValue]:
     """Retain only values accepted by the closed typed provenance schema."""
 
+    return _sanitize_provenance(provenance, depth=0)
+
+
+def _sanitize_provenance(provenance: Mapping[Any, object], *, depth: int) -> dict[str, JsonValue]:
     sanitized: dict[str, JsonValue] = {}
-    for key, value in provenance.items():
+    for key, value in islice(provenance.items(), MAX_PROVENANCE_ITEMS):
+        if not isinstance(key, str):
+            continue
         if key in _CLOSED_SCALAR_KEYS:
             validated = _sanitize_scalar(key, value)
             if validated is not None:
                 sanitized[key] = validated
-        elif key == "inputs" and isinstance(value, list | tuple):
-            sanitized["inputs"] = [
+        elif key == "inputs" and depth < MAX_PROVENANCE_DEPTH and isinstance(value, list | tuple):
+            inputs = [
                 item
-                for item in (_sanitize_input(candidate) for candidate in value)
+                for item in (
+                    _sanitize_input(candidate, depth=depth + 1)
+                    for candidate in islice(value, MAX_PROVENANCE_ITEMS)
+                )
                 if item is not None
             ]
+            if inputs:
+                sanitized["inputs"] = cast(JsonValue, inputs)
     return sanitized
 
 
 def sanitize_provider_reference(provenance: Mapping[str, object]) -> dict[str, JsonValue]:
     """Retain only provider kind, known vendor field, and opaque content hash."""
 
-    sanitized = sanitize_provenance(provenance)
-    return {key: value for key, value in sanitized.items() if key in _REFERENCE_FIELDS}
+    return _sanitize_provider_reference(provenance)
 
 
-def _sanitize_input(value: object) -> dict[str, JsonValue] | None:
+def _sanitize_provider_reference(provenance: Mapping[Any, object]) -> dict[str, JsonValue]:
+    sanitized: dict[str, JsonValue] = {}
+    for key, value in islice(provenance.items(), MAX_PROVENANCE_ITEMS):
+        if not isinstance(key, str) or key not in _REFERENCE_FIELDS:
+            continue
+        validated = _sanitize_scalar(key, value)
+        if validated is not None:
+            sanitized[key] = validated
+    return sanitized
+
+
+def _sanitize_input(value: object, *, depth: int) -> dict[str, JsonValue] | None:
     if not isinstance(value, Mapping):
         return None
-    sanitized = sanitize_provenance(
-        {str(key): candidate for key, candidate in value.items() if isinstance(key, str)}
-    )
+    sanitized = _sanitize_provenance(value, depth=depth)
     if "value" in value:
         sanitized_value = _sanitize_input_value(value["value"])
         if sanitized_value is not None:
             sanitized["value"] = sanitized_value
     provider_reference = value.get("provider_reference")
     if isinstance(provider_reference, Mapping):
-        sanitized["provider_reference"] = sanitize_provider_reference(
-            {
-                str(key): candidate
-                for key, candidate in provider_reference.items()
-                if isinstance(key, str)
-            }
-        )
-    return sanitized
+        safe_reference = _sanitize_provider_reference(provider_reference)
+        if safe_reference:
+            sanitized["provider_reference"] = safe_reference
+    return sanitized or None
 
 
 def _sanitize_input_value(value: object) -> JsonValue | None:
@@ -213,7 +232,7 @@ def _sanitize_input_value(value: object) -> JsonValue | None:
     if isinstance(value, Mapping):
         return {
             str(key): cast(JsonValue, candidate)
-            for key, candidate in value.items()
+            for key, candidate in islice(value.items(), MAX_PROVENANCE_ITEMS)
             if isinstance(key, str) and key in _OHLCV_FIELDS and _is_finite_number(candidate)
         }
     return None
@@ -278,4 +297,8 @@ def _iso_timestamp(value: object) -> JsonValue | None:
 
 
 def _is_finite_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return abs(value) <= MAX_PROVENANCE_INTEGER
+    return isinstance(value, float) and math.isfinite(value)

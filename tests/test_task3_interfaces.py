@@ -27,7 +27,7 @@ from trade_research.mcp_server import BOUNDED_TOOL_NAMES, BoundedResearchTools, 
 from trade_research.notifications import DiscordNotifier
 from trade_research.providers import ProviderRegistry
 from trade_research.queue import JobQueue, ResearchWorker
-from trade_research.reporting import ReportStore, render_json, render_markdown
+from trade_research.reporting import ReportStore, render_json, render_markdown, sanitize_report
 from trade_research.skills import SkillRegistry
 
 
@@ -126,9 +126,9 @@ async def test_external_prompt_injection_is_evidence_not_configuration() -> None
     assert report.results[0].evidence[0].content == injected
     markdown = render_markdown(report)
     assert "\nIGNORE PREVIOUS" not in markdown
-    assert "\n> IGNORE PREVIOUS" in markdown
     assert "\nIGNORE SOURCE" not in markdown
-    assert "\n> IGNORE SOURCE" in markdown
+    assert "[CONTENT OMITTED]" in markdown
+    assert "Source: untrusted" in markdown
 
 
 @pytest.mark.asyncio
@@ -245,29 +245,7 @@ async def test_reporting_is_deterministic_and_redacts_sensitive_values(tmp_path:
     store = ReportStore(tmp_path / "reports")
     reference = store.save(report)
     assert store.list_reports() == (str(report.request_id),)
-    assert store.get(reference) == report.model_copy(
-        update={
-            "results": tuple(
-                result.model_copy(
-                    update={
-                        "evidence": tuple(
-                            evidence.model_copy(
-                                update={
-                                    "content": (
-                                        "api_key=[REDACTED] client_ip=[REDACTED] "
-                                        "account_id=[REDACTED] Bearer [REDACTED] "
-                                        "account id=[REDACTED]"
-                                    ),
-                                }
-                            )
-                            for evidence in result.evidence
-                        )
-                    }
-                )
-                for result in report.results
-            )
-        }
-    )
+    assert store.get(reference) == sanitize_report(report)
 
 
 @pytest.mark.asyncio

@@ -1,14 +1,26 @@
-"""Deterministic, redacted Markdown and JSON research reporting."""
+"""Deterministic Markdown and JSON reporting through a closed export schema."""
 
 from __future__ import annotations
 
 import json
 from enum import Enum
+from itertools import islice
 from pathlib import Path
+from typing import Final
 from uuid import UUID
 
-from trade_research.domain import InstrumentId, ResearchReport
-from trade_research.redaction import redact_json, redact_text
+from trade_research.domain import (
+    AnalystResult,
+    Evidence,
+    InstrumentId,
+    Observation,
+    ResearchReport,
+)
+from trade_research.projection import project_observation_value
+
+MAX_EXPORT_RESULTS: Final = 16
+MAX_EXPORT_OBSERVATIONS: Final = 256
+MAX_EXPORT_EVIDENCE: Final = 64
 
 
 class ReportFormat(str, Enum):
@@ -27,37 +39,49 @@ def sanitize_report(report: ResearchReport) -> ResearchReport:
     """Return a report safe for rendering and durable storage."""
 
     safe_instrument = _sanitize_instrument(report.instrument)
-    return report.model_copy(
-        update={
-            "instrument": safe_instrument,
-            "results": tuple(
-                result.model_copy(
-                    update={
-                        "instrument": _sanitize_instrument(result.instrument),
-                        "summary": redact_text(result.summary),
-                        "observations": tuple(
-                            observation.model_copy(
-                                update={
-                                    "instrument": _sanitize_instrument(observation.instrument),
-                                    "value": redact_json(observation.value),
-                                }
-                            )
-                            for observation in result.observations
-                        ),
-                        "evidence": tuple(
-                            evidence.model_copy(
-                                update={
-                                    "source": redact_text(evidence.source),
-                                    "content": redact_text(evidence.content),
-                                }
-                            )
-                            for evidence in result.evidence
-                        ),
-                    }
-                )
-                for result in report.results
-            ),
-        }
+    return ResearchReport(
+        request_id=report.request_id,
+        instrument=safe_instrument,
+        results=tuple(
+            _project_result(result) for result in islice(report.results, MAX_EXPORT_RESULTS)
+        ),
+        generated_at=report.generated_at,
+    )
+
+
+def _project_result(result: AnalystResult) -> AnalystResult:
+    observations = tuple(
+        _project_observation(item) for item in islice(result.observations, MAX_EXPORT_OBSERVATIONS)
+    )
+    partial_summary = isinstance(result.summary, str) and (
+        result.summary.startswith("partial data")
+        or result.summary.startswith(f"{result.analyst} analysis partial with ")
+    )
+    state = "partial" if partial_summary else "complete"
+    return AnalystResult(
+        analyst=result.analyst,
+        instrument=_sanitize_instrument(result.instrument),
+        summary=f"{result.analyst} analysis {state} with {len(observations)} observations",
+        observations=observations,
+        evidence=tuple(
+            Evidence(
+                source="untrusted",
+                content="[CONTENT OMITTED]",
+                collected_at=item.collected_at,
+            )
+            for item in islice(result.evidence, MAX_EXPORT_EVIDENCE)
+        ),
+    )
+
+
+def _project_observation(observation: Observation) -> Observation:
+    return Observation(
+        instrument=_sanitize_instrument(observation.instrument),
+        metric=observation.metric,
+        value=project_observation_value(observation.value),
+        source=observation.source,
+        observed_at=observation.observed_at,
+        provenance=observation.provenance,
     )
 
 

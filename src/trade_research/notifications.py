@@ -14,7 +14,7 @@ NotificationSender = Callable[[str, dict[str, str]], Awaitable[None]]
 
 
 class DiscordNotifier:
-    """Send only analyst summaries and an opaque report reference."""
+    """Send only a canned instrument notice and an opaque report reference."""
 
     def __init__(self, webhook_url: str, *, sender: NotificationSender | None = None) -> None:
         self._webhook_url = webhook_url
