@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import datetime
+from ipaddress import ip_address
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -42,6 +44,25 @@ ASIAN_MARKETS = frozenset(
 )
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
+MAX_ANALYSTS = 16
+SYMBOL_PATTERN = r"[A-Za-z0-9^][A-Za-z0-9._:/^-]{0,31}"
+MarketSymbol = Annotated[str, Field(min_length=1, max_length=32, pattern=SYMBOL_PATTERN)]
+_SYMBOL_PATTERN = re.compile(SYMBOL_PATTERN, re.IGNORECASE)
+_SENSITIVE_SYMBOL_FRAGMENTS = (
+    "ACCOUNT",
+    "ACCT",
+    "APIKEY",
+    "BEARER",
+    "CLIENTIP",
+    "EXPOSURE",
+    "HOLDING",
+    "IPADDRESS",
+    "PASSWORD",
+    "PORTFOLIO",
+    "POSITION",
+    "SECRET",
+    "TOKEN",
+)
 
 
 class DomainModel(BaseModel):
@@ -53,15 +74,26 @@ class DomainModel(BaseModel):
 class InstrumentId(DomainModel):
     """A research instrument and the market on which it is analyzed."""
 
-    symbol: NonEmptyText
+    symbol: MarketSymbol
     market: NonEmptyText
 
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
-        normalized = value.strip().upper()
-        if not normalized:
-            raise ValueError("symbol must not be blank")
+        if value != value.strip() or any(character.isspace() for character in value):
+            raise ValueError("symbol must not contain whitespace")
+        normalized = value.upper()
+        if not _SYMBOL_PATTERN.fullmatch(normalized):
+            raise ValueError("symbol has an invalid market-symbol format")
+        try:
+            ip_address(normalized)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("symbol must not be an IP address")
+        collapsed = re.sub(r"[^A-Z0-9]", "", normalized)
+        if any(fragment in collapsed for fragment in _SENSITIVE_SYMBOL_FRAGMENTS):
+            raise ValueError("symbol contains a reserved sensitive field")
         return normalized
 
     @field_validator("market")
@@ -88,7 +120,9 @@ class AnalysisRequest(DomainModel):
 
     request_id: UUID = Field(default_factory=uuid4)
     instrument: InstrumentId
-    analysts: tuple[NonEmptyText, ...] = ("fundamental", "technical")
+    analysts: tuple[NonEmptyText, ...] = Field(
+        default=("fundamental", "technical"), min_length=1, max_length=MAX_ANALYSTS
+    )
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     positions: tuple[Position, ...] = ()
 
@@ -97,6 +131,12 @@ class AnalysisRequest(DomainModel):
     def require_analysts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if not value:
             raise ValueError("at least one analyst must be selected")
+        if len(value) > MAX_ANALYSTS:
+            raise ValueError(f"at most {MAX_ANALYSTS} analysts may be selected")
+        if any(name != name.strip() for name in value):
+            raise ValueError("analyst names must not contain surrounding whitespace")
+        if len(set(value)) != len(value):
+            raise ValueError("analyst names must be unique")
         return value
 
 

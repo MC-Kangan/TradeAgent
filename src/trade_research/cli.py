@@ -9,14 +9,15 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import UUID
 
 import typer
 
 from trade_research.application import ResearchApplication
 from trade_research.domain import AnalysisRequest, InstrumentId
 from trade_research.engine import ResearchEngine
-from trade_research.queue import JobQueue
-from trade_research.reporting import ReportStore
+from trade_research.queue import JobQueue, RequestConflict
+from trade_research.reporting import ReportFormat, ReportStore
 
 app = typer.Typer(help="Local, research-only analysis tools.", no_args_is_help=True)
 
@@ -76,18 +77,25 @@ def research(
     symbol: str,
     market: Annotated[str, typer.Option("--market")] = "US",
     analyst: Annotated[list[str] | None, typer.Option("--analyst")] = None,
+    request_id: Annotated[UUID | None, typer.Option("--request-id")] = None,
 ) -> None:
     kwargs: dict[str, Any] = {"instrument": InstrumentId(symbol=symbol, market=market)}
     if analyst:
         kwargs["analysts"] = tuple(analyst)
+    if request_id is not None:
+        kwargs["request_id"] = request_id
     request = AnalysisRequest(**kwargs)
-    _write_json(_run_async(get_application().research(request)))
+    try:
+        result = _run_async(get_application().start_research(request))
+    except RequestConflict as error:
+        raise typer.BadParameter(str(error)) from None
+    _write_json(result)
 
 
 @app.command("report")
 def report(
     request_id: str,
-    format_name: Annotated[str, typer.Option("--format")] = "markdown",
+    format_name: Annotated[ReportFormat, typer.Option("--format")] = ReportFormat.MARKDOWN,
 ) -> None:
     typer.echo(get_application().compile_report(request_id, format_name), nl=False)
 

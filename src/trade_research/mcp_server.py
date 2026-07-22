@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 from trade_research.application import ResearchApplication
 from trade_research.domain import AnalysisRequest
+from trade_research.reporting import ReportFormat, normalize_report_format
 
 BOUNDED_TOOL_NAMES = (
     "list_skills",
@@ -46,9 +47,14 @@ class BoundedResearchTools:
     def get_research_result(self, request_id: str) -> dict[str, Any]:
         return self._application.get_research_result(request_id)
 
-    def compile_report(self, request_id: str, format_name: str = "markdown") -> dict[str, str]:
+    def compile_report(
+        self,
+        request_id: str,
+        format_name: ReportFormat = ReportFormat.MARKDOWN,
+    ) -> dict[str, str]:
+        format_name = normalize_report_format(format_name)
         return {
-            "format": format_name,
+            "format": format_name.value,
             "content": self._application.compile_report(request_id, format_name),
         }
 

@@ -152,8 +152,9 @@ async def test_queue_recovers_running_jobs_and_persists_only_safe_input(tmp_path
     assert claimed is not None and claimed.status == "running"
 
     restarted = JobQueue(database, recovery_after_seconds=0)
-    recovered = restarted.get(request.request_id)
-    assert recovered.status == "queued"
+    recovered = restarted.claim_next()
+    assert recovered is not None and recovered.status == "running"
+    assert recovered.claim_token != claimed.claim_token
     with sqlite3.connect(database) as connection:
         raw = connection.execute("SELECT request_json FROM jobs").fetchone()[0]
     assert json.loads(raw) == {
@@ -402,14 +403,8 @@ async def test_start_research_rejects_unknown_skill_before_persistence(tmp_path:
 
 @pytest.mark.asyncio
 async def test_report_redacts_sensitive_instrument_symbols() -> None:
-    report = await _engine(RecordingSkill("fundamental")).analyze(
-        AnalysisRequest(
-            instrument=InstrumentId(symbol="Bearer abcdefgh", market="US"),
-            analysts=("fundamental",),
-        )
-    )
-
-    assert "ABCDEFGH" not in render_json(report)
+    with pytest.raises(ValueError):
+        InstrumentId(symbol="Bearer abcdefgh", market="US")
 
 
 @pytest.mark.asyncio
@@ -430,11 +425,12 @@ async def test_discord_notification_contains_only_redacted_summary_and_reference
     )
     notifier = DiscordNotifier("https://discord.test/webhook", sender=sender)
 
-    await notifier.notify(report, "report:abc")
+    report_reference = f"report:{report.request_id}"
+    await notifier.notify(report, report_reference)
 
     assert sent[0][0] == "https://discord.test/webhook"
     serialized = json.dumps(sent[0][1])
-    assert "report:abc" in serialized
+    assert report_reference in serialized
     assert report.results[0].summary in serialized
     assert "acct-123" not in serialized
     assert "secret-token" not in serialized

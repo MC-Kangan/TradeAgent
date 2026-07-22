@@ -9,7 +9,13 @@ from uuid import UUID
 from trade_research.domain import AnalysisRequest, ResearchReport
 from trade_research.engine import ResearchEngine
 from trade_research.queue import JobQueue
-from trade_research.reporting import ReportStore, render_json, render_markdown
+from trade_research.reporting import (
+    ReportFormat,
+    ReportStore,
+    normalize_report_format,
+    render_json,
+    render_markdown,
+)
 
 JsonObject = dict[str, Any]
 
@@ -53,8 +59,8 @@ class ResearchApplication:
         if self.queue is None:
             raise RuntimeError("a job queue is required to start durable research")
         self.engine.skills.discover(request.analysts)
-        request_id = self.queue.enqueue(request)
-        return {"request_id": str(request_id), "status": "queued"}
+        submission = self.queue.enqueue(request)
+        return {"request_id": str(submission.request_id), "status": submission.status}
 
     def get_research_status(self, request_id: str | UUID) -> JsonObject:
         try:
@@ -87,16 +93,19 @@ class ResearchApplication:
                 return _json_object(render_json(job.result))
         return _json_object(render_json(self.reports.get(str(request_id))))
 
-    def compile_report(self, request_id: str | UUID, format_name: str = "markdown") -> str:
+    def compile_report(
+        self,
+        request_id: str | UUID,
+        format_name: ReportFormat = ReportFormat.MARKDOWN,
+    ) -> str:
+        format_name = normalize_report_format(format_name)
         try:
             return self.reports.render(str(request_id), format_name)
         except KeyError:
             report = self._queued_report(request_id)
-            if format_name == "markdown":
+            if format_name is ReportFormat.MARKDOWN:
                 return render_markdown(report)
-            if format_name == "json":
-                return render_json(report)
-            raise ValueError("format must be 'markdown' or 'json'") from None
+            return render_json(report)
 
     def list_reports(self) -> list[str]:
         identifiers = set(self.reports.list_reports())

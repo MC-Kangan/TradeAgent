@@ -10,6 +10,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
 from trade_research.application import ResearchApplication
 from trade_research.domain import AnalysisRequest
+from trade_research.queue import RequestConflict
+from trade_research.reporting import ReportFormat
 
 
 def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAPI:
@@ -53,6 +55,8 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
     async def research(request: AnalysisRequest) -> dict[str, Any]:
         try:
             return await application.start_research(request)
+        except RequestConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except KeyError as error:
             raise HTTPException(status_code=422, detail="unknown selected skill") from error
         except RuntimeError as error:
@@ -75,14 +79,14 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
     @api.post("/reports/{request_id}", dependencies=authenticated)
     def compile_report(
         request_id: str,
-        format_name: Annotated[str, Query(alias="format")] = "markdown",
+        format_name: Annotated[ReportFormat, Query(alias="format")] = ReportFormat.MARKDOWN,
     ) -> dict[str, str]:
         try:
             return {
-                "format": format_name,
+                "format": format_name.value,
                 "content": application.compile_report(request_id, format_name),
             }
-        except (KeyError, ValueError) as error:
+        except KeyError as error:
             raise HTTPException(status_code=404, detail="report unavailable") from error
 
     @api.get("/reports", dependencies=authenticated)

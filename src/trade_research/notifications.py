@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from uuid import UUID
 
 import httpx
 
 from trade_research.domain import ResearchReport
-from trade_research.redaction import redact_text
+from trade_research.reporting import sanitize_report
 
 NotificationSender = Callable[[str, dict[str, str]], Awaitable[None]]
 
@@ -20,10 +21,10 @@ class DiscordNotifier:
         self._sender = sender or self._post
 
     async def notify(self, report: ResearchReport, report_reference: str) -> None:
-        summaries = "; ".join(redact_text(result.summary) for result in report.results)
-        content = redact_text(
-            f"Research {report.instrument.symbol}: {summaries} | {report_reference}"
-        )
+        safe = sanitize_report(report)
+        reference = _safe_report_reference(report_reference)
+        summaries = "; ".join(result.summary for result in safe.results)
+        content = f"Research {safe.instrument.symbol}: {summaries} | {reference}"
         await self._sender(self._webhook_url, {"content": content})
 
     @staticmethod
@@ -31,3 +32,14 @@ class DiscordNotifier:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(target, json=payload)
             response.raise_for_status()
+
+
+def _safe_report_reference(reference: str) -> str:
+    prefix = "report:"
+    if not reference.startswith(prefix):
+        raise ValueError("notification report reference must be a report UUID")
+    try:
+        identifier = UUID(reference.removeprefix(prefix))
+    except ValueError as error:
+        raise ValueError("notification report reference must be a report UUID") from error
+    return f"{prefix}{identifier}"

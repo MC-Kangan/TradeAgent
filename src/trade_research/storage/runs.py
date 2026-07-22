@@ -22,10 +22,11 @@ class PersistedAnalysisRequest(BaseModel):
 
     @classmethod
     def from_request(cls, request: AnalysisRequest) -> PersistedAnalysisRequest:
+        validated = AnalysisRequest.model_validate(request.model_dump())
         return cls(
-            request_id=request.request_id,
-            instrument=request.instrument,
-            analysts=request.analysts,
+            request_id=validated.request_id,
+            instrument=validated.instrument,
+            analysts=validated.analysts,
         )
 
     def to_request(self) -> AnalysisRequest:

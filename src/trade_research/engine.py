@@ -67,6 +67,7 @@ class ResearchEngine:
     async def analyze(self, request: AnalysisRequest) -> ResearchReport:
         """Analyze one request without allowing evidence to affect selection."""
 
+        request = AnalysisRequest.model_validate(request.model_dump())
         selected = self._skills.discover(request.analysts)
         outcomes = await asyncio.gather(
             *(self._run_skill(skill, request) for skill in selected),

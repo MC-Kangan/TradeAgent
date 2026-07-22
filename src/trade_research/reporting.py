@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
 from trade_research.domain import InstrumentId, ResearchReport
 from trade_research.redaction import redact_json, redact_text
+
+
+class ReportFormat(str, Enum):
+    MARKDOWN = "markdown"
+    JSON = "json"
+
+
+def normalize_report_format(value: object) -> ReportFormat:
+    try:
+        return ReportFormat(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("format must be 'markdown' or 'json'") from error
 
 
 def sanitize_report(report: ResearchReport) -> ResearchReport:
@@ -89,7 +102,7 @@ def render_markdown(report: ResearchReport) -> str:
 
 
 def _sanitize_instrument(instrument: InstrumentId) -> InstrumentId:
-    return instrument.model_copy(update={"symbol": redact_text(instrument.symbol)})
+    return InstrumentId.model_validate(instrument.model_dump())
 
 
 class ReportStore:
@@ -122,13 +135,18 @@ class ReportStore:
             raise KeyError(f"unknown report: {identifier}")
         return ResearchReport.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def render(self, reference: str | UUID, format_name: str = "markdown") -> str:
+    def render(
+        self,
+        reference: str | UUID,
+        format_name: ReportFormat = ReportFormat.MARKDOWN,
+    ) -> str:
+        format_name = normalize_report_format(format_name)
         report = self.get(reference)
-        if format_name == "markdown":
+        if format_name is ReportFormat.MARKDOWN:
             return render_markdown(report)
-        if format_name == "json":
+        if format_name is ReportFormat.JSON:
             return render_json(report)
-        raise ValueError("format must be 'markdown' or 'json'")
+        raise AssertionError("unreachable report format")
 
     def _path(self, identifier: str, suffix: str) -> Path:
         return self.directory / f"{self._identifier(identifier)}{suffix}"
