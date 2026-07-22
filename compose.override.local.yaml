@@ -1,0 +1,4 @@
+services:
+  research-api:
+    ports:
+      - "${TRADE_RESEARCH_BIND_ADDRESS:-127.0.0.1}:${TRADE_RESEARCH_PORT:-8000}:8000"

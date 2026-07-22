@@ -1,0 +1,10 @@
+{
+  "name": "trade-research",
+  "version": "0.1.0",
+  "description": "Bounded local company, fundamental, and technical research workflows.",
+  "author": {
+    "name": "Trade Research contributors"
+  },
+  "license": "MIT",
+  "keywords": ["research", "fundamental-analysis", "technical-analysis", "mcp"]
+}

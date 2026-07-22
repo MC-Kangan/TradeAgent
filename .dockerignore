@@ -1,0 +1,14 @@
+.git
+.venv*
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.trade-research
+__pycache__
+*.pyc
+*.sqlite3
+*.parquet
+.env*
+secrets/
+tests/
+third_party/

@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -14,9 +15,10 @@ from uuid import UUID
 import typer
 
 from trade_research.application import ResearchApplication
+from trade_research.diagnostics import run_doctor
 from trade_research.domain import AnalysisRequest, InstrumentId
 from trade_research.engine import ResearchEngine
-from trade_research.queue import JobQueue, RequestConflict
+from trade_research.queue import JobQueue, RequestConflict, ResearchWorker
 from trade_research.reporting import ReportFormat, ReportStore
 
 app = typer.Typer(help="Local, research-only analysis tools.", no_args_is_help=True)
@@ -51,7 +53,7 @@ def _run_async(awaitable: Any) -> Any:
 def doctor() -> None:
     """Report local interface availability without printing configuration values."""
 
-    _write_json({"research_only": True, "status": "ok"})
+    _write_json(run_doctor())
 
 
 @app.command("list-skills")
@@ -107,10 +109,32 @@ def serve(
 ) -> None:
     from trade_research.http import run_server
 
-    token = os.environ.get("TRADE_RESEARCH_API_TOKEN", "")
+    token = _read_secret("TRADE_RESEARCH_API_TOKEN")
     if not token:
         raise typer.BadParameter("TRADE_RESEARCH_API_TOKEN must be set")
     run_server(get_application(), bearer_token=token, host=host, port=port)
+
+
+@app.command("worker")
+def worker(
+    once: Annotated[bool, typer.Option("--once")] = False,
+    poll_interval: Annotated[float, typer.Option("--poll-interval", min=0.1)] = 1.0,
+) -> None:
+    """Run the supervised SQLite research worker."""
+
+    application = get_application()
+    if application.queue is None:
+        raise typer.BadParameter("research queue is unavailable")
+    research_worker = ResearchWorker(application.queue, application.engine)
+    try:
+        while True:
+            handled = bool(_run_async(research_worker.run_once()))
+            if once:
+                return
+            if not handled:
+                time.sleep(poll_interval)
+    except KeyboardInterrupt:
+        return
 
 
 @app.command("mcp")
@@ -118,6 +142,22 @@ def mcp_command() -> None:
     from trade_research.mcp_server import run_mcp_server
 
     run_mcp_server(get_application())
+
+
+def _read_secret(name: str) -> str:
+    direct = os.environ.get(name, "")
+    if direct:
+        return direct
+    secret_file = os.environ.get(f"{name}_FILE", "")
+    if not secret_file:
+        return ""
+    try:
+        value = Path(secret_file).read_text().strip()
+    except OSError as error:
+        raise typer.BadParameter(f"{name}_FILE is not readable") from error
+    if len(value) > 4096:
+        raise typer.BadParameter(f"{name}_FILE is too large")
+    return value
 
 
 if __name__ == "__main__":

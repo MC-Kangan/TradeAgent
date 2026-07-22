@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "trade-research": {
+      "command": "./scripts/launch-mcp",
+      "args": [],
+      "cwd": "."
+    }
+  }
+}

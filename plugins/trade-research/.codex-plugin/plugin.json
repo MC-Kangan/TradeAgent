@@ -1,0 +1,25 @@
+{
+  "name": "trade-research",
+  "version": "0.1.0",
+  "description": "Bounded local company, fundamental, and technical research workflows.",
+  "author": {
+    "name": "Trade Research contributors"
+  },
+  "license": "MIT",
+  "keywords": ["research", "fundamental-analysis", "technical-analysis", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Trade Research",
+    "shortDescription": "Local bounded investment research",
+    "longDescription": "Run bounded, research-only company, fundamental, and technical analysis through the local Trade Research CLI and MCP server.",
+    "developerName": "Trade Research contributors",
+    "category": "Finance",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Diagnose my local Trade Research setup.",
+      "Research a company with fundamental and technical analysts."
+    ],
+    "brandColor": "#1F6F54"
+  }
+}

@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+is_project() {
+    [ -f "$1/pyproject.toml" ] && grep -q 'name = "trade-research"' "$1/pyproject.toml"
+}
+
+physical_directory() {
+    (cd "$1" 2>/dev/null && pwd -P)
+}
+
+find_ancestor() {
+    candidate=$(physical_directory "$1") || return 1
+    while :; do
+        if is_project "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+        parent=$(dirname "$candidate")
+        [ "$parent" != "$candidate" ] || return 1
+        candidate=$parent
+    done
+}
+
+resolve_root() {
+    if [ -n "${TRADE_RESEARCH_HOME:-}" ]; then
+        physical_directory "$TRADE_RESEARCH_HOME"
+        return
+    fi
+    if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && root=$(find_ancestor "$CLAUDE_PROJECT_DIR"); then
+        printf '%s\n' "$root"
+        return
+    fi
+    if [ -n "${CODEX_PROJECT_DIR:-}" ] && root=$(find_ancestor "$CODEX_PROJECT_DIR"); then
+        printf '%s\n' "$root"
+        return
+    fi
+    if root=$(find_ancestor "$PWD"); then
+        printf '%s\n' "$root"
+        return
+    fi
+    script_directory=$(physical_directory "$(dirname "$0")")
+    find_ancestor "$script_directory"
+}
+
+root=$(resolve_root) || {
+    printf '%s\n' "trade-research project not found; set TRADE_RESEARCH_HOME" >&2
+    exit 78
+}
+command_path="$root/.venv/bin/trade-research"
+python_path="$root/.venv/bin/python"
+if [ ! -x "$command_path" ] || [ ! -x "$python_path" ] \
+    || ! "$python_path" -c 'import sys; raise SystemExit(sys.version_info[:2] not in {(3, 12), (3, 13)})' \
+        >/dev/null 2>&1; then
+    printf '%s\n' "trade-research is not bootstrapped at $root; run: python3.12 scripts/bootstrap.py --dev" >&2
+    exit 78
+fi
+
+if [ "${1:-}" = "--print-resolution" ]; then
+    printf '%s\n' "$root"
+    exit 0
+fi
+exec "$command_path" mcp
