@@ -1,0 +1,77 @@
+"""Official MCP SDK adapter with an exact, bounded tool surface."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+
+from trade_research.application import ResearchApplication
+from trade_research.domain import AnalysisRequest
+
+BOUNDED_TOOL_NAMES = (
+    "list_skills",
+    "describe_skill",
+    "run_skill",
+    "start_research",
+    "get_research_status",
+    "get_research_result",
+    "compile_report",
+    "list_reports",
+    "get_report",
+)
+
+
+class BoundedResearchTools:
+    """Directly testable implementations registered as MCP tools."""
+
+    def __init__(self, application: ResearchApplication) -> None:
+        self._application = application
+
+    def list_skills(self) -> list[dict[str, Any]]:
+        return self._application.list_skills()
+
+    def describe_skill(self, name: str) -> dict[str, Any]:
+        return self._application.describe_skill(name)
+
+    async def run_skill(self, name: str, request: AnalysisRequest) -> dict[str, Any]:
+        return await self._application.run_skill(name, request)
+
+    async def start_research(self, request: AnalysisRequest) -> dict[str, Any]:
+        return await self._application.start_research(request)
+
+    def get_research_status(self, request_id: str) -> dict[str, Any]:
+        return self._application.get_research_status(request_id)
+
+    def get_research_result(self, request_id: str) -> dict[str, Any]:
+        return self._application.get_research_result(request_id)
+
+    def compile_report(self, request_id: str, format_name: str = "markdown") -> dict[str, str]:
+        return {
+            "format": format_name,
+            "content": self._application.compile_report(request_id, format_name),
+        }
+
+    def list_reports(self) -> list[str]:
+        return self._application.list_reports()
+
+    def get_report(self, request_id: str) -> dict[str, Any]:
+        return self._application.get_report(request_id)
+
+
+def build_mcp_server(application: ResearchApplication) -> FastMCP:
+    """Register the exact public tool tuple with the official Python SDK."""
+
+    tools = BoundedResearchTools(application)
+    server = FastMCP(
+        "trade-research",
+        instructions="Bounded research and report retrieval only.",
+        log_level="ERROR",
+    )
+    for name in BOUNDED_TOOL_NAMES:
+        server.tool(name=name)(getattr(tools, name))
+    return server
+
+
+def run_mcp_server(application: ResearchApplication) -> None:
+    build_mcp_server(application).run(transport="stdio")

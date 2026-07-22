@@ -14,6 +14,7 @@ from trade_research.domain import (
     ResearchReport,
     VendorField,
 )
+from trade_research.engine import ResearchEngine
 from trade_research.storage import ObservationStore, RunStore
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "PeriodType",
     "Position",
     "ProviderKind",
+    "ResearchEngine",
     "ResearchReport",
     "RunStore",
     "VendorField",

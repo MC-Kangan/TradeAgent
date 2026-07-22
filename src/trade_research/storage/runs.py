@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from trade_research.domain import AnalysisRequest, InstrumentId
 
 
-class _PersistedRequest(BaseModel):
+class PersistedAnalysisRequest(BaseModel):
     """The complete allow-list of fields permitted in persisted job inputs."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -19,6 +19,21 @@ class _PersistedRequest(BaseModel):
     request_id: UUID
     instrument: InstrumentId
     analysts: tuple[str, ...]
+
+    @classmethod
+    def from_request(cls, request: AnalysisRequest) -> PersistedAnalysisRequest:
+        return cls(
+            request_id=request.request_id,
+            instrument=request.instrument,
+            analysts=request.analysts,
+        )
+
+    def to_request(self) -> AnalysisRequest:
+        return AnalysisRequest(
+            request_id=self.request_id,
+            instrument=self.instrument,
+            analysts=self.analysts,
+        )
 
 
 class RunStore:
@@ -46,11 +61,7 @@ class RunStore:
 
     def save_request(self, request: AnalysisRequest) -> None:
         """Store the fixed safe DTO, never free-form metadata or positions."""
-        serialized = _PersistedRequest(
-            request_id=request.request_id,
-            instrument=request.instrument,
-            analysts=request.analysts,
-        ).model_dump_json()
+        serialized = PersistedAnalysisRequest.from_request(request).model_dump_json()
         with self._connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO runs (request_id, request_json) VALUES (?, ?)",
@@ -65,9 +76,4 @@ class RunStore:
             ).fetchone()
         if row is None:
             raise KeyError(f"unknown request id: {request_id}")
-        persisted = _PersistedRequest.model_validate_json(row[0])
-        return AnalysisRequest(
-            request_id=persisted.request_id,
-            instrument=persisted.instrument,
-            analysts=persisted.analysts,
-        )
+        return PersistedAnalysisRequest.model_validate_json(row[0]).to_request()

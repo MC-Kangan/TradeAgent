@@ -9,21 +9,31 @@ description = "Local, research-only investment analysis framework"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "fastapi==0.116.1",
+  "httpx==0.28.1",
+  "mcp==1.12.4",
   "pydantic==2.11.7",
   "pyarrow==18.1.0",
+  "typer==0.16.0",
+  "uvicorn==0.35.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "mypy==1.17.1",
   "pytest==8.3.5",
+  "pytest-asyncio==1.1.0",
   "ruff==0.12.9",
 ]
+
+[project.scripts]
+trade-research = "trade_research.cli:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py312"
@@ -39,5 +49,5 @@ plugins = ["pydantic.mypy"]
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*"]
+module = ["mcp", "mcp.*", "pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
