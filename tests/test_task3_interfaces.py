@@ -431,7 +431,8 @@ async def test_discord_notification_contains_only_redacted_summary_and_reference
     assert sent[0][0] == "https://discord.test/webhook"
     serialized = json.dumps(sent[0][1])
     assert report_reference in serialized
-    assert report.results[0].summary in serialized
+    assert "Research report ready" in serialized
+    assert report.results[0].summary not in serialized
     assert "acct-123" not in serialized
     assert "secret-token" not in serialized
     assert "IGNORE PREVIOUS" not in serialized

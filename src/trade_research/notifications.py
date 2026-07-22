@@ -23,8 +23,7 @@ class DiscordNotifier:
     async def notify(self, report: ResearchReport, report_reference: str) -> None:
         safe = sanitize_report(report)
         reference = _safe_report_reference(report_reference)
-        summaries = "; ".join(result.summary for result in safe.results)
-        content = f"Research {safe.instrument.symbol}: {summaries} | {reference}"
+        content = f"Research report ready: {safe.instrument.symbol} | {reference}"
         await self._sender(self._webhook_url, {"content": content})
 
     @staticmethod

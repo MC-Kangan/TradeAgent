@@ -452,6 +452,137 @@ async def test_closed_output_projection_drops_sensitive_families_everywhere(
     assert '"safeMetric": 42' in outputs[0]
 
 
+@pytest.mark.asyncio
+async def test_semantic_projection_blocks_credentials_and_shorthand_positions(
+    tmp_path: Path,
+) -> None:
+    request = _request()
+    semantic_position = Observation(
+        instrument=request.instrument,
+        metric="close",
+        value={
+            "note": "api key is sk-live-12345678",
+            "label": "ACME",
+            "value": 900,
+            "unit": "shares",
+        },
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    lowercase_position = Observation(
+        instrument=request.instrument,
+        metric="close",
+        value={"label": "acme", "value": 900, "unit": "shares"},
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    string_quantity_position = Observation(
+        instrument=request.instrument,
+        metric="close",
+        value={"label": "ACME", "value": "900", "unit": "shares"},
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    safe_factor = Observation(
+        instrument=request.instrument,
+        metric="revenue_growth",
+        value={"metric": "revenue_growth", "value": 0.125, "unit": "ratio"},
+        source="fixture",
+        observed_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    results = (
+        AnalystResult(
+            analyst="credential",
+            instrument=request.instrument,
+            summary="api key is sk-live-12345678",
+            evidence=(
+                Evidence(
+                    source="fixture",
+                    content="password is hunter2-secret",
+                    collected_at=datetime(2026, 7, 22, tzinfo=UTC),
+                ),
+            ),
+        ),
+        AnalystResult(
+            analyst="shorthand",
+            instrument=request.instrument,
+            summary="ACME 900 @ 2",
+        ),
+        AnalystResult(
+            analyst="ownership",
+            instrument=request.instrument,
+            summary="owned 900 ACME at average cost 2",
+        ),
+        AnalystResult(
+            analyst="factor",
+            instrument=request.instrument,
+            summary="factor calculation complete",
+            observations=(
+                semantic_position,
+                lowercase_position,
+                string_quantity_position,
+                safe_factor,
+            ),
+        ),
+        AnalystResult(
+            analyst="safe-language",
+            instrument=request.instrument,
+            summary="short interest 10 percent; long term 10 year growth; token is bullish",
+        ),
+    )
+    report = ResearchReport(
+        request_id=request.request_id,
+        instrument=request.instrument,
+        results=results,
+        generated_at=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    queue = JobQueue(tmp_path / "jobs.sqlite3")
+    submission = queue.enqueue(request)
+    claim = queue.claim_next()
+    assert claim is not None and claim.claim_token is not None
+    queue.complete(request.request_id, report, claim.claim_token)
+    store = ReportStore(tmp_path / "reports")
+    store.save(report)
+
+    sent: list[dict[str, str]] = []
+
+    async def sender(target: str, payload: dict[str, str]) -> None:
+        del target
+        sent.append(payload)
+
+    await DiscordNotifier("https://discord.test/webhook", sender=sender).notify(
+        report, f"report:{request.request_id}"
+    )
+
+    outputs = (
+        render_json(report),
+        render_markdown(report),
+        queue.get(submission.request_id).result.model_dump_json(),  # type: ignore[union-attr]
+        store.get(str(request.request_id)).model_dump_json(),
+        json.dumps(sent[0]),
+    )
+    for output in outputs:
+        for forbidden in (
+            "sk-live-12345678",
+            "hunter2-secret",
+            "ACME 900 @ 2",
+            "owned 900 ACME at average cost 2",
+        ):
+            assert forbidden not in output
+        compacted = output.replace(" ", "")
+        assert '"label":"ACME"' not in compacted
+        assert '"unit":"shares"' not in compacted
+
+    for output in outputs[:4]:
+        assert "revenue_growth" in output
+        assert "0.125" in output
+        assert "short interest 10 percent" in output
+        assert "long term 10 year growth" in output
+        assert "token is bullish" in output
+    assert set(sent[0]) == {"content"}
+    assert "Research report ready" in sent[0]["content"]
+
+
 def test_report_format_is_closed_and_http_distinguishes_422_from_404(tmp_path: Path) -> None:
     application = ResearchApplication(_engine(), ReportStore(tmp_path / "reports"))
     report = _report(_request())
