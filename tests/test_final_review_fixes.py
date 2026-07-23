@@ -925,6 +925,11 @@ def test_cli_expected_errors_never_emit_tracebacks_secrets_or_paths(
         )
         arguments = ("list-skills",)
     elif case == "missing_capability":
+        # Explicitly clear provider env vars so that project .env defaults
+        # don't accidentally satisfy capabilities under test.
+        environment["TRADE_RESEARCH_PRICE_PROVIDER"] = ""
+        environment["TRADE_RESEARCH_FUNDAMENTAL_PROVIDER"] = ""
+        environment["TRADE_RESEARCH_SEC_USER_AGENT"] = ""
         arguments = ("run-skill", "technical", "ACME", "--market", "US")
     else:
         arguments = ("serve", "--host", "0.0.0.0")

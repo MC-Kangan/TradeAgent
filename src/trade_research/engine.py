@@ -39,6 +39,7 @@ from trade_research.skills import (
     ResearchSkill,
     SkillRegistry,
     TechnicalSkill,
+    WorthBuyStocksSkill,
 )
 
 
@@ -70,7 +71,7 @@ class ResearchEngine:
 
         default_skills = cast(
             tuple[ResearchSkill, ...],
-            (FundamentalSkill(), TechnicalSkill(), FilingsSkill()),
+            (FundamentalSkill(), TechnicalSkill(), FilingsSkill(), WorthBuyStocksSkill()),
         )
         selected_skills = skills or SkillRegistry(default_skills)
         if providers is None:

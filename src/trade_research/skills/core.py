@@ -6,7 +6,6 @@ import hashlib
 import json
 import math
 import statistics
-from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import UTC, date, datetime
@@ -17,17 +16,52 @@ from trade_research.domain import (
     AnalystResult,
     Evidence,
     InstrumentId,
-    LimitationKind,
-    MetricKind,
     Observation,
     ReportStatus,
 )
-from trade_research.domain.provenance import (
-    MAX_PROVENANCE_ITEMS,
-    normalize_provider_kind,
-    sanitize_provider_reference,
+from trade_research.providers import CapabilityName, ProviderRegistry
+from trade_research.skills.indicators import (
+    append_price_factor as _append_price_factor,
 )
-from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
+from trade_research.skills.indicators import (
+    atr as _atr,
+)
+from trade_research.skills.indicators import (
+    ema_series as _ema_series,
+)
+from trade_research.skills.indicators import (
+    factor as _factor,
+)
+from trade_research.skills.indicators import (
+    has_complete_ohlcv as _has_complete_ohlcv,
+)
+from trade_research.skills.indicators import (
+    is_finite as _is_finite_number,
+)
+from trade_research.skills.indicators import (
+    limitations as _limitations,
+)
+from trade_research.skills.indicators import (
+    macd_series as _macd_series,
+)
+from trade_research.skills.indicators import (
+    missing_metric_kinds as _missing_metric_kinds,
+)
+from trade_research.skills.indicators import (
+    numeric_value as _numeric_value,
+)
+from trade_research.skills.indicators import (
+    rsi as _rsi,
+)
+from trade_research.skills.indicators import (
+    sanitize_text as _sanitize_text,
+)
+from trade_research.skills.indicators import (
+    summary as _summary,
+)
+from trade_research.skills.indicators import (
+    validated_prices as _validated_prices,
+)
 
 
 class ResearchSkill(Protocol):
@@ -695,48 +729,6 @@ def _append_ratio(
     )
 
 
-def _factor(
-    instrument: InstrumentId,
-    metric: str,
-    value: float,
-    inputs: tuple[Observation, ...],
-    *,
-    algorithm: str,
-    window: str,
-) -> Observation:
-    return Observation(
-        instrument=instrument,
-        metric=metric,
-        value=round(value, 10),
-        source="derived",
-        observed_at=max(item.observed_at for item in inputs),
-        provenance={
-            "algorithm": algorithm,
-            "window": window,
-            "inputs": [_observation_input(item) for item in inputs],
-        },
-    )
-
-
-def _observation_input(observation: Observation) -> dict[str, object]:
-    provider_reference = sanitize_provider_reference(observation.provenance)
-    return {
-        "metric": observation.metric,
-        "period_role": observation.provenance.get("period_role"),
-        "period_end": observation.provenance.get("period_end"),
-        "period_type": observation.provenance.get("period_type"),
-        "period_ref": observation.provenance.get("period_ref"),
-        "prior_period_ref": observation.provenance.get("prior_period_ref"),
-        "snapshot_ref": observation.provenance.get("snapshot_ref"),
-        "currency": observation.provenance.get("currency"),
-        "valuation_as_of": observation.provenance.get("valuation_as_of"),
-        "observed_at": observation.observed_at.isoformat(),
-        "value": observation.value,
-        "provider_kind": observation.source.value,
-        "provider_reference": provider_reference,
-    }
-
-
 @dataclass(frozen=True, slots=True)
 class _StatementContext:
     snapshot_id: str
@@ -872,191 +864,6 @@ def _metadata_text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _validated_prices(
-    supplied: Sequence[PricePoint],
-) -> tuple[tuple[PricePoint, ...], bool, bool]:
-    timestamp_counts = Counter(point.observed_at for point in supplied)
-    valid: list[PricePoint] = []
-    discarded = False
-    incomplete_ohlcv = False
-    for point in supplied:
-        if timestamp_counts[point.observed_at] > 1 or not _valid_price(point):
-            discarded = True
-            continue
-        if not _has_complete_ohlcv(point):
-            incomplete_ohlcv = True
-        valid.append(point)
-    return tuple(sorted(valid, key=lambda point: point.observed_at)), discarded, incomplete_ohlcv
-
-
-def _valid_price(point: PricePoint) -> bool:
-    if point.observed_at.tzinfo is None or not math.isfinite(point.close) or point.close <= 0:
-        return False
-    optionals = (point.open, point.high, point.low, point.volume)
-    if any(value is not None and not math.isfinite(value) for value in optionals):
-        return False
-    if point.volume is not None and point.volume < 0:
-        return False
-    if any(value is not None and value <= 0 for value in (point.open, point.high, point.low)):
-        return False
-    if point.high is not None and point.low is not None and point.high < point.low:
-        return False
-    if point.high is not None and point.high < point.close:
-        return False
-    if point.low is not None and point.low > point.close:
-        return False
-    if point.open is not None and point.high is not None and point.open > point.high:
-        return False
-    if point.open is not None and point.low is not None and point.open < point.low:
-        return False
-    return True
-
-
-def _has_complete_ohlcv(point: PricePoint) -> bool:
-    return all(value is not None for value in (point.open, point.high, point.low, point.volume))
-
-
-def _append_price_factor(
-    factors: list[Observation],
-    instrument: InstrumentId,
-    metric: str,
-    value: float,
-    prices: Sequence[PricePoint],
-    input_metric: str,
-    lookback: str,
-) -> None:
-    provenance: dict[str, object] = {
-        "algorithm": _algorithm_for_metric(metric),
-        "window": lookback,
-        "point_count": len(prices),
-        "start_at": min(point.observed_at for point in prices).isoformat(),
-        "end_at": max(point.observed_at for point in prices).isoformat(),
-        "series_ref": _price_series_reference(prices, input_metric),
-        "input_provider_kind": normalize_provider_kind(prices[0].source).value,
-    }
-    if len(prices) <= MAX_PROVENANCE_ITEMS:
-        provenance["inputs"] = [_price_input(point, input_metric) for point in prices]
-    factors.append(
-        Observation(
-            instrument=instrument,
-            metric=metric,
-            value=round(value, 10),
-            source="derived",
-            observed_at=max(point.observed_at for point in prices),
-            provenance=provenance,
-        )
-    )
-
-
-def _algorithm_for_metric(metric: str) -> str:
-    if metric == "price_return":
-        return "full_history_return"
-    if metric.startswith("simple_moving_average"):
-        return "simple_moving_average"
-    if metric.startswith("exponential_moving_average"):
-        return "exponential_moving_average"
-    if metric.startswith("relative_strength_index"):
-        return "wilder_rsi"
-    if metric.startswith("macd_signal"):
-        return "macd_signal"
-    if metric == "macd_histogram":
-        return "macd_histogram"
-    if metric.startswith("macd"):
-        return "macd"
-    if metric.startswith("bollinger"):
-        return "bollinger_band"
-    if metric.startswith("average_true_range"):
-        return "wilder_atr"
-    if metric.startswith("momentum"):
-        return "momentum"
-    if metric.startswith("annualized_volatility"):
-        return "annualized_volatility"
-    if metric.startswith("volume_trend"):
-        return "volume_trend"
-    raise ValueError(f"unknown derived price metric '{metric}'")
-
-
-def _price_series_reference(prices: Sequence[PricePoint], metric: str) -> str:
-    values = [_price_input(point, metric) for point in prices]
-    canonical = json.dumps(values, separators=(",", ":"), sort_keys=True)
-    return f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
-
-
-def _price_input(point: PricePoint, metric: str) -> dict[str, object]:
-    if metric == "ohlcv":
-        value: object = {
-            "open": point.open,
-            "high": point.high,
-            "low": point.low,
-            "close": point.close,
-            "volume": point.volume,
-        }
-    else:
-        value = getattr(point, metric)
-    return {
-        "metric": metric,
-        "timestamp": point.observed_at.isoformat(),
-        "value": value,
-        "provider_kind": normalize_provider_kind(point.source).value,
-        "provider_reference": sanitize_provider_reference(point.provenance),
-    }
-
-
-def _ema_series(values: Sequence[float], period: int) -> list[float]:
-    if len(values) < period:
-        return []
-    multiplier = 2 / (period + 1)
-    ema = statistics.fmean(values[:period])
-    result = [ema]
-    for value in values[period:]:
-        ema = (value - ema) * multiplier + ema
-        result.append(ema)
-    return result
-
-
-def _rsi(values: Sequence[float], period: int) -> float:
-    changes = [values[index] - values[index - 1] for index in range(1, len(values))]
-    average_gain = statistics.fmean(max(change, 0) for change in changes[:period])
-    average_loss = statistics.fmean(max(-change, 0) for change in changes[:period])
-    for change in changes[period:]:
-        average_gain = (average_gain * (period - 1) + max(change, 0)) / period
-        average_loss = (average_loss * (period - 1) + max(-change, 0)) / period
-    if average_loss == 0:
-        return 100.0 if average_gain > 0 else 50.0
-    return 100 - 100 / (1 + average_gain / average_loss)
-
-
-def _macd_series(values: Sequence[float], fast: int, slow: int) -> list[float]:
-    if len(values) < slow:
-        return []
-    fast_values = _ema_series(values, fast)
-    slow_values = _ema_series(values, slow)
-    fast_offset = slow - fast
-    return [fast_values[index + fast_offset] - slow for index, slow in enumerate(slow_values)]
-
-
-def _atr(prices: Sequence[PricePoint], period: int) -> float:
-    true_ranges: list[float] = []
-    for index, point in enumerate(prices):
-        high = cast(float, point.high)
-        low = cast(float, point.low)
-        if index == 0:
-            true_ranges.append(high - low)
-        else:
-            previous_close = prices[index - 1].close
-            true_ranges.append(
-                max(high - low, abs(high - previous_close), abs(low - previous_close))
-            )
-    average = statistics.fmean(true_ranges[:period])
-    for value in true_ranges[period:]:
-        average = (average * (period - 1) + value) / period
-    return average
-
-
-def _is_finite_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
-
-
 def _is_deeply_immutable(value: object) -> bool:
     if value is None or isinstance(value, str | bytes | int | float | bool):
         return True
@@ -1068,78 +875,6 @@ def _is_deeply_immutable(value: object) -> bool:
             _is_deeply_immutable(getattr(value, item.name)) for item in fields(cast(Any, value))
         )
     return False
-
-
-def _numeric_value(observation: Observation) -> float:
-    value = observation.value
-    if not _is_finite_number(value):
-        raise TypeError("fundamental factor input must be a finite number")
-    return float(cast(int | float, value))
-
-
-def _sanitize_text(text: str) -> str:
-    """Strip control characters and bidi overrides to prevent prompt injection."""
-    sanitized: list[str] = []
-    for char in text:
-        code = ord(char)
-        if code < 0x20 and char not in ("\t", "\n"):
-            continue
-        if 0x7F <= code <= 0x9F:
-            continue
-        if 0x200B <= code <= 0x200F:
-            continue
-        if 0x2028 <= code <= 0x202F:
-            continue
-        if 0x2066 <= code <= 0x2069:
-            continue
-        if code == 0xFEFF:
-            continue
-        if 0xFFF0 <= code <= 0xFFFF:
-            continue
-        sanitized.append(char)
-    return "".join(sanitized)
-
-
-def _summary(missing: Sequence[str]) -> str:
-    if missing:
-        return _sanitize_text(
-            f"partial data: missing {', '.join(dict.fromkeys(missing))}"
-        )
-    return "complete data: all required inputs available"
-
-
-def _missing_metric_kinds(missing: Sequence[str]) -> tuple[MetricKind, ...]:
-    aliases: dict[str, tuple[MetricKind, ...]] = {
-        "ema_20": (MetricKind.EXPONENTIAL_MOVING_AVERAGE_20,),
-        "exponential_moving_average": (MetricKind.EXPONENTIAL_MOVING_AVERAGE_20,),
-        "bollinger_bands": (
-            MetricKind.BOLLINGER_MIDDLE_20,
-            MetricKind.BOLLINGER_UPPER_20_2,
-            MetricKind.BOLLINGER_LOWER_20_2,
-        ),
-        "bollinger_bands_20": (
-            MetricKind.BOLLINGER_MIDDLE_20,
-            MetricKind.BOLLINGER_UPPER_20_2,
-            MetricKind.BOLLINGER_LOWER_20_2,
-        ),
-        "relative_strength_index": (MetricKind.RELATIVE_STRENGTH_INDEX_14,),
-        "macd": (MetricKind.MACD_12_26, MetricKind.MACD_SIGNAL_9, MetricKind.MACD_HISTOGRAM),
-        "average_true_range": (MetricKind.AVERAGE_TRUE_RANGE_14,),
-        "momentum": (MetricKind.MOMENTUM_10,),
-        "annualized_volatility": (MetricKind.ANNUALIZED_VOLATILITY_20,),
-        "volume_trend": (MetricKind.VOLUME_TREND_20,),
-    }
-    found: list[MetricKind] = []
-    for item in missing:
-        prefix = item.split(" ", 1)[0]
-        try:
-            candidates: tuple[MetricKind, ...] = (MetricKind(prefix),)
-        except ValueError:
-            candidates = aliases.get(prefix, ())
-        for candidate in candidates:
-            if candidate not in found:
-                found.append(candidate)
-    return tuple(found)
 
 
 def _parse_filing_evidence(
@@ -1199,22 +934,3 @@ def _append_filing_factor(
             },
         )
     )
-
-
-def _limitations(missing: Sequence[str]) -> tuple[LimitationKind, ...]:
-    limitations: list[LimitationKind] = []
-    joined = " ".join(missing)
-    if missing:
-        limitations.append(LimitationKind.MISSING_INPUTS)
-    if "incompatible" in joined:
-        limitations.append(LimitationKind.INCOMPATIBLE_INPUTS)
-    if "discarded" in joined:
-        limitations.append(LimitationKind.INVALID_ROWS_DISCARDED)
-    if "OHLCV" in joined:
-        limitations.append(LimitationKind.INCOMPLETE_OHLCV)
-    if any(
-        word in joined
-        for word in ("moving_average", "relative_strength", "macd", "momentum", "volatility")
-    ):
-        limitations.append(LimitationKind.INSUFFICIENT_HISTORY)
-    return tuple(dict.fromkeys(limitations))

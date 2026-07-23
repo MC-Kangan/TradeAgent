@@ -15,6 +15,7 @@ from uuid import UUID
 import typer
 from click import Abort, ClickException
 from click.exceptions import Exit
+from dotenv import dotenv_values, find_dotenv
 from pydantic import ValidationError
 
 from trade_research.application import ResearchApplication
@@ -54,8 +55,14 @@ _SETTINGS_ENVIRONMENT_NAMES = frozenset(
 @lru_cache(maxsize=1)
 def get_application() -> ResearchApplication:
     data_directory = Path(os.environ.get("TRADE_RESEARCH_DATA_DIR", ".trade-research"))
+    # Merge .env defaults with os.environ (explicit env vars take precedence).
+    dotenv_path = find_dotenv(usecwd=True)
+    merged_env: dict[str, str] = {}
+    if dotenv_path:
+        merged_env.update(dotenv_values(dotenv_path))
+    merged_env.update(os.environ)
     settings_environment = {
-        name: os.environ[name] for name in _SETTINGS_ENVIRONMENT_NAMES if name in os.environ
+        name: merged_env[name] for name in _SETTINGS_ENVIRONMENT_NAMES if name in merged_env
     }
     settings = Settings.from_environment(settings_environment)
     return ResearchApplication(

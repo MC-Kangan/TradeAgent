@@ -85,6 +85,10 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
                 if prices_available and fundamentals_available and filings_available
                 else "unavailable"
             ),
+            "worth_buy_stocks_analysis": (
+                "ready" if prices_available else
+                "unavailable — price provider not configured"
+            ),
         },
         "llm": {
             "configured": _configured(

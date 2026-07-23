@@ -9,6 +9,7 @@ from trade_research.skills.core import (
     SkillRegistry,
     TechnicalSkill,
 )
+from trade_research.skills.worth_buy_stocks import WorthBuyStocksSkill
 
 __all__ = [
     "FilingsSkill",
@@ -18,4 +19,5 @@ __all__ = [
     "ResearchSkill",
     "SkillRegistry",
     "TechnicalSkill",
+    "WorthBuyStocksSkill",
 ]

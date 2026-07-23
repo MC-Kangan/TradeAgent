@@ -80,6 +80,26 @@ class MetricKind(StrEnum):
     MATERIAL_EVENT_COUNT = "material_event_count"
     ANNUAL_REPORT_AGE_DAYS = "annual_report_age_days"
     QUARTERLY_REPORT_AGE_DAYS = "quarterly_report_age_days"
+    # Worth-buy-stocks composite scoring
+    WORTH_BUY_COMPOSITE = "worth_buy_composite"
+    WORTH_BUY_VERDICT = "worth_buy_verdict"
+    WORTH_BUY_MOMENTUM_SCORE = "worth_buy_momentum_score"
+    WORTH_BUY_RELATIVE_STRENGTH = "worth_buy_relative_strength"
+    WORTH_BUY_EFFICIENCY_SCORE = "worth_buy_efficiency_score"
+    WORTH_BUY_RISK_VETO = "worth_buy_risk_veto"
+    WORTH_BUY_ENTRY_CLASSIFICATION = "worth_buy_entry_classification"
+    WORTH_BUY_ENTRY_PRICE = "worth_buy_entry_price"
+    WORTH_BUY_STOP_PRICE = "worth_buy_stop_price"
+    WORTH_BUY_TARGET_PRICE = "worth_buy_target_price"
+    # Worth-buy-stocks supporting indicators
+    KDJ_K = "kdj_k"
+    KDJ_D = "kdj_d"
+    KDJ_J = "kdj_j"
+    ADX_14 = "adx_14"
+    EFFICIENCY_RATIO = "efficiency_ratio"
+    UP_DOWN_VOLUME_RATIO = "up_down_volume_ratio"
+    MAX_DRAWDOWN = "max_drawdown"
+    WEEKLY_BEARISH_ALIGNMENT = "weekly_bearish_alignment"
 
 
 class VendorField(StrEnum):
@@ -137,6 +157,17 @@ class DerivedAlgorithm(StrEnum):
     VOLUME_TREND = "volume_trend"
     FILING_COUNT = "filing_count"
     FILING_AGE = "filing_age"
+    # Worth-buy-stocks scoring layers
+    WORTH_BUY_ALPHA_WEIGHTED = "worth_buy_alpha_weighted"
+    WORTH_BUY_RISK_VETO = "worth_buy_risk_veto"
+    WORTH_BUY_TECHNICAL_CONFIRMATION = "worth_buy_technical_confirmation"
+    WORTH_BUY_ENTRY_TIMING = "worth_buy_entry_timing"
+    # Additional indicator algorithms
+    KAUFMAN_EFFICIENCY = "kaufman_efficiency"
+    RELATIVE_STRENGTH = "relative_strength"
+    KDJ_CALCULATION = "kdj_calculation"
+    ADX_CALCULATION = "adx_calculation"
+    EFFICIENCY_RATIO_CALC = "efficiency_ratio"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
