@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 
 from trade_research.domain import (
@@ -17,12 +18,14 @@ from trade_research.domain import (
 )
 from trade_research.providers import (
     CcxtPriceProvider,
+    CikResolver,
     LocalCsvParquetFundamentalProvider,
     LocalCsvParquetPriceProvider,
     ProviderConfigurationError,
     ProviderContractError,
     ReadOnlySqlFundamentalProvider,
     ReadOnlySqlPriceProvider,
+    SecCompanyFactsProvider,
     SecFilingsProvider,
     YahooPriceProvider,
 )
@@ -157,9 +160,25 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
         assert settings.fundamental_path is not None
         providers["fundamentals"] = ReadOnlySqlFundamentalProvider(settings.fundamental_path)
 
-    if settings.sec_user_agent and settings.sec_cik_map:
+    sec_resolver: CikResolver | None = None
+    if settings.sec_user_agent:
+        data_dir = settings.data_root or Path(".trade-research")
+        overrides = dict(settings.sec_cik_map)
+        overrides.update(settings.sec_cik_overrides)
+        sec_resolver = CikResolver(
+            user_agent=settings.sec_user_agent,
+            cache_dir=data_dir,
+            overrides=overrides,
+        )
+
+        if settings.fundamental_provider == "sec_company_facts":
+            providers["fundamentals"] = SecCompanyFactsProvider(
+                resolver=sec_resolver,
+                user_agent=settings.sec_user_agent,
+            )
+
         providers["filings"] = SecFilingsProvider(
-            cik_by_symbol=settings.sec_cik_map,
+            resolver=sec_resolver,
             user_agent=settings.sec_user_agent,
         )
 

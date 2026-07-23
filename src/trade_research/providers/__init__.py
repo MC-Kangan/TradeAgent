@@ -27,13 +27,18 @@ from trade_research.providers.local import (
 from trade_research.providers.registry import CapabilityName, ProviderRegistry
 from trade_research.providers.remote import (
     CcxtPriceProvider,
-    SecFilingsProvider,
     YahooPriceProvider,
     resolve_provider_symbol,
+)
+from trade_research.providers.sec import (
+    CikResolver,
+    SecCompanyFactsProvider,
+    SecFilingsProvider,
 )
 
 __all__ = [
     "CcxtPriceProvider",
+    "CikResolver",
     "CapabilityName",
     "FilingProvider",
     "FundamentalProvider",
@@ -56,6 +61,7 @@ __all__ = [
     "ProviderRegistry",
     "ReadOnlySqlFundamentalProvider",
     "ReadOnlySqlPriceProvider",
+    "SecCompanyFactsProvider",
     "SecFilingsProvider",
     "YahooPriceProvider",
     "resolve_provider_symbol",

@@ -84,6 +84,7 @@ class LocalCsvParquetPriceProvider(_BoundedLocalRows):
             )
             for row in rows
             if str(row.get("symbol", "")).upper() == instrument.symbol
+            and _row_matches_market(row, instrument.market)
         )
         return tuple(sorted(prices, key=lambda point: point.observed_at))
 
@@ -102,6 +103,7 @@ class LocalCsvParquetFundamentalProvider(_BoundedLocalRows):
             _fundamental_observation(row, instrument, source=source, snapshot=snapshot)
             for row in rows
             if str(row.get("symbol", "")).upper() == instrument.symbol
+            and _row_matches_market(row, instrument.market)
         )
 
 
@@ -191,6 +193,19 @@ class LocalPortfolioProvider:
         return self._positions
 
 
+def _row_matches_market(row: Mapping[str, object], market: str) -> bool:
+    """Return True when the row matches the market, or the row has no market column.
+
+    Backward-compatible: when a CSV/Parquet row lacks a ``market`` column (or the
+    column is empty), the row is accepted.  When the column is present, the value
+    must match the requested market case-insensitively.
+    """
+    row_market = row.get("market")
+    if row_market is None or str(row_market).strip() == "":
+        return True
+    return str(row_market).strip().upper() == market
+
+
 def _sql_rows(
     path: Path,
     table: str,
@@ -214,11 +229,22 @@ def _sql_rows(
         if not set(required).issubset(columns) or "symbol" not in columns:
             raise ProviderConfigurationError(f"{table} table does not match the fixed schema")
         selected = tuple(column for column in allowed_columns if column in columns)
-        query = (
-            f"SELECT {', '.join(selected)} FROM {table} "
-            "WHERE symbol = ? ORDER BY observed_at ASC LIMIT ?"
-        )
-        raw_rows = connection.execute(query, (instrument.symbol, max_rows + 1)).fetchall()
+        if "market" in columns:
+            query = (
+                f"SELECT {', '.join(selected)} FROM {table} "
+                "WHERE symbol = ? AND market = ? ORDER BY observed_at ASC LIMIT ?"
+            )
+            raw_rows = connection.execute(
+                query, (instrument.symbol, instrument.market, max_rows + 1)
+            ).fetchall()
+        else:
+            query = (
+                f"SELECT {', '.join(selected)} FROM {table} "
+                "WHERE symbol = ? ORDER BY observed_at ASC LIMIT ?"
+            )
+            raw_rows = connection.execute(
+                query, (instrument.symbol, max_rows + 1)
+            ).fetchall()
     if len(raw_rows) > max_rows:
         raise ProviderContractError("local SQL provider exceeded the row limit")
     return columns, tuple(dict(zip(selected, row, strict=True)) for row in raw_rows)

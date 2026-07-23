@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.lock
+          python -m pip install -r requirements-dev.lock
+          python -m pip install --no-deps --no-build-isolation -e .
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy
+
+      - name: Check skill documentation
+        run: |
+          python -c "
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'src')
+          from trade_research.engine import ResearchEngine
+          engine = ResearchEngine.from_settings()
+          skill_names = engine.skills.names
+          base = Path('skills')
+          missing = []
+          for name in skill_names:
+              skill_md = base / name / 'SKILL.md' if name != 'review' else base / 'review' / 'SKILL.md'
+              if not skill_md.is_file():
+                  missing.append(str(skill_md))
+          if missing:
+              print(f'Missing SKILL.md: {missing}')
+              sys.exit(1)
+          print(f'All {len(skill_names)} registered skills have SKILL.md documentation')
+          "
+
+      - name: Build package
+        run: python -m build

@@ -66,7 +66,8 @@ Computes 11 accounting ratios from financial statement data: revenue growth, ear
 growth, operating margin, net margin, ROE, free cash flow, FCF margin, leverage, P/E,
 EV/EBITDA, and FCF yield.
 
-Requires a `FUNDAMENTALS`-capable provider (local CSV/Parquet/SQL).
+Requires a `FUNDAMENTALS`-capable provider: `sec_company_facts` (automatic SEC EDGAR,
+no local dataset needed) or local CSV/Parquet/SQL.
 
 ### `technical`
 
@@ -81,7 +82,8 @@ Requires a `PRICES`-capable provider (Yahoo, CCXT, local files).
 Analyzes SEC EDGAR filing history: recent filing count, material-event (8-K) count,
 days since latest 10-K, and days since latest 10-Q.
 
-Requires a `FILINGS`-capable provider (SecFilingsProvider with CIK map).
+Requires `sec_user_agent` to be set. Ticker-to-CIK resolution is automatic — no
+manual CIK mapping is needed. Override unusual symbols with `sec_cik_overrides`.
 
 > **Detailed specifications:** See `skills/*/SKILL.md` for full algorithm descriptions,
 > input schemas, edge cases, and examples.
@@ -188,10 +190,10 @@ pip install '.[crypto]'   # installs ccxt for crypto price data
 | `TRADE_RESEARCH_CONFIG` | Path to JSON config file |
 | `TRADE_RESEARCH_PRICE_PROVIDER` | `yahoo`, `ccxt`, `local_csv`, `local_parquet`, `local_sql` |
 | `TRADE_RESEARCH_PRICE_PATH` | Path to local price file (for local providers) |
-| `TRADE_RESEARCH_FUNDAMENTAL_PROVIDER` | `local_csv`, `local_parquet`, `local_sql` |
-| `TRADE_RESEARCH_FUNDAMENTAL_PATH` | Path to local fundamental file |
+| `TRADE_RESEARCH_FUNDAMENTAL_PROVIDER` | `sec_company_facts`, `local_csv`, `local_parquet`, `local_sql` |
+| `TRADE_RESEARCH_FUNDAMENTAL_PATH` | Path to local fundamental file (not needed for `sec_company_facts`) |
 | `TRADE_RESEARCH_CCXT_EXCHANGE` | Exchange ID for CCXT, e.g. `binance` |
-| `TRADE_RESEARCH_SEC_USER_AGENT` | User-Agent for SEC EDGAR requests (required for filings) |
+| `TRADE_RESEARCH_SEC_USER_AGENT` | User-Agent for SEC EDGAR (required for `sec_company_facts` and filings) |
 | `TRADE_RESEARCH_DATA_ROOT` | Root directory that must contain all local provider paths |
 | `TRADE_RESEARCH_API_TOKEN` | Bearer token for HTTP API |
 | `DISCORD_WEBHOOK_URL` | Discord notification webhook |
@@ -201,17 +203,20 @@ pip install '.[crypto]'   # installs ccxt for crypto price data
 ```json
 {
   "price_provider": "yahoo",
-  "fundamental_provider": "local_csv",
-  "fundamental_path": "/data/fundamentals.csv",
-  "data_root": "/data",
+  "fundamental_provider": "sec_company_facts",
+  "data_root": ".trade-research",
   "api_token": "your-token-here",
   "sec_user_agent": "Your Org (contact@example.com)",
-  "sec_cik_map": {
-    "AAPL": "0000320193",
-    "MSFT": "0000789019"
+  "sec_cik_overrides": {
+    "BRK.A": "0001067983",
+    "BF.A": "0000018230"
   }
 }
 ```
+
+When `fundamental_provider` is `"sec_company_facts"`, no `fundamental_path` is needed —
+data is fetched live from SEC EDGAR. `sec_cik_overrides` is optional; use it only for
+unusual ticker symbols the automatic resolver can't find.
 
 Set `TRADE_RESEARCH_CONFIG=/path/to/config.json`. Environment variables take precedence
 over JSON config values for the same field.
@@ -222,24 +227,96 @@ Place a `.env` file in the project root (never commit it):
 
 ```dotenv
 TRADE_RESEARCH_PRICE_PROVIDER=yahoo
-TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=local_csv
-TRADE_RESEARCH_FUNDAMENTAL_PATH=/data/fundamentals.csv
-TRADE_RESEARCH_DATA_ROOT=/data
-TRADE_RESEARCH_API_TOKEN=your-token-here
+TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=sec_company_facts
 TRADE_RESEARCH_SEC_USER_AGENT=Your Org (contact@example.com)
+TRADE_RESEARCH_DATA_ROOT=.trade-research
+TRADE_RESEARCH_API_TOKEN=your-token-here
 ```
+
+### SEC EDGAR quick start
+
+Both `fundamental` (via `sec_company_facts`) and `filings` providers fetch data from
+the SEC EDGAR system. The only hard requirement is a **User-Agent string** identifying
+your organization — the SEC requires this per [EDGAR policy](https://www.sec.gov/os/accessing-edgar-data).
+
+```sh
+# The one required setting:
+export TRADE_RESEARCH_SEC_USER_AGENT="Your Org (contact@example.com)"
+
+# Use SEC Company Facts for fundamentals (no local dataset needed):
+export TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=sec_company_facts
+
+# Optional: Yahoo for price data (needed for technical analysis):
+export TRADE_RESEARCH_PRICE_PROVIDER=yahoo
+```
+
+**How it works:**
+
+1. **Automatic CIK resolution** — On first run, the `CikResolver` downloads the SEC's
+   `company_tickers.json` and builds a ticker→CIK map. The map is cached locally in
+   `.trade-research/sec_cik_map.json` and reused for 24 hours. You never need to look
+   up or type a CIK manually.
+
+2. **Fundamentals** — The `SecCompanyFactsProvider` fetches XBRL Company Facts from
+   `data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json` and extracts 10 US-GAAP concepts:
+   revenue, net income, operating income, shareholders' equity, long-term debt,
+   short-term borrowings, operating cash flow, capex, gross profit, and derived free
+   cash flow. Each is surfaced as an `Observation` with statement provenance (fiscal
+   year, period type, filing accession).
+
+3. **Filings** — The `SecFilingsProvider` fetches recent submission history from
+   `data.sec.gov/submissions/CIK{cik}.json` and enriches each filing with its
+   `accession_number` and `is_amendment` flag.
+
+**Overriding CIK for unusual symbols** (JSON config only):
+
+```json
+{
+  "sec_user_agent": "Your Org (contact@example.com)",
+  "sec_cik_overrides": {
+    "BRK.A": "0001067983"
+  }
+}
+```
+
+**Verifying setup:**
+
+```sh
+.venv/bin/trade-research doctor
+```
+
+The `doctor` output includes per-skill readiness — each skill reports `"ready"` or
+`"unavailable — <reason>"`. For SEC-based skills, look for:
+
+```json
+{
+  "skills": {
+    "fundamental_analysis": "ready",
+    "filings_analysis": "ready"
+  }
+}
+```
+
+**Rate limits:** The SEC allows approximately 10 requests/second. The HTTP client uses
+exponential backoff (3 retries, 0.5s base) for transient failures.
 
 ## CLI commands
 
 ```sh
 trade-research doctor                               # capability check
 trade-research list-skills                          # list registered analysts
-trade-research run-skill technical AAPL             # run one skill synchronously
+
+# Run one skill synchronously (--market is required for market-aware providers):
 trade-research run-skill technical AAPL --market NASDAQ
-trade-research run-skill filings AAPL               # SEC filing analysis
+trade-research run-skill fundamental AAPL --market NASDAQ
+trade-research run-skill filings AAPL --market NASDAQ
+
+# Async job queue:
 trade-research research AAPL                        # enqueue async job
 trade-research research AAPL --analyst technical,fundamental
 trade-research report <UUID> --format markdown      # render saved report
+
+# Server / worker / MCP:
 trade-research serve --host 127.0.0.1 --port 8000  # start HTTP API
 trade-research worker                               # start queue worker
 trade-research mcp                                  # start MCP stdio server
@@ -274,9 +351,9 @@ Claude has access to 9 bounded tools:
 
 | Use case | Skills | Provider |
 |---|---|---|
-| Equity screening (FCF yield, P/E, ROE) | `fundamental` | `FUNDAMENTALS` (local data) |
+| Equity screening (FCF yield, P/E, ROE) | `fundamental` | `FUNDAMENTALS` (SEC EDGAR or local data) |
 | Technical entry/exit signals (RSI, MACD, Bollinger) | `technical` | `PRICES` (Yahoo, CCXT, local) |
-| SEC filing review (recency, 8-K activity) | `filings` | `FILINGS` (SEC EDGAR) |
+| SEC filing review (recency, 8-K activity) | `filings` | `FILINGS` (SEC EDGAR, auto CIK) |
 | Combined research note | all | multiple |
 | Crypto technical analysis | `technical` | `PRICES` via CCXT |
 | LLM-driven analysis via Claude | any | any |

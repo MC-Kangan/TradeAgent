@@ -39,6 +39,7 @@ from trade_research.providers import (
     MAX_HTTP_BYTES,
     MAX_PRICE_POINTS,
     CapabilityName,
+    CikResolver,
     LocalCsvParquetFundamentalProvider,
     PricePoint,
     ProviderConfigurationError,
@@ -425,7 +426,9 @@ def test_adapters_reject_oversized_bodies_and_tables(tmp_path: Path) -> None:
         ReadOnlySqlPriceProvider(price_database, max_rows=1).price_history(instrument)
 
 
-def test_sec_adapter_discards_raw_payload_and_keeps_bounded_metadata_refs() -> None:
+def test_sec_adapter_discards_raw_payload_and_keeps_bounded_metadata_refs(
+    tmp_path: Path,
+) -> None:
     payload = json.dumps(
         {
             "secret_raw_field": "sk-live-must-not-survive",
@@ -438,19 +441,24 @@ def test_sec_adapter_discards_raw_payload_and_keeps_bounded_metadata_refs() -> N
             },
         }
     )
-    provider = SecFilingsProvider(
-        {"ACME": "1"},
+    resolver = CikResolver(
         "research@example.test",
+        tmp_path,
+        overrides={"ACME": "0000000001"},
+    )
+    provider = SecFilingsProvider(
+        resolver=resolver,
+        user_agent="research@example.test",
         http_get=lambda _url, _headers: payload,
     )
 
     evidence = provider.filings(InstrumentId(symbol="ACME", market="US"))
     normalized = json.loads(evidence[0].content)
-    assert normalized == {
-        "filing_date": "2026-01-01",
-        "form": "10-K",
-        "reference": normalized["reference"],
-    }
+    # New provider includes accession_number and is_amendment fields
+    assert normalized["filing_date"] == "2026-01-01"
+    assert normalized["form"] == "10-K"
+    assert normalized["accession_number"] == "0000000000-26-000001"
+    assert normalized["is_amendment"] is False
     assert normalized["reference"].startswith("sha256:")
     assert "sk-live" not in evidence[0].content
 

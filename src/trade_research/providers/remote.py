@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import cast
@@ -11,9 +12,8 @@ from urllib.parse import quote
 
 import httpx
 
-from trade_research.domain import Evidence, InstrumentId
+from trade_research.domain import InstrumentId
 from trade_research.providers.contracts import (
-    MAX_FILING_ROWS,
     MAX_HTTP_BYTES,
     MAX_PRICE_POINTS,
     OptionalProviderDependencyError,
@@ -23,6 +23,10 @@ from trade_research.providers.contracts import (
 )
 
 HttpGet = Callable[[str, Mapping[str, str]], str]
+
+_RETRY_LIMIT = 3
+_RETRY_BACKOFF_BASE = 0.5
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 _YAHOO_SUFFIXES = {
     "US": "",
@@ -41,6 +45,7 @@ _YAHOO_SUFFIXES = {
     "BORSA_ITALIANA": ".MI",
     "SIX": ".SW",
 }
+
 
 def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
     """Map a validated market to one provider's bounded symbol convention."""
@@ -64,18 +69,41 @@ def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
 
 
 def _http_get(url: str, headers: Mapping[str, str]) -> str:
+    """Fetch a URL with retry and exponential backoff for transient failures.
+
+    Retries on timeouts, HTTP 429 (rate-limit), and HTTP 5xx errors up to
+    _RETRY_LIMIT attempts with exponential backoff starting at _RETRY_BACKOFF_BASE
+    seconds. Raises ProviderConfigurationError after all retries are exhausted.
+    """
     merged = {"User-Agent": "trade-research/0.1.0", **dict(headers)}
-    try:
-        response = httpx.get(url, headers=merged, timeout=10.0, follow_redirects=True)
-        response.raise_for_status()
-    except httpx.HTTPError as error:
-        raise ProviderConfigurationError("remote provider request failed") from error
-    if len(response.content) > MAX_HTTP_BYTES:
-        raise ProviderContractError("remote provider exceeded the byte limit")
-    try:
-        return response.content.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ProviderContractError("remote provider returned invalid UTF-8") from error
+    last_error: Exception | None = None
+    for attempt in range(_RETRY_LIMIT):
+        try:
+            response = httpx.get(
+                url, headers=merged, timeout=10.0, follow_redirects=True
+            )
+            if response.status_code in _RETRYABLE_STATUSES:
+                raise ProviderConfigurationError(
+                    f"remote provider returned HTTP {response.status_code}"
+                )
+            response.raise_for_status()
+            if len(response.content) > MAX_HTTP_BYTES:
+                raise ProviderContractError("remote provider exceeded the byte limit")
+            try:
+                return response.content.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ProviderContractError(
+                    "remote provider returned invalid UTF-8"
+                ) from error
+        except (httpx.TimeoutException, httpx.ConnectError) as error:
+            last_error = error
+        except ProviderConfigurationError:
+            raise
+        if attempt < _RETRY_LIMIT - 1:
+            time.sleep(_RETRY_BACKOFF_BASE * (2**attempt))
+    raise ProviderConfigurationError(
+        "remote provider request failed after retries"
+    ) from last_error
 
 
 def _bounded_payload(payload: str) -> str:
@@ -85,7 +113,12 @@ def _bounded_payload(payload: str) -> str:
 
 
 class YahooPriceProvider:
-    """Yahoo chart endpoint adapter with a fixed symbol-only request shape."""
+    """Yahoo chart endpoint adapter with a fixed symbol-only request shape.
+
+    Returns **adjusted close** prices from the Yahoo Finance v8 chart API.
+    The ``close`` values are adjusted for splits and dividends.  Open, high,
+    low, and volume are **unadjusted** as reported by the exchange.
+    """
 
     def __init__(self, http_get: HttpGet = _http_get) -> None:
         self._http_get = http_get
@@ -142,64 +175,6 @@ class YahooPriceProvider:
             )
             if close is not None
         )
-
-
-class SecFilingsProvider:
-    """SEC adapter retaining only bounded normalized filing metadata and opaque refs."""
-
-    def __init__(
-        self,
-        cik_by_symbol: Mapping[str, str],
-        user_agent: str | None,
-        http_get: HttpGet = _http_get,
-    ) -> None:
-        if not user_agent:
-            raise ProviderConfigurationError(
-                "SEC provider requires a configured identifying user agent"
-            )
-        self._cik_by_symbol = dict(cik_by_symbol)
-        self._user_agent = user_agent
-        self._http_get = http_get
-
-    def filings(self, instrument: InstrumentId) -> tuple[Evidence, ...]:
-        try:
-            cik = self._cik_by_symbol[instrument.symbol]
-        except KeyError as error:
-            raise ProviderConfigurationError(
-                f"no SEC CIK configured for {instrument.symbol}"
-            ) from error
-        text = _bounded_payload(
-            self._http_get(
-                f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json",
-                {"Accept": "application/json", "User-Agent": self._user_agent},
-            )
-        )
-        try:
-            payload = json.loads(text)
-            recent = payload["filings"]["recent"]
-            forms = recent["form"]
-            dates = recent["filingDate"]
-            accessions = recent["accessionNumber"]
-        except (KeyError, TypeError, json.JSONDecodeError) as error:
-            raise ProviderContractError("SEC returned a malformed response") from error
-        if not all(isinstance(values, list) for values in (forms, dates, accessions)):
-            raise ProviderContractError("SEC returned malformed filing metadata")
-        count = min(len(forms), len(dates), len(accessions))
-        if count > MAX_FILING_ROWS:
-            count = MAX_FILING_ROWS
-        now = datetime.now(tz=UTC)
-        evidence: list[Evidence] = []
-        for index in range(count):
-            form = str(forms[index])[:16]
-            filing_date = str(dates[index])[:10]
-            reference = _canonical_reference(accessions[index])
-            normalized = json.dumps(
-                {"filing_date": filing_date, "form": form, "reference": reference},
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            evidence.append(Evidence(source="sec", content=normalized, collected_at=now))
-        return tuple(evidence)
 
 
 class CcxtPriceProvider:

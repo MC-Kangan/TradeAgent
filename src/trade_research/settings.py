@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_va
 from trade_research.providers.contracts import ProviderConfigurationError
 
 PriceProviderName = Literal["local_csv", "local_parquet", "local_sql", "yahoo", "ccxt"]
-FundamentalProviderName = Literal["local_csv", "local_parquet", "local_sql"]
+FundamentalProviderName = Literal["local_csv", "local_parquet", "local_sql", "sec_company_facts"]
 MAX_CONFIG_BYTES: Final = 64 * 1024
 
 
@@ -31,6 +31,7 @@ class Settings(BaseModel):
     discord_webhook_url: SecretStr | None = None
     sec_user_agent: str | None = None
     sec_cik_map: dict[str, str] = {}
+    sec_cik_overrides: dict[str, str] = {}
 
     @model_validator(mode="after")
     def validate_paths(self) -> Settings:
@@ -41,13 +42,19 @@ class Settings(BaseModel):
             _validate_path_containment(self.data_root, self.price_path)
         elif self.price_path is not None:
             raise ValueError("price_path is accepted only for local price providers")
-        if self.fundamental_provider is not None and self.fundamental_path is None:
+        if (
+            self.fundamental_provider is not None
+            and self.fundamental_provider != "sec_company_facts"
+            and self.fundamental_path is None
+        ):
             raise ValueError("local fundamental provider requires fundamental_path")
         if self.fundamental_provider is not None and self.fundamental_path is not None:
             _validate_local_path(self.fundamental_provider, self.fundamental_path)
             _validate_path_containment(self.data_root, self.fundamental_path)
         if self.fundamental_provider is None and self.fundamental_path is not None:
             raise ValueError("fundamental_path requires a fundamental_provider")
+        if self.fundamental_provider == "sec_company_facts" and not self.sec_user_agent:
+            raise ValueError("sec_company_facts provider requires sec_user_agent")
         if self.price_provider == "ccxt" and not self.ccxt_exchange:
             raise ValueError("CCXT requires ccxt_exchange")
         if self.price_provider != "ccxt" and self.ccxt_exchange is not None:

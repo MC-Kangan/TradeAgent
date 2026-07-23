@@ -38,9 +38,7 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
         settings = None
     prices_available = bool(settings and settings.price_provider)
     fundamentals_available = bool(settings and settings.fundamental_provider)
-    filings_available = bool(
-        settings and settings.sec_user_agent and settings.sec_cik_map
-    )
+    filings_available = bool(settings and settings.sec_user_agent)
     provider_valid = settings is not None and prices_available and fundamentals_available
     checks_ok = supported and writable and wal and provider_valid
     return {
@@ -68,6 +66,25 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
             "fundamentals_available": fundamentals_available,
             "filings_available": filings_available,
             "connectivity": "not_attempted",
+        },
+        "skills": {
+            "technical_analysis": (
+                "ready" if prices_available else
+                "unavailable — price provider not configured"
+            ),
+            "fundamental_analysis": (
+                "ready" if fundamentals_available else
+                "unavailable — fundamental provider not configured"
+            ),
+            "filings_analysis": (
+                "ready" if filings_available else
+                "unavailable — SEC user agent not configured"
+            ),
+            "combined_analysis": (
+                "ready"
+                if prices_available and fundamentals_available and filings_available
+                else "unavailable"
+            ),
         },
         "llm": {
             "configured": _configured(

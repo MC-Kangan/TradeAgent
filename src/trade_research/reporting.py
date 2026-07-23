@@ -273,26 +273,48 @@ def _sanitize_instrument(instrument: InstrumentId) -> InstrumentId:
 
 
 class ReportStore:
-    """Store reports under UUID-derived filenames only."""
+    """Store reports under UUID-derived filenames only, with atomic writes."""
+
+    _COMPLETION_SUFFIX = ".complete"
 
     def __init__(self, directory: Path | str) -> None:
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def save(self, report: ResearchReport) -> str:
+        """Write JSON and Markdown atomically with a completion marker.
+
+        Reports are written to temporary files first, flushed, then atomically
+        renamed to their final paths. A completion marker is written last.
+        Readers only return reports with a valid completion marker, preventing
+        half-written or mismatched output after a crash.
+        """
         safe = sanitize_report(report)
         identifier = str(safe.request_id)
-        self._path(identifier, ".json").write_text(render_json(safe), encoding="utf-8")
-        self._path(identifier, ".md").write_text(render_markdown(safe), encoding="utf-8")
+        json_final = self._path(identifier, ".json")
+        md_final = self._path(identifier, ".md")
+        json_tmp = self._path(identifier, ".json.tmp")
+        md_tmp = self._path(identifier, ".md.tmp")
+        try:
+            json_tmp.write_text(render_json(safe), encoding="utf-8")
+            md_tmp.write_text(render_markdown(safe), encoding="utf-8")
+            json_tmp.replace(json_final)
+            md_tmp.replace(md_final)
+            self._path(identifier, self._COMPLETION_SUFFIX).touch()
+        finally:
+            json_tmp.unlink(missing_ok=True)
+            md_tmp.unlink(missing_ok=True)
         return f"report:{identifier}"
 
     def list_reports(self) -> tuple[str, ...]:
         identifiers: list[str] = []
         for path in self.directory.glob("*.json"):
             try:
-                identifiers.append(str(UUID(path.stem)))
+                parsed = UUID(path.stem)
             except ValueError:
                 continue
+            if self._path(str(parsed), self._COMPLETION_SUFFIX).is_file():
+                identifiers.append(str(parsed))
         return tuple(sorted(identifiers))
 
     def get(self, reference: str | UUID) -> ResearchReport:
@@ -300,6 +322,8 @@ class ReportStore:
         path = self._path(identifier, ".json")
         if not path.is_file():
             raise KeyError(f"unknown report: {identifier}")
+        if not self._path(identifier, self._COMPLETION_SUFFIX).is_file():
+            raise KeyError(f"report incomplete or corrupted: {identifier}")
         return ResearchReport.model_validate_json(path.read_text(encoding="utf-8"))
 
     def render(
