@@ -76,6 +76,10 @@ class MetricKind(StrEnum):
     MOMENTUM_10 = "momentum_10"
     ANNUALIZED_VOLATILITY_20 = "annualized_volatility_20"
     VOLUME_TREND_20 = "volume_trend_20"
+    RECENT_FILING_COUNT = "recent_filing_count"
+    MATERIAL_EVENT_COUNT = "material_event_count"
+    ANNUAL_REPORT_AGE_DAYS = "annual_report_age_days"
+    QUARTERLY_REPORT_AGE_DAYS = "quarterly_report_age_days"
 
 
 class VendorField(StrEnum):
@@ -131,6 +135,8 @@ class DerivedAlgorithm(StrEnum):
     MOMENTUM = "momentum"
     ANNUALIZED_VOLATILITY = "annualized_volatility"
     VOLUME_TREND = "volume_trend"
+    FILING_COUNT = "filing_count"
+    FILING_AGE = "filing_age"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")

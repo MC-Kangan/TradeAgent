@@ -393,10 +393,6 @@ def test_derived_provenance_allow_list_drops_sensitive_structured_fields() -> No
         ("yahoo", InstrumentId(symbol="VOD", market="UK"), "VOD.L"),
         ("yahoo", InstrumentId(symbol="SAP", market="XETRA"), "SAP.DE"),
         ("yahoo", InstrumentId(symbol="SPY", market="ETF"), "SPY"),
-        ("stooq", InstrumentId(symbol="AAPL", market="NASDAQ"), "aapl.us"),
-        ("stooq", InstrumentId(symbol="VOD", market="LSE"), "vod.uk"),
-        ("stooq", InstrumentId(symbol="SAP", market="XETRA"), "sap.de"),
-        ("stooq", InstrumentId(symbol="SPY", market="ETF"), "spy.us"),
         ("ccxt", InstrumentId(symbol="BTC/USDT", market="CRYPTO"), "BTC/USDT"),
     ],
 )

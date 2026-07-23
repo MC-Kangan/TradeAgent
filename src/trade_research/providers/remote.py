@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from itertools import islice
 from typing import cast
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+
+import httpx
 
 from trade_research.domain import Evidence, InstrumentId
 from trade_research.providers.contracts import (
@@ -43,24 +41,6 @@ _YAHOO_SUFFIXES = {
     "BORSA_ITALIANA": ".MI",
     "SIX": ".SW",
 }
-_STOOQ_SUFFIXES = {
-    "US": ".us",
-    "NASDAQ": ".us",
-    "NYSE": ".us",
-    "AMEX": ".us",
-    "OTC": ".us",
-    "ETF": ".us",
-    "UK": ".uk",
-    "LSE": ".uk",
-    "AIM": ".uk",
-    "EU": ".fr",
-    "EURONEXT": ".fr",
-    "XETRA": ".de",
-    "BME": ".es",
-    "BORSA_ITALIANA": ".it",
-    "SIX": ".ch",
-}
-
 
 def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
     """Map a validated market to one provider's bounded symbol convention."""
@@ -70,7 +50,7 @@ def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
         if instrument.market != "CRYPTO":
             raise ProviderConfigurationError("CCXT accepts only CRYPTO instruments")
         return instrument.symbol
-    suffixes = {"yahoo": _YAHOO_SUFFIXES, "stooq": _STOOQ_SUFFIXES}.get(normalized_provider)
+    suffixes = {"yahoo": _YAHOO_SUFFIXES}.get(normalized_provider)
     if suffixes is None:
         raise ProviderConfigurationError(f"unknown market-symbol provider '{provider}'")
     try:
@@ -84,16 +64,16 @@ def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
 
 
 def _http_get(url: str, headers: Mapping[str, str]) -> str:
-    request = Request(url, headers=dict(headers))
+    merged = {"User-Agent": "trade-research/0.1.0", **dict(headers)}
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310 - fixed adapter URLs.
-            payload = cast(bytes, response.read(MAX_HTTP_BYTES + 1))
-    except OSError as error:
+        response = httpx.get(url, headers=merged, timeout=10.0, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
         raise ProviderConfigurationError("remote provider request failed") from error
-    if len(payload) > MAX_HTTP_BYTES:
+    if len(response.content) > MAX_HTTP_BYTES:
         raise ProviderContractError("remote provider exceeded the byte limit")
     try:
-        return payload.decode("utf-8")
+        return response.content.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ProviderContractError("remote provider returned invalid UTF-8") from error
 
@@ -112,7 +92,10 @@ class YahooPriceProvider:
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
         symbol = resolve_provider_symbol("yahoo", instrument)
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol)}?range=1y&interval=1d"
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{quote(symbol, safe='')}?range=1y&interval=1d"
+        )
         payload_text = _bounded_payload(self._http_get(url, {"Accept": "application/json"}))
         try:
             payload = json.loads(payload_text)
@@ -159,45 +142,6 @@ class YahooPriceProvider:
             )
             if close is not None
         )
-
-
-class StooqPriceProvider:
-    """Stooq daily CSV adapter with a fixed query shape."""
-
-    def __init__(self, http_get: HttpGet = _http_get) -> None:
-        self._http_get = http_get
-
-    def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
-        symbol = resolve_provider_symbol("stooq", instrument)
-        url = f"https://stooq.com/q/d/l/?s={quote(symbol)}&i=d"
-        payload = _bounded_payload(self._http_get(url, {"Accept": "text/csv"}))
-        rows = tuple(islice(csv.DictReader(io.StringIO(payload)), MAX_PRICE_POINTS + 1))
-        if len(rows) > MAX_PRICE_POINTS:
-            raise ProviderContractError("Stooq exceeded the point limit")
-        snapshot = _canonical_reference(payload)
-        try:
-            return tuple(
-                PricePoint(
-                    instrument=instrument,
-                    observed_at=datetime.fromisoformat(row["Date"]).replace(tzinfo=UTC),
-                    close=float(row["Close"]),
-                    source="stooq",
-                    provenance={
-                        "provider_kind": "stooq",
-                        "vendor_field": "OHLCV",
-                        "snapshot_ref": snapshot,
-                        "reference": _canonical_reference(row),
-                    },
-                    open=_row_float(row, "Open"),
-                    high=_row_float(row, "High"),
-                    low=_row_float(row, "Low"),
-                    volume=_row_float(row, "Volume"),
-                )
-                for row in rows
-                if row.get("Close") not in (None, "", "N/D")
-            )
-        except (KeyError, TypeError, ValueError) as error:
-            raise ProviderContractError("Stooq returned a malformed response") from error
 
 
 class SecFilingsProvider:
@@ -270,7 +214,8 @@ class CcxtPriceProvider:
             import ccxt  # type: ignore[import-not-found]
         except ImportError as error:
             raise OptionalProviderDependencyError(
-                "CCXT provider requires the optional 'ccxt' dependency"
+                "CCXT provider requires the optional 'ccxt' dependency. "
+                "Install it with: pip install ccxt"
             ) from error
         try:
             exchange_type = getattr(ccxt, self._exchange_id)

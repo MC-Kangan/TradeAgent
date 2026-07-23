@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from trade_research.domain import InstrumentId, Observation
+from trade_research.domain import Evidence, InstrumentId, Observation
 from trade_research.providers import PricePoint, ProviderRegistry
 from trade_research.skills import (
+    FilingsSkill,
     FundamentalSkill,
     ResearchCompiler,
     ResearchReviewer,
     SkillRegistry,
     TechnicalSkill,
 )
+from trade_research.skills.core import _sanitize_text
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,103 @@ def _observation(
         observed_at=observed_at,
         provenance=metadata,
     )
+
+
+def test_filings_skill_analyzes_form_counts_and_report_ages() -> None:
+    instrument = InstrumentId(symbol="ACME", market="NASDAQ")
+    now = datetime.now(tz=UTC)
+
+    def _evidence(form: str, filing_date: str) -> Evidence:
+        return Evidence(
+            source="sec",
+            content=json.dumps(
+                {"form": form, "filing_date": filing_date, "reference": _reference(filing_date)},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            collected_at=now,
+        )
+
+    class MockFilingsProvider:
+        def filings(self, instrument: InstrumentId) -> tuple[Evidence, ...]:
+            return (
+                _evidence("10-K", "2025-03-15"),
+                _evidence("10-Q", "2025-11-01"),
+                _evidence("10-Q", "2025-08-01"),
+                _evidence("10-Q", "2025-05-01"),
+                _evidence("8-K", "2025-06-15"),
+                _evidence("8-K", "2025-09-20"),
+                _evidence("8-K/A", "2025-09-22"),
+            )
+
+    providers = ProviderRegistry({"filings": MockFilingsProvider()})
+    result = FilingsSkill().analyze(instrument, providers)
+
+    metrics = {item.metric: item.value for item in result.observations}
+    assert metrics["recent_filing_count"] == 7
+    assert metrics["material_event_count"] == 3  # 8-K + 8-K/A
+    assert metrics["annual_report_age_days"] > 0
+    assert metrics["quarterly_report_age_days"] > 0
+    assert result.summary == "complete data: all required inputs available"
+    assert result.status.value == "complete"
+
+
+def test_filings_skill_reports_partial_when_no_evidence() -> None:
+    instrument = InstrumentId(symbol="NODATA", market="NASDAQ")
+
+    class EmptyFilingsProvider:
+        def filings(self, instrument: InstrumentId) -> tuple[Evidence, ...]:
+            return ()
+
+    providers = ProviderRegistry({"filings": EmptyFilingsProvider()})
+    result = FilingsSkill().analyze(instrument, providers)
+
+    assert result.observations == ()
+    assert result.summary.startswith("partial data")
+    assert result.status.value == "partial"
+
+
+def test_filings_skill_skips_missing_ten_k_and_ten_q() -> None:
+    instrument = InstrumentId(symbol="ACME", market="NASDAQ")
+    now = datetime.now(tz=UTC)
+
+    class Only8KProvider:
+        def filings(self, instrument: InstrumentId) -> tuple[Evidence, ...]:
+            return (
+                Evidence(
+                    source="sec",
+                    content=json.dumps(
+                        {"form": "8-K", "filing_date": "2025-06-15",
+                         "reference": _reference("8k")},
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    collected_at=now,
+                ),
+            )
+
+    providers = ProviderRegistry({"filings": Only8KProvider()})
+    result = FilingsSkill().analyze(instrument, providers)
+
+    metrics = {item.metric for item in result.observations}
+    assert "recent_filing_count" in metrics
+    assert "material_event_count" in metrics
+    assert "annual_report_age_days" not in metrics
+    assert "quarterly_report_age_days" not in metrics
+    assert result.summary.startswith("partial data")
+
+
+def test_sanitize_text_strips_control_characters_and_bidi_overrides() -> None:
+    assert _sanitize_text("normal text") == "normal text"
+    assert _sanitize_text("text with\ttab\nnewline") == "text with\ttab\nnewline"
+    assert _sanitize_text("null\x00byte") == "nullbyte"
+    assert _sanitize_text("bidi‏override‮") == "bidioverride"
+    assert _sanitize_text("​zero‌width‍") == "zerowidth"
+    assert _sanitize_text("\x1b[31mANSI\x1b[0m") == "[31mANSI[0m"
+    assert _sanitize_text("safe\x7fdel") == "safedel"
+    assert _sanitize_text("﻿BOM") == "BOM"
+    # Verify tab and newline are preserved while other control chars are stripped
+    assert _sanitize_text("line1\nline2\tindented\r") == "line1\nline2\tindented"
 
 
 def _reference(value: str) -> str:

@@ -28,7 +28,6 @@ from trade_research.providers.registry import CapabilityName, ProviderRegistry
 from trade_research.providers.remote import (
     CcxtPriceProvider,
     SecFilingsProvider,
-    StooqPriceProvider,
     YahooPriceProvider,
     resolve_provider_symbol,
 )
@@ -58,7 +57,6 @@ __all__ = [
     "ReadOnlySqlFundamentalProvider",
     "ReadOnlySqlPriceProvider",
     "SecFilingsProvider",
-    "StooqPriceProvider",
     "YahooPriceProvider",
     "resolve_provider_symbol",
 ]

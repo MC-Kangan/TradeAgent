@@ -38,6 +38,9 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
         settings = None
     prices_available = bool(settings and settings.price_provider)
     fundamentals_available = bool(settings and settings.fundamental_provider)
+    filings_available = bool(
+        settings and settings.sec_user_agent and settings.sec_cik_map
+    )
     provider_valid = settings is not None and prices_available and fundamentals_available
     checks_ok = supported and writable and wal and provider_valid
     return {
@@ -52,8 +55,9 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
             "data_directory_configured": "TRADE_RESEARCH_DATA_DIR" in env,
             "config_file_configured": config_file is not None,
             "config_file_readable": bool(config_file and Path(config_file).is_file()),
-            "api_token_configured": _configured(
-                env, "TRADE_RESEARCH_API_TOKEN", "TRADE_RESEARCH_API_TOKEN_FILE"
+            "api_token_configured": (
+                (settings is not None and settings.api_token is not None)
+                or _configured(env, "TRADE_RESEARCH_API_TOKEN", "TRADE_RESEARCH_API_TOKEN_FILE")
             ),
         },
         "storage": {"writable": writable, "sqlite_wal": wal},
@@ -62,6 +66,7 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
             "valid": provider_valid,
             "prices_available": prices_available,
             "fundamentals_available": fundamentals_available,
+            "filings_available": filings_available,
             "connectivity": "not_attempted",
         },
         "llm": {
@@ -75,7 +80,10 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
             "connectivity": "not_attempted",
         },
         "discord": {
-            "configured": _configured(env, "DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL_FILE"),
+            "configured": (
+                (settings is not None and settings.discord_webhook_url is not None)
+                or _configured(env, "DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL_FILE")
+            ),
             "connectivity": "not_attempted",
         },
     }

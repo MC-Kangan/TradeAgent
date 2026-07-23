@@ -14,7 +14,6 @@ from trade_research.providers import (
     ProviderConfigurationError,
     ProviderRegistry,
     ReadOnlySqlPriceProvider,
-    StooqPriceProvider,
     YahooPriceProvider,
 )
 
@@ -151,15 +150,8 @@ def test_remote_price_adapters_parse_ohlcv_and_resolved_symbols() -> None:
             '"open":[99],"high":[102],"low":[98],"close":[101],"volume":[1000]}]}}]}}'
         )
 
-    def stooq_get(url: str, headers: object) -> str:
-        requested.append(url)
-        return "Date,Open,High,Low,Close,Volume\n2026-01-01,99,102,98,101,1000\n"
-
     yahoo = YahooPriceProvider(http_get=yahoo_get).price_history(
         InstrumentId(symbol="VOD", market="UK")
-    )[0]
-    stooq = StooqPriceProvider(http_get=stooq_get).price_history(
-        InstrumentId(symbol="SAP", market="XETRA")
     )[0]
 
     assert (yahoo.open, yahoo.high, yahoo.low, yahoo.close, yahoo.volume) == (
@@ -169,15 +161,7 @@ def test_remote_price_adapters_parse_ohlcv_and_resolved_symbols() -> None:
         101.0,
         1000.0,
     )
-    assert (stooq.open, stooq.high, stooq.low, stooq.close, stooq.volume) == (
-        99.0,
-        102.0,
-        98.0,
-        101.0,
-        1000.0,
-    )
     assert "VOD.L" in requested[0]
-    assert "sap.de" in requested[1]
 
 
 def test_portfolio_provider_keeps_positions_in_memory() -> None:

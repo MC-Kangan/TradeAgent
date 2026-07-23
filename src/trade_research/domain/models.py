@@ -123,6 +123,10 @@ class InstrumentId(DomainModel):
 
     @model_validator(mode="after")
     def validate_market_symbol_grammar(self) -> Self:
+        # Security: per-market grammar prevents URL injection by restricting characters
+        # allowed in symbols before they reach provider URL construction. Non-CRYPTO
+        # markets forbid '/' and ':' which are meaningful in URL paths. Provider URL
+        # builders additionally use quote(symbol, safe='') as defense-in-depth.
         if self.market == "CRYPTO":
             pattern = r"(?:[A-Z0-9]{2,15}(?:/|-)[A-Z0-9]{2,15}|[A-Z0-9]{2,20})"
         else:

@@ -15,6 +15,7 @@ from typing import Any, Protocol, cast
 
 from trade_research.domain import (
     AnalystResult,
+    Evidence,
     InstrumentId,
     LimitationKind,
     MetricKind,
@@ -494,6 +495,88 @@ class TechnicalSkill:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FilingsSkill:
+    """Analyze SEC filing history for form-type counts and reporting recency."""
+
+    _name: str = field(default="filings", init=False, repr=False)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def required_capabilities(self) -> tuple[CapabilityName, ...]:
+        return (CapabilityName.FILINGS,)
+
+    def __getattribute__(self, attribute: str) -> object:
+        if attribute == "name":
+            return object.__getattribute__(self, "_name")
+        return object.__getattribute__(self, attribute)
+
+    def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
+        evidence = providers.filings(instrument)
+        filings = _parse_filing_evidence(evidence)
+        factors: list[Observation] = []
+        missing: list[str] = []
+
+        if not filings:
+            missing.append("no filing data available")
+            return AnalystResult(
+                analyst=self._name,
+                instrument=instrument,
+                summary=_summary(missing),
+                status=ReportStatus.PARTIAL,
+                missing_metrics=_missing_metric_kinds(missing),
+                limitations=_limitations(missing),
+                observations=(),
+            )
+
+        now = datetime.now(tz=UTC)
+        ten_k_forms = [f for f in filings if f["form"] in ("10-K", "10-K/A")]
+        ten_q_forms = [f for f in filings if f["form"] in ("10-Q", "10-Q/A")]
+        eight_k_forms = [f for f in filings if f["form"] in ("8-K", "8-K/A")]
+
+        _append_filing_factor(
+            factors, instrument, "recent_filing_count", len(filings),
+            filings, algorithm="filing_count", window="all_available",
+        )
+        _append_filing_factor(
+            factors, instrument, "material_event_count", len(eight_k_forms),
+            filings, algorithm="filing_count", window="form_8k",
+        )
+
+        if ten_k_forms:
+            latest_10k = max(ten_k_forms, key=lambda f: cast(date, f["filing_date"]))
+            age_days = (now.date() - cast(date, latest_10k["filing_date"])).days
+            _append_filing_factor(
+                factors, instrument, "annual_report_age_days", age_days,
+                filings, algorithm="filing_age", window="latest_10k",
+            )
+        else:
+            missing.append("annual_report_age_days")
+
+        if ten_q_forms:
+            latest_10q = max(ten_q_forms, key=lambda f: cast(date, f["filing_date"]))
+            age_days = (now.date() - cast(date, latest_10q["filing_date"])).days
+            _append_filing_factor(
+                factors, instrument, "quarterly_report_age_days", age_days,
+                filings, algorithm="filing_age", window="latest_10q",
+            )
+        else:
+            missing.append("quarterly_report_age_days")
+
+        return AnalystResult(
+            analyst=self._name,
+            instrument=instrument,
+            summary=_summary(missing),
+            status=ReportStatus.PARTIAL if missing else ReportStatus.COMPLETE,
+            missing_metrics=_missing_metric_kinds(missing),
+            limitations=_limitations(missing),
+            observations=tuple(factors),
+        )
+
+
 class ResearchCompiler:
     """Compile only the user-selected analyst set; no debate topology is imposed."""
 
@@ -516,7 +599,7 @@ class ResearchReviewer:
     def review(self, results: Sequence[AnalystResult]) -> tuple[AnalystResult, ...]:
         reviewed: list[AnalystResult] = []
         for result in results:
-            summary = result.summary
+            summary = _sanitize_text(result.summary)
             if not result.observations and not summary.startswith("partial data"):
                 summary = "partial data: no derived observations"
             reviewed.append(result.model_copy(update={"summary": summary}))
@@ -994,9 +1077,34 @@ def _numeric_value(observation: Observation) -> float:
     return float(cast(int | float, value))
 
 
+def _sanitize_text(text: str) -> str:
+    """Strip control characters and bidi overrides to prevent prompt injection."""
+    sanitized: list[str] = []
+    for char in text:
+        code = ord(char)
+        if code < 0x20 and char not in ("\t", "\n"):
+            continue
+        if 0x7F <= code <= 0x9F:
+            continue
+        if 0x200B <= code <= 0x200F:
+            continue
+        if 0x2028 <= code <= 0x202F:
+            continue
+        if 0x2066 <= code <= 0x2069:
+            continue
+        if code == 0xFEFF:
+            continue
+        if 0xFFF0 <= code <= 0xFFFF:
+            continue
+        sanitized.append(char)
+    return "".join(sanitized)
+
+
 def _summary(missing: Sequence[str]) -> str:
     if missing:
-        return f"partial data: missing {', '.join(dict.fromkeys(missing))}"
+        return _sanitize_text(
+            f"partial data: missing {', '.join(dict.fromkeys(missing))}"
+        )
     return "complete data: all required inputs available"
 
 
@@ -1032,6 +1140,65 @@ def _missing_metric_kinds(missing: Sequence[str]) -> tuple[MetricKind, ...]:
             if candidate not in found:
                 found.append(candidate)
     return tuple(found)
+
+
+def _parse_filing_evidence(
+    evidence: Sequence[object],
+) -> list[dict[str, object]]:
+    parsed: list[dict[str, object]] = []
+    for item in evidence:
+        if not isinstance(item, Evidence):
+            continue
+        content = item.content
+        try:
+            data = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        form = data.get("form")
+        filing_date_str = data.get("filing_date")
+        if not isinstance(form, str) or not isinstance(filing_date_str, str):
+            continue
+        try:
+            filing_date = date.fromisoformat(filing_date_str)
+        except ValueError:
+            continue
+        parsed.append({"form": form, "filing_date": filing_date})
+    return parsed
+
+
+def _append_filing_factor(
+    factors: list[Observation],
+    instrument: InstrumentId,
+    metric: str,
+    value: float,
+    filings: list[dict[str, object]],
+    *,
+    algorithm: str,
+    window: str,
+) -> None:
+    filing_refs = [
+        {"form": str(f["form"]), "filing_date": str(f["filing_date"])}
+        for f in filings
+    ]
+    reference = json.dumps(filing_refs, separators=(",", ":"), sort_keys=True)
+    factors.append(
+        Observation(
+            instrument=instrument,
+            metric=metric,
+            value=value,
+            source="derived",
+            observed_at=datetime.now(tz=UTC),
+            provenance={
+                "algorithm": algorithm,
+                "window": window,
+                "reference": f"sha256:{hashlib.sha256(reference.encode()).hexdigest()}",
+                "input_provider_kind": "sec",
+                "point_count": len(filings),
+            },
+        )
+    )
 
 
 def _limitations(missing: Sequence[str]) -> tuple[LimitationKind, ...]:

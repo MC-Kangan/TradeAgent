@@ -23,13 +23,14 @@ from trade_research.providers import (
     ProviderContractError,
     ReadOnlySqlFundamentalProvider,
     ReadOnlySqlPriceProvider,
-    StooqPriceProvider,
+    SecFilingsProvider,
     YahooPriceProvider,
 )
 from trade_research.providers.registry import CapabilityName, CapabilityProvider, ProviderRegistry
 from trade_research.reporting import sanitize_report
 from trade_research.settings import Settings
 from trade_research.skills import (
+    FilingsSkill,
     FundamentalSkill,
     ResearchReviewer,
     ResearchSkill,
@@ -64,7 +65,10 @@ class ResearchEngine:
     ) -> ResearchEngine:
         """Compose configured bounded providers while permitting typed test injection."""
 
-        default_skills = cast(tuple[ResearchSkill, ...], (FundamentalSkill(), TechnicalSkill()))
+        default_skills = cast(
+            tuple[ResearchSkill, ...],
+            (FundamentalSkill(), TechnicalSkill(), FilingsSkill()),
+        )
         selected_skills = skills or SkillRegistry(default_skills)
         if providers is None:
             selected_providers = ProviderRegistry(_compose_providers(settings or Settings()))
@@ -140,8 +144,6 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
         providers["prices"] = ReadOnlySqlPriceProvider(settings.price_path)
     elif settings.price_provider == "yahoo":
         providers["prices"] = YahooPriceProvider()
-    elif settings.price_provider == "stooq":
-        providers["prices"] = StooqPriceProvider()
     elif settings.price_provider == "ccxt":
         assert settings.ccxt_exchange is not None
         providers["prices"] = CcxtPriceProvider(settings.ccxt_exchange)
@@ -154,4 +156,11 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
     elif settings.fundamental_provider == "local_sql":
         assert settings.fundamental_path is not None
         providers["fundamentals"] = ReadOnlySqlFundamentalProvider(settings.fundamental_path)
+
+    if settings.sec_user_agent and settings.sec_cik_map:
+        providers["filings"] = SecFilingsProvider(
+            cik_by_symbol=settings.sec_cik_map,
+            user_agent=settings.sec_user_agent,
+        )
+
     return providers
