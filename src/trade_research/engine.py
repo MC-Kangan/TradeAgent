@@ -35,6 +35,7 @@ from trade_research.settings import Settings
 from trade_research.skills import (
     FilingsSkill,
     FundamentalSkill,
+    MarkovMethodSkill,
     ResearchReviewer,
     ResearchSkill,
     SkillRegistry,
@@ -71,7 +72,8 @@ class ResearchEngine:
 
         default_skills = cast(
             tuple[ResearchSkill, ...],
-            (FundamentalSkill(), TechnicalSkill(), FilingsSkill(), WorthBuyStocksSkill()),
+            (FundamentalSkill(), TechnicalSkill(), FilingsSkill(), WorthBuyStocksSkill(),
+             MarkovMethodSkill()),
         )
         selected_skills = skills or SkillRegistry(default_skills)
         if providers is None:

@@ -89,6 +89,10 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
                 "ready" if prices_available else
                 "unavailable — price provider not configured"
             ),
+            "markov_method_analysis": (
+                "ready" if prices_available else
+                "unavailable — price provider not configured"
+            ),
         },
         "llm": {
             "configured": _configured(

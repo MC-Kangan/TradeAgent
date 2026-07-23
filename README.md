@@ -85,6 +85,24 @@ days since latest 10-K, and days since latest 10-Q.
 Requires `sec_user_agent` to be set. Ticker-to-CIK resolution is automatic — no
 manual CIK mapping is needed. Override unusual symbols with `sec_cik_overrides`.
 
+### `worth-buy-stocks`
+
+A 4-layer trend-scoring pipeline producing trading discipline verdicts
+(是/观察/否) with entry/stop/target price levels. Computes ALPHA-weighted
+composite scores (momentum, relative strength, efficiency), risk veto
+checks, and technical confirmation. [Original algorithm.](https://github.com/starriv/worth-buy-stocks)
+
+Requires a `PRICES`-capable provider.
+
+### `markov-method`
+
+Markov regime detection: labels each day Bull/Bear/Sideways via rolling
+returns, builds a 3×3 transition matrix, computes the stationary distribution,
+and emits a signed signal (−1 to +1) usable as a direction filter or
+standalone signal. Works on any asset. [Original algorithm.](https://github.com/jackson-video-resources/markov-hedge-fund-method)
+
+Requires a `PRICES`-capable provider.
+
 > **Detailed specifications:** See `skills/*/SKILL.md` for full algorithm descriptions,
 > input schemas, edge cases, and examples.
 
@@ -364,19 +382,19 @@ Claude has access to 9 bounded tools:
 
 ### Adding a new skill
 
-1. Write documentation: `skills/<name>/SKILL.md` and `examples.md`
-2. Implement a frozen dataclass in `src/trade_research/skills/core.py` implementing the
-   `ResearchSkill` protocol
-3. Extend enums in `src/trade_research/domain/provenance.py` if new metrics are needed
-4. Register the instance in `src/trade_research/engine.py:default_skills`
-5. Export from `src/trade_research/skills/__init__.py`
-6. Write tests (TDD per `AGENTS.md`)
-7. Run verification:
-   ```sh
-   .venv/bin/python -m pytest
-   .venv/bin/ruff check .
-   .venv/bin/mypy
-   ```
+See **[docs/ADDING_A_SKILL.md](docs/ADDING_A_SKILL.md)** for the complete
+step-by-step guide.  Quick summary:
+
+1. Define `MetricKind` + `DerivedAlgorithm` enums in `domain/provenance.py`
+2. Add indicator functions to `skills/indicators.py` (if needed) and update
+   `algorithm_for_metric()` for new metric prefixes
+3. Create a frozen dataclass in `skills/` implementing the `ResearchSkill` protocol
+4. Export from `skills/__init__.py` and register in `engine.py:default_skills`
+5. Add a doctor diagnostics entry in `diagnostics.py`
+6. Write `SKILL.md` and `README.md` in `skills/<name>/`
+7. Write tests (8 minimum test types)
+8. Update `skills/README.md` and this README
+9. Run verification: `pytest`, `ruff`, `mypy`, `list-skills`, `doctor`, `run-skill`
 
 **Skills are immutable at runtime.** The registry validates that every skill is a frozen
 dataclass and rejects any attempt to mutate it after startup. You cannot add skills
@@ -422,6 +440,9 @@ See `AGENTS.md` for the full security policy. Key points:
 | [skills/technical-analysis/SKILL.md](skills/technical-analysis/SKILL.md) | Technical skill spec |
 | [skills/filings-analysis/SKILL.md](skills/filings-analysis/SKILL.md) | Filings skill spec |
 | [skills/review/SKILL.md](skills/review/SKILL.md) | Reviewer spec |
+| [skills/worth-buy-stocks/SKILL.md](skills/worth-buy-stocks/SKILL.md) | Worth-buy-stocks trend-scoring spec |
+| [skills/markov-method/SKILL.md](skills/markov-method/SKILL.md) | Markov regime detection spec |
+| [docs/ADDING_A_SKILL.md](docs/ADDING_A_SKILL.md) | Guide to adding new skills |
 | [docs/fundamental-data-schema.md](docs/fundamental-data-schema.md) | CSV/SQL schema for fundamental data |
 | [docs/deployment.md](docs/deployment.md) | Native and Docker deployment |
 | [docs/adapters.md](docs/adapters.md) | Enterprise data adapters |

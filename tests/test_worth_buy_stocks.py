@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from trade_research.domain import (
-    AnalysisMethod,
-    AnalystResult,
     InstrumentId,
     MetricKind,
-    Observation,
     ReportStatus,
     SignalKind,
 )
@@ -34,11 +30,9 @@ from trade_research.skills.indicators import (
     rsi,
     sma,
     up_down_volume_ratio,
-    validated_prices,
     weekly_bearish_check,
 )
 from trade_research.skills.worth_buy_stocks import WorthBuyStocksSkill
-
 
 # ---------------------------------------------------------------------------
 # Price point helpers

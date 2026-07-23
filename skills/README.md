@@ -15,9 +15,14 @@ skills. The runtime cannot load Markdown as code.
 | [fundamental-analysis/](fundamental-analysis/SKILL.md) | `fundamental` | `FUNDAMENTALS` |
 | [technical-analysis/](technical-analysis/SKILL.md) | `technical` | `PRICES` |
 | [filings-analysis/](filings-analysis/SKILL.md) | `filings` | `FILINGS` |
+| [worth-buy-stocks/](worth-buy-stocks/SKILL.md) | `worth-buy-stocks` | `PRICES` |
+| [markov-method/](markov-method/SKILL.md) | `markov-method` | `PRICES` |
 | [review/](review/SKILL.md) | built-in reviewer | (none — post-processing) |
 
 ## Adding a new skill
+
+See **[../docs/ADDING_A_SKILL.md](../docs/ADDING_A_SKILL.md)** for the complete step-by-step
+integration guide. Quick summary of the files involved:
 
 1. Write a SKILL.md and examples.md in a new subdirectory (documentation first)
 2. Implement a frozen dataclass in `src/trade_research/skills/core.py`

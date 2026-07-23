@@ -9,11 +9,13 @@ from trade_research.skills.core import (
     SkillRegistry,
     TechnicalSkill,
 )
+from trade_research.skills.markov_method import MarkovMethodSkill
 from trade_research.skills.worth_buy_stocks import WorthBuyStocksSkill
 
 __all__ = [
     "FilingsSkill",
     "FundamentalSkill",
+    "MarkovMethodSkill",
     "ResearchCompiler",
     "ResearchReviewer",
     "ResearchSkill",

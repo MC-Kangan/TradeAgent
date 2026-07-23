@@ -100,6 +100,17 @@ class MetricKind(StrEnum):
     UP_DOWN_VOLUME_RATIO = "up_down_volume_ratio"
     MAX_DRAWDOWN = "max_drawdown"
     WEEKLY_BEARISH_ALIGNMENT = "weekly_bearish_alignment"
+    # Markov regime detection
+    MARKOV_CURRENT_REGIME = "markov_current_regime"
+    MARKOV_SIGNAL = "markov_signal"
+    MARKOV_STATIONARY_BULL = "markov_stationary_bull"
+    MARKOV_STATIONARY_BEAR = "markov_stationary_bear"
+    MARKOV_STATIONARY_SIDEWAYS = "markov_stationary_sideways"
+    MARKOV_PERSISTENCE_BULL = "markov_persistence_bull"
+    MARKOV_PERSISTENCE_BEAR = "markov_persistence_bear"
+    MARKOV_PERSISTENCE_SIDEWAYS = "markov_persistence_sideways"
+    MARKOV_WALKFORWARD_SHARPE = "markov_walkforward_sharpe"
+    MARKOV_WALKFORWARD_MAX_DRAWDOWN = "markov_walkforward_max_drawdown"
 
 
 class VendorField(StrEnum):
@@ -168,6 +179,11 @@ class DerivedAlgorithm(StrEnum):
     KDJ_CALCULATION = "kdj_calculation"
     ADX_CALCULATION = "adx_calculation"
     EFFICIENCY_RATIO_CALC = "efficiency_ratio"
+    # Markov regime detection
+    MARKOV_REGIME_DETECTION = "markov_regime_detection"
+    MARKOV_TRANSITION_MATRIX = "markov_transition_matrix"
+    MARKOV_STATIONARY_DISTRIBUTION = "markov_stationary_distribution"
+    MARKOV_WALKFORWARD = "markov_walkforward"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")

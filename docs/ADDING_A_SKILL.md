@@ -39,7 +39,7 @@ at runtime. The skill runs purely computational logic on provider-supplied data.
 Skills are **auto-discovered** by the CLI, MCP server, and HTTP API — you never
 need to register new tools, routes, or endpoints.
 
-## Checklist (8 files, ~2 new)
+## Checklist (9 files, ~3 new)
 
 ### Step 1: Define new metrics and algorithms
 
@@ -76,7 +76,8 @@ Keep these functions **pure** — they take numbers in, return numbers out.
 No provider calls, no side effects.
 
 Update `algorithm_for_metric()` if your new metric prefixes need mapping to
-their algorithms.
+their algorithms. This function is used by the provenance system to map
+metric kind strings to canonical `DerivedAlgorithm` labels.
 
 ### Step 3: Create the skill class
 
@@ -222,7 +223,22 @@ Follow the same format as existing specs. Must include:
 - **Output format** (what the `AnalystResult` contains)
 - **Failure modes** table
 
-### Step 8: Write tests
+### Step 8: Write a README for the skill
+
+**File:** `skills/my-new-skill/README.md` (new)
+
+Each skill directory should have a brief README with:
+
+- Skill name and one-line purpose
+- Link to the original algorithm repository (if applicable)
+- Quick-start command
+- Summary of output
+- Link to the full `SKILL.md` spec for details
+
+Keep it short — ~30 lines. The `SKILL.md` is the authoritative spec; the
+README is a quick entry point for discovery.
+
+### Step 9: Write tests
 
 **File:** `tests/test_my_new_skill.py` (new)
 
@@ -268,6 +284,12 @@ After completing the steps, run:
 # 6. Live run (requires configured provider)
 .venv/bin/trade-research run-skill my-new-skill AAPL
 ```
+
+After the skill is verified, also update:
+
+- **`skills/README.md`** — add the new skill to the contents table
+- **`README.md`** (project root) — add the skill to the Skills section and
+  documentation index
 
 ## Design Principles
 

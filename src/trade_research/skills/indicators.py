@@ -239,6 +239,15 @@ def algorithm_for_metric(metric: str) -> str:
         return "efficiency_ratio"
     if metric.startswith("worth_buy_"):
         return "worth_buy_alpha_weighted"
+    # Markov regime detection extensions
+    if metric.startswith("markov_current_regime") or metric.startswith("markov_signal"):
+        return "markov_regime_detection"
+    if metric.startswith("markov_stationary_"):
+        return "markov_stationary_distribution"
+    if metric.startswith("markov_persistence_"):
+        return "markov_transition_matrix"
+    if metric.startswith("markov_walkforward_"):
+        return "markov_walkforward"
     raise ValueError(f"unknown derived price metric '{metric}'")
 
 
