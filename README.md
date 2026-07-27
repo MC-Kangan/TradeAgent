@@ -206,11 +206,13 @@ pip install '.[crypto]'   # installs ccxt for crypto price data
 | Variable | Purpose |
 |---|---|
 | `TRADE_RESEARCH_CONFIG` | Path to JSON config file |
-| `TRADE_RESEARCH_PRICE_PROVIDER` | `yahoo`, `ccxt`, `local_csv`, `local_parquet`, `local_sql` |
+| `TRADE_RESEARCH_PRICE_PROVIDER` | `yahoo`, `ccxt`, `bloomberg`, `local_csv`, `local_parquet`, `local_sql` |
 | `TRADE_RESEARCH_PRICE_PATH` | Path to local price file (for local providers) |
 | `TRADE_RESEARCH_FUNDAMENTAL_PROVIDER` | `sec_company_facts`, `local_csv`, `local_parquet`, `local_sql` |
 | `TRADE_RESEARCH_FUNDAMENTAL_PATH` | Path to local fundamental file (not needed for `sec_company_facts`) |
 | `TRADE_RESEARCH_CCXT_EXCHANGE` | Exchange ID for CCXT, e.g. `binance` |
+| `TRADE_RESEARCH_BLOOMBERG_HOST` | Optional BPIPE host when `TRADE_RESEARCH_PRICE_PROVIDER=bloomberg` |
+| `TRADE_RESEARCH_BLOOMBERG_PORT` | Optional BPIPE port when `TRADE_RESEARCH_PRICE_PROVIDER=bloomberg`; default `8194` |
 | `TRADE_RESEARCH_SEC_USER_AGENT` | User-Agent for SEC EDGAR (required for `sec_company_facts` and filings) |
 | `TRADE_RESEARCH_DATA_ROOT` | Root directory that must contain all local provider paths |
 | `TRADE_RESEARCH_API_TOKEN` | Bearer token for HTTP API |
@@ -442,6 +444,7 @@ See `AGENTS.md` for the full security policy. Key points:
 | [skills/review/SKILL.md](skills/review/SKILL.md) | Reviewer spec |
 | [skills/worth-buy-stocks/SKILL.md](skills/worth-buy-stocks/SKILL.md) | Worth-buy-stocks trend-scoring spec |
 | [skills/markov-method/SKILL.md](skills/markov-method/SKILL.md) | Markov regime detection spec |
+| [docs/EXPLAINING_SKILL_OUTPUTS.md](docs/EXPLAINING_SKILL_OUTPUTS.md) | Agent guide for natural-language report explanations |
 | [docs/ADDING_A_SKILL.md](docs/ADDING_A_SKILL.md) | Guide to adding new skills |
 | [docs/fundamental-data-schema.md](docs/fundamental-data-schema.md) | CSV/SQL schema for fundamental data |
 | [docs/deployment.md](docs/deployment.md) | Native and Docker deployment |

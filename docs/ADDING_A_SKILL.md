@@ -36,8 +36,10 @@ at runtime. The skill runs purely computational logic on provider-supplied data.
     └─────────────────────────────┘
 ```
 
-Skills are **auto-discovered** by the CLI, MCP server, and HTTP API — you never
-need to register new tools, routes, or endpoints.
+Skills are registered once in the immutable startup registry. After registration,
+the CLI, MCP server, and HTTP API expose them automatically through
+`SkillRegistry.names`; you never need to add new transport tools, routes, or
+endpoints.
 
 ## Checklist (9 files, ~3 new)
 

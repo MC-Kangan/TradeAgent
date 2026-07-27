@@ -21,7 +21,7 @@ from trade_research.domain import (
     ReportStatus,
     SignalKind,
 )
-from trade_research.domain.provenance import DerivedAlgorithm
+from trade_research.domain.provenance import DerivedAlgorithm, normalize_provider_kind
 from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
 from trade_research.skills.indicators import (
     adx,
@@ -35,6 +35,7 @@ from trade_research.skills.indicators import (
     missing_metric_kinds,
     momentum_12_1,
     obv,
+    price_series_reference,
     rsi,
     sanitize_text,
     sma,
@@ -215,6 +216,11 @@ class WorthBuyStocksSkill:
             provenance={
                 "algorithm": DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED.value,
                 "window": "252_observations",
+                "point_count": len(target_prices),
+                "start_at": min(point.observed_at for point in target_prices).isoformat(),
+                "end_at": max(point.observed_at for point in target_prices).isoformat(),
+                "series_ref": price_series_reference(target_prices, "ohlcv"),
+                "input_provider_kind": normalize_provider_kind(target_prices[0].source).value,
             },
         )
         all_factors.append(verdict_factor)
@@ -297,6 +303,7 @@ def _layer1_alpha_weighted(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.WORTH_BUY_MOMENTUM_SCORE, mom_score,
             observed_at, DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED, "momentum_12_1",
+            prices=prices,
         ))
     else:
         score_parts["momentum"] = 0.0
@@ -313,6 +320,7 @@ def _layer1_alpha_weighted(
                     instrument, MetricKind.WORTH_BUY_RELATIVE_STRENGTH, rs,
                     observed_at, DerivedAlgorithm.RELATIVE_STRENGTH,
                     f"vs_{bm_sym.lower()}",
+                    prices=prices,
                 ))
         if rs_scores:
             score_parts["relative_strength"] = statistics_mean(rs_scores) * rs_weight
@@ -333,6 +341,7 @@ def _layer1_alpha_weighted(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.WORTH_BUY_EFFICIENCY_SCORE, er * 100,
             observed_at, DerivedAlgorithm.KAUFMAN_EFFICIENCY, "30_day",
+            prices=prices,
         ))
     else:
         score_parts["efficiency"] = 0.0
@@ -343,6 +352,7 @@ def _layer1_alpha_weighted(
         instrument, MetricKind.WORTH_BUY_COMPOSITE, composite,
         observed_at, DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED,
         "composite_0_100",
+        prices=prices,
     ))
 
     return factors, composite
@@ -408,6 +418,7 @@ def _layer2_risk_veto(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.SIMPLE_MOVING_AVERAGE, ma_short_val,
             observed_at, DerivedAlgorithm.SIMPLE_MOVING_AVERAGE, f"{ma_short}_observations",
+            prices=prices,
         ))
         if closes[-1] < ma_short_val < ma_long_val:
             risk_flags.append("bearish_ma_alignment")
@@ -424,6 +435,7 @@ def _layer2_risk_veto(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.MAX_DRAWDOWN, dd * 100,
             observed_at, DerivedAlgorithm.EFFICIENCY_RATIO_CALC, "252_day",
+            prices=prices,
         ))
         if dd < -0.20:
             risk_flags.append("severe_drawdown")
@@ -442,6 +454,7 @@ def _layer2_risk_veto(
                 instrument, MetricKind.WEEKLY_BEARISH_ALIGNMENT, 1.0,
                 observed_at, DerivedAlgorithm.WORTH_BUY_RISK_VETO,
                 "weekly_ma_bearish",
+                prices=prices,
             ))
             risk_flags.append("weekly_bearish")
             risk_score += 20
@@ -450,6 +463,7 @@ def _layer2_risk_veto(
                 instrument, MetricKind.WEEKLY_BEARISH_ALIGNMENT, 0.0,
                 observed_at, DerivedAlgorithm.WORTH_BUY_RISK_VETO,
                 "weekly_ma_ok",
+                prices=prices,
             ))
 
     # Annualized volatility
@@ -462,6 +476,7 @@ def _layer2_risk_veto(
         instrument, MetricKind.WORTH_BUY_RISK_VETO, min(100.0, risk_score),
         observed_at, DerivedAlgorithm.WORTH_BUY_RISK_VETO,
         f"flags={','.join(risk_flags) if risk_flags else 'none'}",
+        prices=prices,
     ))
 
     return factors, min(100.0, risk_score)
@@ -513,6 +528,7 @@ def _layer3_technical_confirmation(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.RELATIVE_STRENGTH_INDEX_14, rsi14,
             observed_at, DerivedAlgorithm.WILDER_RSI, "14_observations",
+            prices=prices,
         ))
         if rsi14 > 70:
             blocks.append("rsi_overbought")
@@ -529,16 +545,19 @@ def _layer3_technical_confirmation(
             factors.append(_build_scoring_obs(
                 instrument, MetricKind.KDJ_K, k_val,
                 observed_at, DerivedAlgorithm.KDJ_CALCULATION, f"{kdj_n}_{kdj_k}_{kdj_d}",
+                prices=prices,
             ))
         if d_val is not None:
             factors.append(_build_scoring_obs(
                 instrument, MetricKind.KDJ_D, d_val,
                 observed_at, DerivedAlgorithm.KDJ_CALCULATION, f"{kdj_n}_{kdj_k}_{kdj_d}",
+                prices=prices,
             ))
         if j_val is not None:
             factors.append(_build_scoring_obs(
                 instrument, MetricKind.KDJ_J, j_val,
                 observed_at, DerivedAlgorithm.KDJ_CALCULATION, f"{kdj_n}_{kdj_k}_{kdj_d}",
+                prices=prices,
             ))
             if j_val > 100:
                 blocks.append("kdj_overbought")
@@ -552,6 +571,7 @@ def _layer3_technical_confirmation(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.ADX_14, adx_val,
             observed_at, DerivedAlgorithm.ADX_CALCULATION, f"{adx_n}_observations",
+            prices=prices,
         ))
         if adx_val < 20:
             blocks.append("adx_ranging")
@@ -567,6 +587,7 @@ def _layer3_technical_confirmation(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.UP_DOWN_VOLUME_RATIO, ud_ratio,
             observed_at, DerivedAlgorithm.EFFICIENCY_RATIO_CALC, "10_day",
+            prices=prices,
         ))
         if ud_ratio < 0.7:
             blocks.append("distribution_volume")
@@ -586,6 +607,7 @@ def _layer3_technical_confirmation(
         factors.append(_build_scoring_obs(
             instrument, MetricKind.EFFICIENCY_RATIO, er,
             observed_at, DerivedAlgorithm.EFFICIENCY_RATIO_CALC, "30_day",
+            prices=prices,
         ))
 
     return factors, blocks
@@ -621,6 +643,7 @@ def _layer4_entry_timing(
     factors.append(_build_scoring_obs(
         instrument, MetricKind.WORTH_BUY_ENTRY_PRICE, entry_price,
         observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING, "current_close",
+        prices=prices,
     ))
 
     # Stop price: MA60 or recent swing low, whichever is lower
@@ -636,6 +659,7 @@ def _layer4_entry_timing(
         instrument, MetricKind.WORTH_BUY_STOP_PRICE, round(stop_price, 2),
         observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
         f"below_ma{ma_short}_or_swing_low",
+        prices=prices,
     ))
 
     # Target price: recent 52-week high
@@ -643,6 +667,7 @@ def _layer4_entry_timing(
     factors.append(_build_scoring_obs(
         instrument, MetricKind.WORTH_BUY_TARGET_PRICE, recent_high,
         observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING, "52_week_high",
+        prices=prices,
     ))
 
     # Entry classification
@@ -651,6 +676,7 @@ def _layer4_entry_timing(
         instrument, MetricKind.WORTH_BUY_ENTRY_CLASSIFICATION, float(entry_class),
         observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
         _ENTRY_CLASSES.get(entry_class, "unknown"),
+        prices=prices,
     ))
 
     return factors
@@ -823,18 +849,32 @@ def _build_scoring_obs(
     observed_at: datetime,
     algorithm: DerivedAlgorithm,
     window: str,
+    *,
+    prices: tuple[PricePoint, ...] | None = None,
+    input_metric: str = "ohlcv",
 ) -> Observation:
     """Build a single derived Observation for scoring outputs."""
+    provenance: dict[str, object] = {
+        "algorithm": algorithm.value,
+        "window": window,
+    }
+    if prices:
+        provenance.update(
+            {
+                "point_count": len(prices),
+                "start_at": min(point.observed_at for point in prices).isoformat(),
+                "end_at": max(point.observed_at for point in prices).isoformat(),
+                "series_ref": price_series_reference(prices, input_metric),
+                "input_provider_kind": normalize_provider_kind(prices[0].source).value,
+            }
+        )
     return Observation(
         instrument=instrument,
         metric=metric,
         value=round(value, 10),
         source="derived",
         observed_at=observed_at,
-        provenance={
-            "algorithm": algorithm.value,
-            "window": window,
-        },
+        provenance=provenance,
     )
 
 

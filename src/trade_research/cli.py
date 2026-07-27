@@ -43,6 +43,8 @@ _SETTINGS_ENVIRONMENT_NAMES = frozenset(
         "TRADE_RESEARCH_FUNDAMENTAL_PROVIDER",
         "TRADE_RESEARCH_FUNDAMENTAL_PATH",
         "TRADE_RESEARCH_CCXT_EXCHANGE",
+        "TRADE_RESEARCH_BLOOMBERG_HOST",
+        "TRADE_RESEARCH_BLOOMBERG_PORT",
         "TRADE_RESEARCH_PROVIDER",
         "TRADE_RESEARCH_API_TOKEN",
         "TRADE_RESEARCH_DATA_ROOT",
@@ -59,7 +61,9 @@ def get_application() -> ResearchApplication:
     dotenv_path = find_dotenv(usecwd=True)
     merged_env: dict[str, str] = {}
     if dotenv_path:
-        merged_env.update(dotenv_values(dotenv_path))
+        merged_env.update(
+            {key: value for key, value in dotenv_values(dotenv_path).items() if value is not None}
+        )
     merged_env.update(os.environ)
     settings_environment = {
         name: merged_env[name] for name in _SETTINGS_ENVIRONMENT_NAMES if name in merged_env

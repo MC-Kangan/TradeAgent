@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+bloomberg = ["blpapi>=3.24"]
 crypto = ["ccxt>=4.0"]
 dev = [
   "build==1.3.0",
@@ -52,5 +53,5 @@ plugins = ["pydantic.mypy"]
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["mcp", "mcp.*", "pyarrow", "pyarrow.*"]
+module = ["blpapi", "blpapi.*", "mcp", "mcp.*", "pyarrow", "pyarrow.*"]
 ignore_missing_imports = true

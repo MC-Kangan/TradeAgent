@@ -21,13 +21,14 @@ from trade_research.domain import (
     ReportStatus,
     SignalKind,
 )
-from trade_research.domain.provenance import DerivedAlgorithm
-from trade_research.providers import CapabilityName, ProviderRegistry
+from trade_research.domain.provenance import DerivedAlgorithm, normalize_provider_kind
+from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
 from trade_research.skills.indicators import (
     limitations as _limitations_fn,
 )
 from trade_research.skills.indicators import (
     missing_metric_kinds,
+    price_series_reference,
     sanitize_text,
     validated_prices,
 )
@@ -229,6 +230,7 @@ def _build_obs(
     observed_at: datetime,
     algorithm: DerivedAlgorithm,
     window: str,
+    prices: tuple[PricePoint, ...],
 ) -> Observation:
     """Build a derived Observation with closed provenance."""
     return Observation(
@@ -237,7 +239,15 @@ def _build_obs(
         value=round(value, 10),
         source="derived",
         observed_at=observed_at,
-        provenance={"algorithm": algorithm.value, "window": window},
+        provenance={
+            "algorithm": algorithm.value,
+            "window": window,
+            "point_count": len(prices),
+            "start_at": min(point.observed_at for point in prices).isoformat(),
+            "end_at": max(point.observed_at for point in prices).isoformat(),
+            "series_ref": price_series_reference(prices, "close"),
+            "input_provider_kind": normalize_provider_kind(prices[0].source).value,
+        },
     )
 
 
@@ -345,6 +355,7 @@ class MarkovMethodSkill:
                 observed_at,
                 DerivedAlgorithm.MARKOV_REGIME_DETECTION,
                 algo_window,
+                all_prices,
             )
         )
 
@@ -357,6 +368,7 @@ class MarkovMethodSkill:
                 observed_at,
                 DerivedAlgorithm.MARKOV_REGIME_DETECTION,
                 algo_window,
+                all_prices,
             )
         )
 
@@ -369,6 +381,7 @@ class MarkovMethodSkill:
                 observed_at,
                 DerivedAlgorithm.MARKOV_STATIONARY_DISTRIBUTION,
                 f"{n_bars}_bars",
+                all_prices,
             )
         )
         observations.append(
@@ -379,6 +392,7 @@ class MarkovMethodSkill:
                 observed_at,
                 DerivedAlgorithm.MARKOV_STATIONARY_DISTRIBUTION,
                 f"{n_bars}_bars",
+                all_prices,
             )
         )
         observations.append(
@@ -389,6 +403,7 @@ class MarkovMethodSkill:
                 observed_at,
                 DerivedAlgorithm.MARKOV_STATIONARY_DISTRIBUTION,
                 f"{n_bars}_bars",
+                all_prices,
             )
         )
 
@@ -407,6 +422,7 @@ class MarkovMethodSkill:
                     observed_at,
                     DerivedAlgorithm.MARKOV_TRANSITION_MATRIX,
                     f"{n_bars}_bars",
+                    all_prices,
                 )
             )
 
@@ -424,6 +440,7 @@ class MarkovMethodSkill:
                     observed_at,
                     DerivedAlgorithm.MARKOV_WALKFORWARD,
                     f"{n_bars}_bars_{self.min_train}_train",
+                    all_prices,
                 )
             )
             observations.append(
@@ -434,6 +451,7 @@ class MarkovMethodSkill:
                     observed_at,
                     DerivedAlgorithm.MARKOV_WALKFORWARD,
                     f"{n_bars}_bars_{self.min_train}_train",
+                    all_prices,
                 )
             )
 

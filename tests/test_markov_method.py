@@ -6,6 +6,7 @@ import hashlib
 import math
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -13,10 +14,12 @@ from trade_research.domain import (
     InstrumentId,
     MetricKind,
     ReportStatus,
+    ResearchReport,
     SignalKind,
 )
 from trade_research.domain.provenance import DerivedAlgorithm
 from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
+from trade_research.reporting import render_markdown
 from trade_research.skills.core import SkillRegistry
 from trade_research.skills.markov_method import (
     MarkovMethodSkill,
@@ -303,6 +306,30 @@ class TestMarkovMethodSkill:
         result = skill.analyze(InstrumentId(symbol="TEST", market="US"), providers)
         for obs in result.observations:
             assert obs.source == "derived", f"Observation {obs.metric} has source={obs.source}"
+
+    def test_observations_have_series_hash_for_report_citations(self) -> None:
+        instrument = InstrumentId(symbol="TEST", market="US")
+        prices = _price_points([100.0 * (1.001 ** i) for i in range(300)])
+        providers = _provider_with_prices(prices)
+        result = MarkovMethodSkill().analyze(instrument, providers)
+        signal = next(
+            item for item in result.observations if item.metric == MetricKind.MARKOV_SIGNAL
+        )
+
+        assert signal.provenance["point_count"] == 300
+        assert signal.provenance["input_provider_kind"] == "fixture"
+        assert str(signal.provenance["series_ref"]).startswith("sha256:")
+
+        markdown = render_markdown(
+            ResearchReport(
+                request_id=uuid4(),
+                instrument=instrument,
+                results=(result,),
+                generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        assert "| fixture |" in markdown
+        assert str(signal.provenance["series_ref"]) in markdown
 
     def test_skill_instance_is_hashable(self) -> None:
         skill = MarkovMethodSkill()

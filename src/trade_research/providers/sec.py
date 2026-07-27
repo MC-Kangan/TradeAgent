@@ -196,8 +196,6 @@ _SEC_CONCEPT_MAP: Final[dict[str, tuple[str, str]]] = {
     "StockholdersEquity": ("shareholders_equity", "SHAREHOLDERS_EQUITY"),
     "LongTermDebt": ("total_debt", "TOTAL_DEBT"),
     "ShortTermBorrowings": ("total_debt", "TOTAL_DEBT"),
-    "NetCashProvidedByUsedInOperatingActivities": ("free_cash_flow", "FREE_CASH_FLOW"),
-    "PaymentsToAcquirePropertyPlantAndEquipment": ("free_cash_flow", "FREE_CASH_FLOW"),
     "GrossProfit": ("gross_profit", "GROSS_PROFIT"),
 }
 
@@ -251,10 +249,10 @@ class SecCompanyFactsProvider:
         now = datetime.now(tz=UTC)
 
         observations: list[Observation] = []
-        fcf_operating: dict[str, float] = {}
-        fcf_capex: dict[str, float] = {}
+        fcf_operating: dict[str, dict[str, object]] = {}
+        fcf_capex: dict[str, dict[str, object]] = {}
 
-        for concept, (metric_name, vendor_field) in _SEC_CONCEPT_MAP.items():
+        for concept in (*_SEC_CONCEPT_MAP, _SEC_OPERATING_CASH_FLOW, _SEC_CAPEX):
             concept_data = facts.get(concept)
             if not isinstance(concept_data, dict):
                 continue
@@ -269,11 +267,18 @@ class SecCompanyFactsProvider:
             if current is None:
                 continue
 
-            if _is_fcf_capex_collector(concept):
-                frame = _frame_key(current)
-                if frame:
-                    fcf_capex[frame] = float(cast("int | float", current["val"]))
+            if concept == _SEC_OPERATING_CASH_FLOW:
+                _collect_cash_flow_period(fcf_operating, current, period_role="current")
+                if prior is not None:
+                    _collect_cash_flow_period(fcf_operating, prior, period_role="prior")
                 continue
+            if concept == _SEC_CAPEX:
+                _collect_cash_flow_period(fcf_capex, current, period_role="current")
+                if prior is not None:
+                    _collect_cash_flow_period(fcf_capex, prior, period_role="prior")
+                continue
+
+            metric_name, vendor_field = _SEC_CONCEPT_MAP[concept]
 
             current_obs = _build_statement_observation(
                 instrument=instrument,
@@ -287,11 +292,6 @@ class SecCompanyFactsProvider:
             )
             if current_obs is not None:
                 observations.append(current_obs)
-
-            if concept == _SEC_OPERATING_CASH_FLOW:
-                frame = _frame_key(current)
-                if frame:
-                    fcf_operating[frame] = float(cast("int | float", current["val"]))
 
             if prior is not None:
                 prior_obs = _build_statement_observation(
@@ -319,8 +319,12 @@ class SecCompanyFactsProvider:
         return tuple(observations)
 
 
-def _is_fcf_capex_collector(concept: str) -> bool:
-    return concept == _SEC_CAPEX
+def _collect_cash_flow_period(
+    destination: dict[str, dict[str, object]], data: dict[str, object], *, period_role: str
+) -> None:
+    frame = _frame_key(data)
+    if frame:
+        destination[frame] = {**data, "_period_role": period_role}
 
 
 def _frame_key(data: dict[str, object]) -> str | None:
@@ -441,42 +445,73 @@ def _build_free_cash_flow(
     instrument: InstrumentId,
     snapshot_ref: str,
     observed_at: datetime,
-    fcf_operating: dict[str, float],
-    fcf_capex: dict[str, float],
+    fcf_operating: dict[str, dict[str, object]],
+    fcf_capex: dict[str, dict[str, object]],
 ) -> None:
     """Derive free cash flow from operating cash flow minus capex for matching periods."""
 
-    for frame, op_value in fcf_operating.items():
-        capex_value = fcf_capex.get(frame)
-        if capex_value is None:
+    for frame, operating_data in fcf_operating.items():
+        capex_data = fcf_capex.get(frame)
+        op_value = operating_data.get("val")
+        capex_value = capex_data.get("val") if capex_data is not None else None
+        if (
+            capex_data is None
+            or not isinstance(op_value, int | float)
+            or isinstance(op_value, bool)
+            or not isinstance(capex_value, int | float)
+            or isinstance(capex_value, bool)
+        ):
             continue
-        fcf = op_value - abs(capex_value)
-        period_ref_val = f"sha256:{hashlib.sha256(f'fcf:{frame}'.encode()).hexdigest()}"
-        try:
-            metric = MetricKind("free_cash_flow")
-        except ValueError:
+        period_end = operating_data.get("end")
+        if not isinstance(period_end, str):
             continue
-        try:
-            vf = VendorField("FREE_CASH_FLOW")
-        except ValueError:
+        period_end = period_end[:10]
+        if not period_end:
             continue
+        fy = operating_data.get("fy")
+        fp = operating_data.get("fp")
+        if not isinstance(fy, int) or not isinstance(fp, str):
+            continue
+        period_role = operating_data.get("_period_role")
+        if period_role not in {"current", "prior"}:
+            continue
+        fcf = float(op_value) - abs(float(capex_value))
+        period_type = "annual" if fp in ("FY", "Q4") else "quarterly"
+        period_ref_val = (
+            "sha256:"
+            + hashlib.sha256(f"free_cash_flow:{fy}:{fp}:{period_end}".encode()).hexdigest()
+        )
+        reference = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    {
+                        "capex": capex_data.get("accn"),
+                        "frame": frame,
+                        "operating_cash_flow": operating_data.get("accn"),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+        )
         observations.append(
             Observation(
                 instrument=instrument,
-                metric=metric,
+                metric=MetricKind.FREE_CASH_FLOW,
                 value=round(fcf, 2),
                 source="sec",
                 observed_at=observed_at,
                 provenance={
                     "provider_kind": "sec",
-                    "vendor_field": vf.value,
+                    "vendor_field": VendorField.FREE_CASH_FLOW.value,
                     "snapshot_ref": snapshot_ref,
-                    "period_role": "current",
-                    "period_end": "",
-                    "period_type": "annual",
+                    "period_role": period_role,
+                    "period_end": period_end,
+                    "period_type": period_type,
                     "period_ref": period_ref_val,
                     "currency": "USD",
-                    "reference": period_ref_val,
+                    "reference": reference,
                 },
             )
         )

@@ -19,6 +19,11 @@ skills. The runtime cannot load Markdown as code.
 | [markov-method/](markov-method/SKILL.md) | `markov-method` | `PRICES` |
 | [review/](review/SKILL.md) | built-in reviewer | (none — post-processing) |
 
+For plain-English report narration, see
+[../docs/EXPLAINING_SKILL_OUTPUTS.md](../docs/EXPLAINING_SKILL_OUTPUTS.md).
+Worth-buy-stocks and Markov also have local `EXPLANATION.md` notes in their
+skill directories.
+
 ## Adding a new skill
 
 See **[../docs/ADDING_A_SKILL.md](../docs/ADDING_A_SKILL.md)** for the complete step-by-step

@@ -11,7 +11,9 @@ from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_va
 
 from trade_research.providers.contracts import ProviderConfigurationError
 
-PriceProviderName = Literal["local_csv", "local_parquet", "local_sql", "yahoo", "ccxt"]
+PriceProviderName = Literal[
+    "local_csv", "local_parquet", "local_sql", "yahoo", "ccxt", "bloomberg"
+]
 FundamentalProviderName = Literal["local_csv", "local_parquet", "local_sql", "sec_company_facts"]
 MAX_CONFIG_BYTES: Final = 64 * 1024
 
@@ -26,6 +28,8 @@ class Settings(BaseModel):
     fundamental_provider: FundamentalProviderName | None = None
     fundamental_path: Path | None = None
     ccxt_exchange: str | None = None
+    bloomberg_host: str = "localhost"
+    bloomberg_port: int = 8194
     data_root: Path | None = None
     api_token: SecretStr | None = None
     discord_webhook_url: SecretStr | None = None
@@ -59,6 +63,10 @@ class Settings(BaseModel):
             raise ValueError("CCXT requires ccxt_exchange")
         if self.price_provider != "ccxt" and self.ccxt_exchange is not None:
             raise ValueError("ccxt_exchange is accepted only for CCXT")
+        if self.price_provider != "bloomberg" and self.bloomberg_host != "localhost":
+            raise ValueError("bloomberg_host is accepted only for the bloomberg provider")
+        if self.price_provider != "bloomberg" and self.bloomberg_port != 8194:
+            raise ValueError("bloomberg_port is accepted only for the bloomberg provider")
         return self
 
     @classmethod
@@ -85,6 +93,8 @@ class Settings(BaseModel):
             "TRADE_RESEARCH_FUNDAMENTAL_PROVIDER": "fundamental_provider",
             "TRADE_RESEARCH_FUNDAMENTAL_PATH": "fundamental_path",
             "TRADE_RESEARCH_CCXT_EXCHANGE": "ccxt_exchange",
+            "TRADE_RESEARCH_BLOOMBERG_HOST": "bloomberg_host",
+            "TRADE_RESEARCH_BLOOMBERG_PORT": "bloomberg_port",
             "TRADE_RESEARCH_DATA_ROOT": "data_root",
             "TRADE_RESEARCH_API_TOKEN": "api_token",
             "DISCORD_WEBHOOK_URL": "discord_webhook_url",

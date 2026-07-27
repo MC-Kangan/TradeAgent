@@ -153,6 +153,13 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
     elif settings.price_provider == "ccxt":
         assert settings.ccxt_exchange is not None
         providers["prices"] = CcxtPriceProvider(settings.ccxt_exchange)
+    elif settings.price_provider == "bloomberg":
+        from trade_research.providers.remote import BloombergPriceProvider
+
+        providers["prices"] = BloombergPriceProvider(
+            host=settings.bloomberg_host,
+            port=settings.bloomberg_port,
+        )
 
     if settings.fundamental_provider in {"local_csv", "local_parquet"}:
         assert settings.fundamental_path is not None

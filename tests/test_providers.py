@@ -3,18 +3,26 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+import sys
+import types
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from trade_research.domain import InstrumentId, Position
 from trade_research.providers import (
+    BloombergPriceProvider,
+    CikResolver,
     LocalCsvParquetPriceProvider,
     LocalPortfolioProvider,
+    OptionalProviderDependencyError,
     ProviderConfigurationError,
     ProviderRegistry,
     ReadOnlySqlPriceProvider,
+    SecCompanyFactsProvider,
     YahooPriceProvider,
+    resolve_provider_symbol,
 )
 
 
@@ -164,6 +172,149 @@ def test_remote_price_adapters_parse_ohlcv_and_resolved_symbols() -> None:
     assert "VOD.L" in requested[0]
 
 
+def test_sec_company_facts_derives_only_registry_valid_free_cash_flow(tmp_path: Path) -> None:
+    instrument = InstrumentId(symbol="ACME", market="US")
+    payload = {
+        "entityName": "Acme Example",
+        "facts": {
+            "us-gaap": {
+                "NetCashProvidedByUsedInOperatingActivities": {
+                    "units": {
+                        "USD": [
+                            {
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "val": 100.0,
+                                "end": "2025-12-31",
+                                "accn": "0000000000-26-000001",
+                                "frame": "CY2025",
+                            }
+                        ]
+                    }
+                },
+                "PaymentsToAcquirePropertyPlantAndEquipment": {
+                    "units": {
+                        "USD": [
+                            {
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "val": -20.0,
+                                "end": "2025-12-31",
+                                "accn": "0000000000-26-000002",
+                                "frame": "CY2025",
+                            }
+                        ]
+                    }
+                },
+            }
+        },
+    }
+    resolver = CikResolver(
+        user_agent="research@example.test",
+        cache_dir=tmp_path,
+        overrides={"ACME": "0000000001"},
+    )
+    provider = SecCompanyFactsProvider(
+        resolver=resolver,
+        user_agent="research@example.test",
+        http_get=lambda _url, _headers: json.dumps(payload),
+    )
+
+    observations = ProviderRegistry({"fundamentals": provider}).fundamentals(instrument)
+
+    assert [(item.metric.value, item.value) for item in observations] == [
+        ("free_cash_flow", 80.0)
+    ]
+    fcf = observations[0]
+    assert fcf.provenance["period_end"] == "2025-12-31"
+    assert fcf.provenance["period_role"] == "current"
+    assert str(fcf.provenance["period_ref"]).startswith("sha256:")
+    assert str(fcf.provenance["reference"]).startswith("sha256:")
+
+
+@pytest.mark.parametrize(
+    ("market", "expected"),
+    [
+        ("US", "AAPL US Equity"),
+        ("NASDAQ", "AAPL US Equity"),
+        ("LSE", "AAPL LN Equity"),
+        ("UK", "AAPL LN Equity"),
+        ("XETRA", "AAPL GY Equity"),
+        ("BORSA_ITALIANA", "AAPL IM Equity"),
+    ],
+)
+def test_bloomberg_symbol_resolution_for_supported_markets(
+    market: str, expected: str
+) -> None:
+    assert (
+        resolve_provider_symbol("bloomberg", InstrumentId(symbol="AAPL", market=market))
+        == expected
+    )
+
+
+def test_bloomberg_symbol_resolution_rejects_crypto() -> None:
+    with pytest.raises(ProviderConfigurationError, match="does not support market"):
+        resolve_provider_symbol("bloomberg", InstrumentId(symbol="BTC-USD", market="CRYPTO"))
+
+
+def test_bloomberg_provider_requires_optional_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "blpapi", None)
+
+    with pytest.raises(OptionalProviderDependencyError, match="optional 'blpapi' dependency"):
+        BloombergPriceProvider().price_history(InstrumentId(symbol="AAPL", market="US"))
+
+
+def test_bloomberg_provider_reuses_session_and_returns_ohlcv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instrument = InstrumentId(symbol="AAPL", market="US")
+    session = _FakeBloombergSession(
+        rows=[
+            {
+                "date": "2026-01-02",
+                "PX_OPEN": 99.0,
+                "PX_HIGH": 102.0,
+                "PX_LOW": 98.0,
+                "PX_LAST": 101.0,
+                "PX_VOLUME": 1000.0,
+            }
+        ]
+    )
+    monkeypatch.setitem(sys.modules, "blpapi", _fake_blpapi_module(session))
+
+    provider = BloombergPriceProvider()
+    first = provider.price_history(instrument)
+    second = provider.price_history(instrument)
+
+    assert session.start.call_count == 1
+    assert first == second
+    point = first[0]
+    assert (point.open, point.high, point.low, point.close, point.volume) == (
+        99.0,
+        102.0,
+        98.0,
+        101.0,
+        1000.0,
+    )
+    assert point.source == "bloomberg"
+    assert point.provenance["provider_kind"] == "bloomberg"
+    assert point.provenance["vendor_field"] == "OHLCV"
+    assert str(point.provenance["reference"]).startswith("sha256:")
+    assert str(point.provenance["snapshot_ref"]).startswith("sha256:")
+
+
+def test_bloomberg_provider_raises_on_response_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _FakeBloombergSession(rows=[], response_error=True)
+    monkeypatch.setitem(sys.modules, "blpapi", _fake_blpapi_module(session))
+
+    with pytest.raises(ProviderConfigurationError, match="Bloomberg returned an error"):
+        BloombergPriceProvider().price_history(InstrumentId(symbol="AAPL", market="US"))
+
+
 def test_portfolio_provider_keeps_positions_in_memory() -> None:
     position = Position(instrument=InstrumentId(symbol="ACME", market="NYSE"), quantity=2)
 
@@ -185,3 +336,80 @@ def test_provider_registry_is_immutable_and_requires_known_provider() -> None:
         registry.require("prices_missing")  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         registry.providers["other"] = Prices()  # type: ignore[index]
+
+
+class _FakeBloombergEvent:
+    RESPONSE = 1
+    PARTIAL_RESPONSE = 2
+    TIMEOUT = 3
+
+
+class _FakeMessage:
+    def __init__(self, rows: list[dict[str, object]], *, response_error: bool = False) -> None:
+        self._payload = {
+            "securityData": {
+                "fieldData": rows,
+            }
+        }
+        if response_error:
+            self._payload["responseError"] = {"message": "fictional error"}
+
+    def hasElement(self, name: str) -> bool:
+        return name in self._payload
+
+    def getElement(self, name: str) -> object:
+        return self._payload[name]
+
+
+class _FakeEvent:
+    def __init__(self, rows: list[dict[str, object]], *, response_error: bool = False) -> None:
+        self._messages = [_FakeMessage(rows, response_error=response_error)]
+
+    def eventType(self) -> int:
+        return _FakeBloombergEvent.RESPONSE
+
+    def __iter__(self) -> object:
+        return iter(self._messages)
+
+
+class _FakeService:
+    def createRequest(self, name: str) -> object:
+        assert name == "HistoricalDataRequest"
+        return _FakeRequest()
+
+
+class _FakeRequest:
+    def __init__(self) -> None:
+        self.fields: list[str] = []
+        self.values: dict[str, object] = {}
+
+    def append(self, key: str, value: object) -> None:
+        self.values.setdefault(key, [])
+        assert isinstance(self.values[key], list)
+        self.values[key].append(value)
+
+    def set(self, key: str, value: object) -> None:
+        self.values[key] = value
+
+
+class _FakeBloombergSession:
+    def __init__(self, rows: list[dict[str, object]], *, response_error: bool = False) -> None:
+        self._rows = rows
+        self._response_error = response_error
+        self.start = Mock(return_value=True)
+        self.openService = Mock(return_value=True)
+        self.getService = Mock(return_value=_FakeService())
+        self.stop = Mock()
+        self.sendRequest = Mock()
+
+    def nextEvent(self, timeout: int) -> _FakeEvent:
+        assert timeout == 30000
+        return _FakeEvent(self._rows, response_error=self._response_error)
+
+
+def _fake_blpapi_module(session: _FakeBloombergSession) -> types.ModuleType:
+    module = types.ModuleType("blpapi")
+    module.Event = _FakeBloombergEvent
+    module.SessionOptions = Mock(return_value=Mock())
+    module.Session = Mock(return_value=session)
+    return module

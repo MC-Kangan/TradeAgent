@@ -11,10 +11,12 @@
 
 Production composition is configured only through the closed `TRADE_RESEARCH_PRICE_PROVIDER`,
 `TRADE_RESEARCH_PRICE_PATH`, `TRADE_RESEARCH_FUNDAMENTAL_PROVIDER`,
-`TRADE_RESEARCH_FUNDAMENTAL_PATH`, and `TRADE_RESEARCH_CCXT_EXCHANGE` settings (or the
-equivalent allowlisted JSON config keys). Local normalized CSV/Parquet files and fixed read-only
-SQLite `prices`/`fundamentals` tables are supported. A selected built-in analyst is rejected before
-submission when its required capability is absent.
+`TRADE_RESEARCH_FUNDAMENTAL_PATH`, `TRADE_RESEARCH_CCXT_EXCHANGE`,
+`TRADE_RESEARCH_BLOOMBERG_HOST`, and `TRADE_RESEARCH_BLOOMBERG_PORT` settings (or the
+equivalent allowlisted JSON config keys). Local normalized CSV/Parquet files, fixed read-only
+SQLite `prices`/`fundamentals` tables, Yahoo, CCXT, and the optional Bloomberg BPIPE price adapter
+are supported. A selected built-in analyst is rejected before submission when its required
+capability is absent.
 
 Under Docker Compose, keep these files in the host directory selected by
 `TRADE_RESEARCH_SOURCE_DIR`. The API and worker see the same directory read-only at
@@ -32,7 +34,12 @@ table names, column names, or query text from a public interface.
 
 ## Bloomberg
 
-Use `provider_kind="bloomberg"`. Keep BLPAPI/B-PIPE requests fixed and read-only, and request only entitled fields. Do not commit Bloomberg responses or screenshots. The existing synthetic fixture demonstrates shape, not licensed content. Review whether even derived values may leave the licensed environment.
+Use `TRADE_RESEARCH_PRICE_PROVIDER=bloomberg` with an entitled local BPIPE endpoint. The adapter is
+optional and imports `blpapi` only when selected; local development and CI use mocked `blpapi`
+objects and fictional prices, so no Bloomberg connection or firm package repository is required.
+Keep BLPAPI/BPIPE requests fixed and read-only, and request only entitled fields. Do not commit
+Bloomberg responses or screenshots. The synthetic tests demonstrate shape, not licensed content.
+Review whether even derived values may leave the licensed environment.
 
 ## Internal databases
 
