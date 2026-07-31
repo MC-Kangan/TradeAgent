@@ -154,6 +154,7 @@ class AnalysisRequest(DomainModel):
     )
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     positions: tuple[Position, ...] = ()
+    skill_parameters: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 
     @field_validator("analysts")
     @classmethod
