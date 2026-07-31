@@ -139,6 +139,18 @@ class ResearchEngine:
     async def _run_skill(self, skill: ResearchSkill, request: AnalysisRequest) -> AnalystResult:
         return await asyncio.to_thread(skill.analyze, request.instrument, self._providers)
 
+    async def run_configured_skill(
+        self, skill: ResearchSkill, request: AnalysisRequest
+    ) -> AnalystResult:
+        """Run a single pre-configured skill, bypassing the frozen registry.
+
+        Unlike ``analyze()`` which rediscovers skills from the registry,
+        this method accepts an already-configured skill instance (e.g. from
+        ``configure_skill()``) and runs it directly.
+        """
+        self.validate_analysts((skill.name,))
+        return await self._run_skill(skill, request)
+
 
 def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
     providers: dict[str, CapabilityProvider] = {}
