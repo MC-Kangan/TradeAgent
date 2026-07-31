@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -16,8 +17,46 @@ from trade_research.reporting import (
     render_json,
     render_markdown,
 )
+from trade_research.skills import ResearchSkill
+from trade_research.skills.parameters import (
+    MarkovMethodParameters,
+    TechnicalSkillParameters,
+    WorthBuyStocksParameters,
+)
 
 JsonObject = dict[str, Any]
+
+
+def configure_skill(skill: ResearchSkill, params: dict[str, object]) -> ResearchSkill:
+    """Return a per-run copy of *skill* with validated *params* applied.
+
+    The frozen registry is never mutated — this returns a new dataclass
+    instance via ``dataclasses.replace()``.
+    """
+    if skill.name == "technical":
+        technical_params = TechnicalSkillParameters.model_validate(params)
+        return replace(skill, window=technical_params.window)  # type: ignore[type-var]
+
+    if skill.name == "worth-buy-stocks":
+        worth_buy_params = WorthBuyStocksParameters.model_validate(params)
+        return replace(  # type: ignore[type-var]
+            skill,
+            benchmark_symbols=worth_buy_params.as_tuple(),
+        )
+
+    if skill.name == "markov-method":
+        markov_params = MarkovMethodParameters.model_validate(params)
+        return replace(  # type: ignore[type-var]
+            skill,
+            window=markov_params.window,
+            threshold=markov_params.threshold,
+            min_train=markov_params.min_train,
+            run_walkforward=markov_params.run_walkforward,
+        )
+
+    if params:
+        raise ValueError(f"Skill '{skill.name}' does not accept parameters")
+    return skill
 
 
 class ResearchApplication:
