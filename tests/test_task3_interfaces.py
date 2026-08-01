@@ -35,6 +35,7 @@ from trade_research.skills import SkillRegistry
 class RecordingSkill:
     name: str
     required_capabilities: tuple[CapabilityName, ...] = ()
+    window: int = 20
     delay: float = 0
     failure: bool = False
     evidence: str = "fixture evidence"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -16,9 +17,11 @@ from trade_research.reporting import (
     normalize_report_format,
     render_json,
     render_markdown,
+    sanitize_report,
 )
 from trade_research.skills import ResearchSkill
 from trade_research.skills.parameters import (
+    SKILL_PARAMETER_SCHEMAS,
     MarkovMethodParameters,
     TechnicalSkillParameters,
     WorthBuyStocksParameters,
@@ -81,12 +84,24 @@ class ResearchApplication:
             "name": skill.name,
             "description": (type(skill).__doc__ or "Research analyst skill").strip(),
             "immutable": True,
+            "parameters": SKILL_PARAMETER_SCHEMAS.get(name),
         }
 
     async def run_skill(self, name: str, request: AnalysisRequest) -> JsonObject:
-        selected = request.model_copy(update={"analysts": (name,)})
-        self.engine.validate_analysts(selected.analysts)
-        return await self.research(selected)
+        base_skill = self.engine.skills.require(name)
+        params = request.skill_parameters.get(name, {})
+        configured = configure_skill(base_skill, params)
+        self.engine.validate_analysts((name,))
+        result = await self.engine.run_configured_skill(configured, request)
+        wrapped = ResearchReport(
+            request_id=request.request_id,
+            instrument=request.instrument,
+            results=(result,),
+            generated_at=datetime.now(UTC),
+        )
+        sanitized = sanitize_report(wrapped)
+        self.reports.save(sanitized)
+        return _json_object(render_json(sanitized))
 
     async def research(self, request: AnalysisRequest) -> JsonObject:
         report = await self.engine.analyze(request)
