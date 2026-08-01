@@ -1,9 +1,7 @@
 """Integration tests for skill parameter API endpoints."""
 
-import tempfile
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from trade_research.application import ResearchApplication
@@ -17,7 +15,7 @@ from trade_research.skills import SkillRegistry, TechnicalSkill, WorthBuyStocksS
 BEARER = "test-token"
 
 
-def _make_client(providers=None, tmp_path: Path | None = None):
+def _make_client(tmp_path: Path, providers=None):
     skills = SkillRegistry(
         (FundamentalSkill(), TechnicalSkill(), FilingsSkill(),
          WorthBuyStocksSkill(), MarkovMethodSkill())
@@ -26,8 +24,7 @@ def _make_client(providers=None, tmp_path: Path | None = None):
         skills,
         providers or ProviderRegistry({}),
     )
-    reports_dir = tmp_path or Path(tempfile.mkdtemp(prefix="test_reports_"))
-    app = ResearchApplication(engine, ReportStore(reports_dir))
+    app = ResearchApplication(engine, ReportStore(tmp_path / "reports"))
     return TestClient(create_app(app, bearer_token=BEARER))
 
 
@@ -36,8 +33,8 @@ def _auth():
 
 
 class TestSkillsEndpointParameters:
-    def test_list_skills_includes_parameters(self):
-        client = _make_client()
+    def test_list_skills_includes_parameters(self, tmp_path):
+        client = _make_client(tmp_path)
         resp = client.get("/skills", headers=_auth())
         assert resp.status_code == 200
         skills = resp.json()
@@ -53,16 +50,16 @@ class TestSkillsEndpointParameters:
         assert "parameters" in skill_map["markov-method"]
         assert skill_map["markov-method"]["parameters"] is not None
 
-    def test_fundamental_has_no_parameters(self):
-        client = _make_client()
+    def test_fundamental_has_no_parameters(self, tmp_path):
+        client = _make_client(tmp_path)
         resp = client.get("/skills", headers=_auth())
         assert resp.status_code == 200
         skills = resp.json()
         fundamental = next(s for s in skills if s["name"] == "fundamental")
         assert fundamental["parameters"] is None
 
-    def test_describe_skill_includes_parameters(self):
-        client = _make_client()
+    def test_describe_skill_includes_parameters(self, tmp_path):
+        client = _make_client(tmp_path)
         resp = client.get("/skills/technical", headers=_auth())
         assert resp.status_code == 200
         skill = resp.json()
@@ -71,10 +68,10 @@ class TestSkillsEndpointParameters:
 
 
 class TestSkillRunParameters:
-    def test_run_skill_with_valid_parameters_accepted(self):
+    def test_run_skill_with_valid_parameters_accepted(self, tmp_path):
         """A skill run with valid parameters should be accepted, though it may
         fail at the provider level if no price provider is configured."""
-        client = _make_client()
+        client = _make_client(tmp_path)
         resp = client.post(
             "/skills/technical/run",
             json={
@@ -89,8 +86,8 @@ class TestSkillRunParameters:
         # 422 would mean parameter validation failed
         assert resp.status_code != 422, f"Should not get 422 for valid params: {resp.json()}"
 
-    def test_run_skill_with_invalid_window_returns_422(self):
-        client = _make_client()
+    def test_run_skill_with_invalid_window_returns_422(self, tmp_path):
+        client = _make_client(tmp_path)
         resp = client.post(
             "/skills/technical/run",
             json={
@@ -102,8 +99,8 @@ class TestSkillRunParameters:
         )
         assert resp.status_code == 422
 
-    def test_run_skill_with_non_param_skill_and_params_returns_422(self):
-        client = _make_client()
+    def test_run_skill_with_non_param_skill_and_params_returns_422(self, tmp_path):
+        client = _make_client(tmp_path)
         resp = client.post(
             "/skills/fundamental/run",
             json={
@@ -115,8 +112,8 @@ class TestSkillRunParameters:
         )
         assert resp.status_code == 422
 
-    def test_no_stack_trace_in_error_response(self):
-        client = _make_client()
+    def test_no_stack_trace_in_error_response(self, tmp_path):
+        client = _make_client(tmp_path)
         resp = client.post(
             "/skills/technical/run",
             json={
