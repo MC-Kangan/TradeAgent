@@ -88,6 +88,10 @@ class ResearchEngine:
     def skills(self) -> SkillRegistry:
         return self._skills
 
+    @property
+    def clock(self) -> Callable[[], datetime]:
+        return self._clock
+
     def validate_analysts(self, selected: Sequence[str]) -> None:
         capabilities: list[CapabilityName] = []
         for skill in self._skills.discover(selected):

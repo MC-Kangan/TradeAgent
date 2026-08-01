@@ -97,7 +97,7 @@ class ResearchApplication:
             request_id=request.request_id,
             instrument=request.instrument,
             results=(result,),
-            generated_at=datetime.now(UTC),
+            generated_at=self.engine.clock(),
         )
         sanitized = sanitize_report(wrapped)
         self.reports.save(sanitized)
