@@ -98,6 +98,10 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
             ) from error
         except KeyError as error:
             raise HTTPException(status_code=404, detail="unknown skill") from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422, detail=str(error)
+            ) from error
 
     @api.post("/research", dependencies=authenticated, status_code=202)
     async def research(request: AnalysisRequest) -> dict[str, Any]:
