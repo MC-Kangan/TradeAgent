@@ -17,6 +17,7 @@ from trade_research.providers.contracts import (
     ProviderConfigurationError,
     ProviderContractError,
 )
+from trade_research.providers.inline import InlinePriceProvider
 from trade_research.providers.local import (
     LocalCsvParquetFundamentalProvider,
     LocalCsvParquetPriceProvider,
@@ -49,6 +50,7 @@ __all__ = [
     "LocalCsvParquetFundamentalProvider",
     "LocalCsvParquetPriceProvider",
     "LocalPortfolioProvider",
+    "InlinePriceProvider",
     "MAX_FILING_ROWS",
     "MAX_FUNDAMENTAL_ROWS",
     "MAX_HTTP_BYTES",

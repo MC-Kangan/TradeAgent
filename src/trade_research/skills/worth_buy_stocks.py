@@ -1,9 +1,10 @@
-"""Worth-buy-stocks trend-scoring skill — a 4-layer pipeline for US equities.
+"""Worth-buy-stocks trend-scoring skill — a 4-layer trend pipeline.
 
 Integrates the worth-buy-stocks algorithm as a frozen-dataclass ResearchSkill.
 Purely computational: reuses the existing PRICES capability for OHLCV data.
-Benchmark symbols (SPY, QQQ) are configurable; the algorithm degrades
-gracefully when benchmark data is unavailable.
+Benchmark symbols are configurable; the algorithm degrades gracefully when
+benchmark data is unavailable.  By default, US instruments use SPY/QQQ while
+European instruments use STOXX Europe 600 / EURO STOXX 50 Yahoo aliases.
 """
 
 from __future__ import annotations
@@ -18,8 +19,14 @@ from trade_research.domain import (
     InstrumentId,
     MetricKind,
     Observation,
+    ReportBenchmark,
+    ReportCheck,
+    ReportPriceBar,
+    ReportReferenceLevels,
+    ReportScoreComponent,
     ReportStatus,
     SignalKind,
+    WorthBuyPresentation,
 )
 from trade_research.domain.provenance import DerivedAlgorithm, normalize_provider_kind
 from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
@@ -70,6 +77,23 @@ _ENTRY_CLASSES = {
     5: "recovery_reversal",
 }
 
+_AUTO_BENCHMARK = "AUTO"
+_US_BENCHMARKS = ("SPY", "QQQ")
+_EUROPEAN_MARKETS = frozenset(
+    {"AIM", "BME", "BORSA_ITALIANA", "EU", "EURONEXT", "LSE", "SIX", "UK", "XETRA"}
+)
+_EUROPEAN_BENCHMARKS = ("SXXP", "SX5E")
+_A_SHARE_MARKETS = frozenset({"SSE", "SZSE", "BJSE"})
+_A_SHARE_BENCHMARKS = ("CSI300", "CSI500")
+_BENCHMARK_ALIASES = {
+    "SXXP": InstrumentId(symbol="^STOXX", market="INDEX"),
+    "SX5E": InstrumentId(symbol="^STOXX50E", market="INDEX"),
+    "STOXX600": InstrumentId(symbol="^STOXX", market="INDEX"),
+    "STOXX50E": InstrumentId(symbol="^STOXX50E", market="INDEX"),
+    "CSI300": InstrumentId(symbol="000300", market="SSE"),
+    "CSI500": InstrumentId(symbol="000905", market="SSE"),
+}
+
 
 # ---------------------------------------------------------------------------
 # Skill class
@@ -93,7 +117,7 @@ class WorthBuyStocksSkill:
        Classifies the entry setup and suggests price levels.
     """
 
-    benchmark_symbols: tuple[str, str] = ("SPY", "QQQ")
+    benchmark_symbols: tuple[str, ...] = (_AUTO_BENCHMARK,)
 
     # -- internal (init=False so they are not part of the constructor) --
     _name: str = field(default="worth-buy-stocks", init=False, repr=False)
@@ -152,9 +176,10 @@ class WorthBuyStocksSkill:
 
         # -- 2. Fetch benchmark prices ---------------------------------
         benchmark_data: dict[str, tuple[PricePoint, ...]] = {}
-        for bm_sym in self.benchmark_symbols:
+        benchmark_labels = _resolve_benchmark_labels(instrument, self.benchmark_symbols)
+        for bm_sym in benchmark_labels:
             try:
-                bm_inst = InstrumentId(symbol=bm_sym, market="US")
+                bm_inst = _benchmark_instrument(bm_sym)
                 bm_raw = providers.prices(bm_inst)
                 bm_clean, _, _ = validated_prices(bm_raw)
                 if len(bm_clean) >= self._min_bars:
@@ -176,7 +201,7 @@ class WorthBuyStocksSkill:
         all_factors.extend(alpha_factors)
 
         # -- 4. Layer 2: Risk Veto ------------------------------------
-        risk_factors, risk_score = _layer2_risk_veto(
+        risk_factors, risk_score, risk_flags = _layer2_risk_veto(
             instrument, target_prices, closes, highs, lows, vols,
             self._ma_short, self._ma_long, self._atr_n,
         )
@@ -269,6 +294,16 @@ class WorthBuyStocksSkill:
             methods=methods,
             signal=signal,
             observations=tuple(all_factors),
+            presentation=_build_presentation(
+                instrument=instrument,
+                prices=target_prices,
+                benchmark_labels=benchmark_labels,
+                available_benchmarks=frozenset(benchmark_data),
+                factors=all_factors,
+                risk_flags=frozenset(risk_flags),
+                technical_blocks=frozenset(tech_blocks),
+                verdict=verdict,
+            ),
         )
 
 
@@ -388,6 +423,31 @@ def _relative_strength_score(
     return max(0.0, min(100.0, (avg_diff + 0.20) / 0.40 * 100))
 
 
+def _resolve_benchmark_labels(
+    instrument: InstrumentId, configured: tuple[str, ...]
+) -> tuple[str, ...]:
+    cleaned = tuple(symbol.strip().upper() for symbol in configured if symbol.strip())
+    if not cleaned or cleaned == (_AUTO_BENCHMARK,):
+        if instrument.market in _A_SHARE_MARKETS:
+            return _A_SHARE_BENCHMARKS
+        return _EUROPEAN_BENCHMARKS if instrument.market in _EUROPEAN_MARKETS else _US_BENCHMARKS
+    return cleaned
+
+
+def _benchmark_instrument(label: str) -> InstrumentId:
+    normalized = label.strip().upper()
+    if normalized in _BENCHMARK_ALIASES:
+        return _BENCHMARK_ALIASES[normalized]
+    if normalized.isdigit() and len(normalized) == 6:
+        market = "SSE" if normalized.startswith(("5", "6", "9")) else (
+            "BJSE" if normalized.startswith(("4", "8")) else "SZSE"
+        )
+        return InstrumentId(symbol=normalized, market=market)
+    if "." in normalized:
+        return InstrumentId(symbol=normalized, market="EU")
+    return InstrumentId(symbol=normalized, market="US")
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: Risk Veto
 # ---------------------------------------------------------------------------
@@ -403,7 +463,7 @@ def _layer2_risk_veto(
     ma_short: int,
     ma_long: int,
     atr_period: int,
-) -> tuple[list[Observation], float]:
+) -> tuple[list[Observation], float, list[str]]:
     """Compute risk score (0-100, higher = riskier)."""
     factors: list[Observation] = []
     observed_at = max(p.observed_at for p in prices)
@@ -479,7 +539,7 @@ def _layer2_risk_veto(
         prices=prices,
     ))
 
-    return factors, min(100.0, risk_score)
+    return factors, min(100.0, risk_score), risk_flags
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +895,186 @@ def _determine_verdict(
         return _VERDICT_REDUCE_RISK, f"elevated risk ({risk_score:.0f}), reduce if held"
 
     return _VERDICT_NO, f"low composite ({composite:.0f}), high risk ({risk_score:.0f})"
+
+
+def _build_presentation(
+    *,
+    instrument: InstrumentId,
+    prices: tuple[PricePoint, ...],
+    benchmark_labels: tuple[str, ...],
+    available_benchmarks: frozenset[str],
+    factors: list[Observation],
+    risk_flags: frozenset[str],
+    technical_blocks: frozenset[str],
+    verdict: str,
+) -> WorthBuyPresentation:
+    """Build a bounded, calculation-free presentation artifact."""
+
+    values: dict[MetricKind, list[float]] = {}
+    for factor in factors:
+        if isinstance(factor.value, int | float):
+            values.setdefault(factor.metric, []).append(float(factor.value))
+
+    def first(metric: MetricKind) -> float | None:
+        candidates = values.get(metric, [])
+        return candidates[0] if candidates else None
+
+    momentum = first(MetricKind.WORTH_BUY_MOMENTUM_SCORE)
+    relative_scores = values.get(MetricKind.WORTH_BUY_RELATIVE_STRENGTH, [])
+    relative_strength = statistics_mean(relative_scores) if relative_scores else None
+    efficiency = first(MetricKind.WORTH_BUY_EFFICIENCY_SCORE)
+    has_relative_strength = relative_strength is not None
+    if has_relative_strength:
+        component_weights = (0.55, 0.35, 0.10)
+    else:
+        component_weights = (0.55 / 0.65, 0.0, 0.10 / 0.65)
+
+    components = tuple(
+        ReportScoreComponent(
+            key=key,
+            score=score,
+            weight=weight,
+            weighted_score=round((score or 0.0) * weight, 2),
+        )
+        for key, score, weight in (
+            ("momentum", momentum, component_weights[0]),
+            ("relative_strength", relative_strength, component_weights[1]),
+            ("trend_efficiency", efficiency, component_weights[2]),
+        )
+    )
+
+    ma_available = first(MetricKind.SIMPLE_MOVING_AVERAGE) is not None
+    drawdown = first(MetricKind.MAX_DRAWDOWN)
+    weekly = first(MetricKind.WEEKLY_BEARISH_ALIGNMENT)
+    risk_checks = (
+        ReportCheck(
+            key="trend_alignment",
+            status=(
+                "unavailable" if not ma_available else
+                "fail" if risk_flags & {"bearish_ma_alignment", "below_ma_short"} else
+                "pass"
+            ),
+            value=first(MetricKind.SIMPLE_MOVING_AVERAGE),
+        ),
+        ReportCheck(
+            key="max_drawdown",
+            status=(
+                "unavailable" if drawdown is None else
+                "fail" if "severe_drawdown" in risk_flags else
+                "warning" if "moderate_drawdown" in risk_flags else
+                "pass"
+            ),
+            value=drawdown,
+        ),
+        ReportCheck(
+            key="weekly_structure",
+            status="unavailable" if weekly is None else "fail" if weekly else "pass",
+            value=weekly,
+        ),
+        ReportCheck(
+            key="volatility",
+            status=(
+                "unavailable" if len(prices) < 64 else
+                "fail" if "high_volatility" in risk_flags else
+                "pass"
+            ),
+        ),
+    )
+
+    def confirmation_status(available: bool, *blocks: str) -> str:
+        if not available:
+            return "unavailable"
+        return "warning" if technical_blocks.intersection(blocks) else "pass"
+
+    confirmation_checks = (
+        ReportCheck(
+            key="macd",
+            status=confirmation_status(
+                len(prices) >= 35, "macd_bearish", "macd_histogram_declining"
+            ),
+        ),
+        ReportCheck(
+            key="rsi",
+            status=confirmation_status(
+                first(MetricKind.RELATIVE_STRENGTH_INDEX_14) is not None,
+                "rsi_overbought",
+                "rsi_oversold",
+            ),
+            value=first(MetricKind.RELATIVE_STRENGTH_INDEX_14),
+        ),
+        ReportCheck(
+            key="kdj",
+            status=confirmation_status(
+                first(MetricKind.KDJ_J) is not None,
+                "kdj_overbought",
+                "kdj_bearish_cross",
+            ),
+            value=first(MetricKind.KDJ_J),
+        ),
+        ReportCheck(
+            key="trend_strength",
+            status=confirmation_status(
+                first(MetricKind.ADX_14) is not None, "adx_ranging", "di_bearish"
+            ),
+            value=first(MetricKind.ADX_14),
+        ),
+        ReportCheck(
+            key="volume_confirmation",
+            status=confirmation_status(
+                first(MetricKind.UP_DOWN_VOLUME_RATIO) is not None,
+                "distribution_volume",
+                "obv_declining",
+            ),
+            value=first(MetricKind.UP_DOWN_VOLUME_RATIO),
+        ),
+    )
+
+    complete_prices = [
+        point for point in prices
+        if all(value is not None for value in (point.open, point.high, point.low, point.volume))
+    ][-60:]
+    price_bars = tuple(
+        ReportPriceBar(
+            observed_at=point.observed_at,
+            open=cast(float, point.open),
+            high=cast(float, point.high),
+            low=cast(float, point.low),
+            close=point.close,
+            volume=cast(float, point.volume),
+        )
+        for point in complete_prices
+    )
+    entry_value = first(MetricKind.WORTH_BUY_ENTRY_CLASSIFICATION)
+    entry_code = int(round(entry_value)) if entry_value is not None else -1
+    verdict_codes = {
+        _VERDICT_BUY: "buy",
+        _VERDICT_WATCH: "watch",
+        _VERDICT_NO: "avoid",
+        _VERDICT_REDUCE_RISK: "reduce_risk",
+        _VERDICT_CANNOT_SCORE: "cannot_score",
+    }
+
+    return WorthBuyPresentation(
+        verdict=verdict_codes.get(verdict, "cannot_score"),
+        entry_class=_ENTRY_CLASSES.get(entry_code, "unknown"),
+        benchmarks=tuple(
+            ReportBenchmark(
+                label=label,
+                instrument=_benchmark_instrument(label),
+                available=label in available_benchmarks,
+            )
+            for label in benchmark_labels
+        ),
+        score_components=components,
+        risk_checks=risk_checks,
+        confirmation_checks=confirmation_checks,
+        reference_levels=ReportReferenceLevels(
+            entry=first(MetricKind.WORTH_BUY_ENTRY_PRICE),
+            stop=first(MetricKind.WORTH_BUY_STOP_PRICE),
+            target=first(MetricKind.WORTH_BUY_TARGET_PRICE),
+        ),
+        price_bars=price_bars,
+    )
 
 
 # ---------------------------------------------------------------------------

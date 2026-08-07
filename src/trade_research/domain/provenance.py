@@ -20,6 +20,8 @@ class ProviderKind(StrEnum):
     LOCAL_PARQUET = "local_parquet"
     LOCAL_SQL = "local_sql"
     YAHOO = "yahoo"
+    TENCENT = "tencent"
+    MOOTDX = "mootdx"
     STOOQ = "stooq"
     SEC = "sec"
     CCXT = "ccxt"

@@ -56,12 +56,15 @@ def test_analysis_request_uses_fundamental_and_technical_by_default() -> None:
     assert request.analysts == ("fundamental", "technical")
 
 
-@pytest.mark.parametrize("market", ["NASDAQ", "LSE", "XETRA", "ETF", "CRYPTO"])
+@pytest.mark.parametrize(
+    "market",
+    ["NASDAQ", "LSE", "XETRA", "ETF", "CRYPTO", "SSE", "SZSE", "BJSE"],
+)
 def test_instrument_accepts_supported_markets(market: str) -> None:
     assert InstrumentId(symbol="acme", market=market).market == market
 
 
-@pytest.mark.parametrize("market", ["TSE", "HKEX", "SSE", "NSE"])
+@pytest.mark.parametrize("market", ["TSE", "HKEX", "NSE"])
 def test_instrument_rejects_asian_markets(market: str) -> None:
     with pytest.raises(ValueError, match="not supported"):
         InstrumentId(symbol="acme", market=market)

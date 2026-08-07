@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -18,7 +19,7 @@ from trade_research.domain import (
 )
 from trade_research.domain.provenance import DerivedAlgorithm
 from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
-from trade_research.reporting import render_markdown
+from trade_research.reporting import render_json, render_markdown
 from trade_research.skills.indicators import (
     adx,
     annualized_volatility,
@@ -346,6 +347,32 @@ class TestWorthBuyStocksSkill:
         assert MetricKind.WORTH_BUY_TARGET_PRICE in metrics
         assert MetricKind.WORTH_BUY_VERDICT in metrics
 
+        presentation = result.presentation
+        assert presentation is not None
+        assert presentation.template == "worth-buy-stocks-v1"
+        assert len(presentation.price_bars) == 60
+        assert {item.key for item in presentation.score_components} == {
+            "momentum", "relative_strength", "trend_efficiency"
+        }
+        assert presentation.reference_levels.entry == closes[-1]
+
+    def test_sanitized_report_preserves_bounded_presentation(self) -> None:
+        points = _price_points([100.0 + i * 0.25 for i in range(90)])
+        instrument = InstrumentId(symbol="TEST", market="US")
+        result = WorthBuyStocksSkill().analyze(
+            instrument,
+            _provider_with_prices(points),
+        )
+        payload = render_json(ResearchReport(
+            request_id=uuid4(),
+            instrument=instrument,
+            results=(result,),
+            generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        ))
+
+        assert '"template": "worth-buy-stocks-v1"' in payload
+        assert payload.count('"observed_at"') >= 60
+
     def test_downtrend_produces_bearish_signal(self) -> None:
         """A clean downtrend below MAs should produce a bearish verdict."""
         n = 260
@@ -442,6 +469,43 @@ class TestWorthBuyStocksSkill:
         """Custom benchmark symbols should be used."""
         skill = WorthBuyStocksSkill(benchmark_symbols=("IWM", "DIA"))
         assert skill.benchmark_symbols == ("IWM", "DIA")
+
+    def test_auto_benchmarks_use_european_indices_for_european_markets(self) -> None:
+        """European instruments should use STOXX index aliases by default."""
+        requests: list[InstrumentId] = []
+        n = 70
+        target_closes = [100.0 + i * 0.3 for i in range(n)]
+        stoxx_closes = [200.0 + i * 0.1 for i in range(n)]
+        sx5e_closes = [300.0 + i * 0.15 for i in range(n)]
+
+        class Provider:
+            def prices(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
+                requests.append(instrument)
+                if instrument.symbol == "VOD":
+                    return _price_points(target_closes, symbol="VOD", market="LSE")
+                if instrument.symbol == "^STOXX":
+                    return _price_points(stoxx_closes, symbol="^STOXX", market="INDEX")
+                if instrument.symbol == "^STOXX50E":
+                    return _price_points(sx5e_closes, symbol="^STOXX50E", market="INDEX")
+                return ()
+
+        result = WorthBuyStocksSkill().analyze(
+            InstrumentId(symbol="VOD", market="LSE"),
+            cast(ProviderRegistry, Provider()),
+        )
+
+        requested = {(item.symbol, item.market) for item in requests}
+        assert ("^STOXX", "INDEX") in requested
+        assert ("^STOXX50E", "INDEX") in requested
+        assert result.status == ReportStatus.COMPLETE
+        assert MetricKind.WORTH_BUY_RELATIVE_STRENGTH in {
+            observation.metric for observation in result.observations
+        }
+        assert result.presentation is not None
+        assert [item.label for item in result.presentation.benchmarks] == ["SXXP", "SX5E"]
+        assert [item.instrument.symbol for item in result.presentation.benchmarks] == [
+            "^STOXX", "^STOXX50E"
+        ]
 
     def test_skill_instance_is_hashable(self) -> None:
         """Frozen dataclass instances should be hashable."""

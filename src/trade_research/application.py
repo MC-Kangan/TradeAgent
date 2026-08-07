@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -30,7 +30,7 @@ from trade_research.skills.parameters import (
 JsonObject = dict[str, Any]
 
 
-def configure_skill(skill: ResearchSkill, params: dict[str, object]) -> ResearchSkill:
+def configure_skill(skill: ResearchSkill, params: Mapping[str, object]) -> ResearchSkill:
     """Return a per-run copy of *skill* with validated *params* applied.
 
     The frozen registry is never mutated — this returns a new dataclass
@@ -49,10 +49,19 @@ def configure_skill(skill: ResearchSkill, params: dict[str, object]) -> Research
 
     if skill.name == "markov-method":
         markov_params = MarkovMethodParameters.model_validate(params)
+        # A legacy symmetric threshold remains accepted. New clients can
+        # provide independent Bull/Bear boundaries.
+        bull_threshold = markov_params.bull_threshold
+        bear_threshold = markov_params.bear_threshold
+        if "bull_threshold" not in params and "bear_threshold" not in params:
+            bull_threshold = markov_params.threshold
+            bear_threshold = -markov_params.threshold
         return replace(  # type: ignore[type-var]
             skill,
             window=markov_params.window,
             threshold=markov_params.threshold,
+            bull_threshold=bull_threshold,
+            bear_threshold=bear_threshold,
             min_train=markov_params.min_train,
             run_walkforward=markov_params.run_walkforward,
         )
@@ -80,9 +89,16 @@ class ResearchApplication:
 
     def describe_skill(self, name: str) -> JsonObject:
         skill = self.engine.skills.require(name)
+        short_descriptions = {
+            "worth-buy-stocks": "Trend, relative strength, and risk checks.",
+            "markov-method": "Bull, Bear, and Sideways regime detection.",
+        }
         return {
             "name": skill.name,
-            "description": (type(skill).__doc__ or "Research analyst skill").strip(),
+            "description": short_descriptions.get(
+                skill.name,
+                (type(skill).__doc__ or "Research analyst skill").strip(),
+            ),
             "immutable": True,
             "parameters": SKILL_PARAMETER_SCHEMAS.get(name),
         }
@@ -91,7 +107,6 @@ class ResearchApplication:
         base_skill = self.engine.skills.require(name)
         params = request.skill_parameters.get(name, {})
         configured = configure_skill(base_skill, params)
-        self.engine.validate_analysts((name,))
         result = await self.engine.run_configured_skill(configured, request)
         wrapped = ResearchReport(
             request_id=request.request_id,

@@ -10,7 +10,7 @@ class TechnicalSkillParameters(BaseModel):
 
 
 class WorthBuyStocksParameters(BaseModel):
-    benchmark_symbols: str = Field(default="SPY,QQQ", min_length=1)
+    benchmark_symbols: str = Field(default="AUTO", min_length=1)
 
     @field_validator("benchmark_symbols")
     @classmethod
@@ -26,7 +26,11 @@ class WorthBuyStocksParameters(BaseModel):
 
 class MarkovMethodParameters(BaseModel):
     window: int = Field(default=20, ge=2, le=252)
+    # Kept for native/HTTP compatibility. New callers should use the two
+    # independent thresholds below.
     threshold: float = Field(default=0.05, gt=0, le=1.0)
+    bull_threshold: float = Field(default=0.05, gt=0, le=1.0)
+    bear_threshold: float = Field(default=-0.05, ge=-1.0, lt=0)
     min_train: int = Field(default=252, ge=50, le=2520)
     run_walkforward: bool = False
 

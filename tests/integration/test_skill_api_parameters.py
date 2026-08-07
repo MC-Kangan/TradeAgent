@@ -9,8 +9,14 @@ from trade_research.engine import ResearchEngine
 from trade_research.http import create_app
 from trade_research.providers import ProviderRegistry
 from trade_research.reporting import ReportStore
-from trade_research.skills import SkillRegistry, TechnicalSkill, WorthBuyStocksSkill, MarkovMethodSkill, FundamentalSkill, FilingsSkill
-
+from trade_research.skills import (
+    FilingsSkill,
+    FundamentalSkill,
+    MarkovMethodSkill,
+    SkillRegistry,
+    TechnicalSkill,
+    WorthBuyStocksSkill,
+)
 
 BEARER = "test-token"
 

@@ -106,3 +106,28 @@ docker build \
 ```
 
 The release pipeline must resolve the tag in an approved registry, record and review its `RepoDigest`, build with that digest, scan the result, and update the approved digest through code review. Compose accepts the same `PYTHON_BASE_IMAGE` environment variable for local builds.
+
+## PAMASTER / NAS paired deployment
+
+When TradeAgent is deployed behind PAMASTER, the browser and iPhone should still talk only to
+PAMASTER. PAMASTER calls TradeAgent over Docker Compose service DNS:
+
+```text
+PAMASTER backend-api -> http://research-api:8000 -> TradeAgent
+```
+
+The PAMASTER NAS compose file owns this paired topology and starts TradeAgent as a `research-api`
+service. Build and import the TradeAgent image on the NAS, then set these values in the PAMASTER
+Docker Project environment:
+
+```text
+TRADE_RESEARCH_IMAGE=trade-research:<tag>
+PA_TRADE_RESEARCH_ENABLED=true
+PA_TRADE_RESEARCH_BASE_URL=http://research-api:8000
+PA_TRADE_RESEARCH_API_TOKEN=<shared internal bearer token>
+TRADE_RESEARCH_PRICE_PROVIDER=yahoo
+```
+
+The same token value is injected into TradeAgent as `TRADE_RESEARCH_API_TOKEN` by the PAMASTER
+compose file. Do not publish the TradeAgent port to the LAN for the iPhone app path; expose only
+PAMASTER's analytics port and keep the TradeAgent service internal to the Compose project.

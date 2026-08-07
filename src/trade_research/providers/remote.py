@@ -42,10 +42,14 @@ _YAHOO_SUFFIXES = {
     "AIM": ".L",
     "EU": ".PA",
     "EURONEXT": ".PA",
+    "INDEX": "",
     "XETRA": ".DE",
     "BME": ".MC",
     "BORSA_ITALIANA": ".MI",
     "SIX": ".SW",
+    "SSE": ".SS",
+    "SZSE": ".SZ",
+    "BJSE": ".BJ",
 }
 
 _BLOOMBERG_SUFFIXES = {
@@ -60,10 +64,14 @@ _BLOOMBERG_SUFFIXES = {
     "AIM": " LN Equity",
     "EU": " EB Equity",
     "EURONEXT": " NA Equity",
+    "INDEX": " Index",
     "XETRA": " GY Equity",
     "BME": " SM Equity",
     "BORSA_ITALIANA": " IM Equity",
     "SIX": " SW Equity",
+    "SSE": " CH Equity",
+    "SZSE": " CH Equity",
+    "BJSE": " CH Equity",
 }
 
 

@@ -133,9 +133,11 @@ class MyNewSkill:
         self, instrument: InstrumentId, providers: ProviderRegistry
     ) -> AnalystResult:
         # 1. Fetch data via providers
-        # 2. Run your algorithm
-        # 3. Build Observations with source="derived"
-        # 4. Return AnalystResult
+        # 2. Validate and normalize provider data with shared helpers
+        # 3. Run your algorithm
+        # 4. Build Observations with source="derived"
+        # 5. Optionally attach a bounded presentation payload for rich clients
+        # 6. Return AnalystResult
         ...
 ```
 
@@ -146,6 +148,12 @@ class MyNewSkill:
 - All fields must be deeply immutable (primitives, tuples, frozen dataclasses)
 - `__getattribute__` override is required for `name` → `_name` routing
 - Every `Observation` must have `source="derived"` and closed-schema provenance
+- Price-based skills should call `providers.prices(instrument)` and then
+  `validated_prices()` from `trade_research.skills.indicators`; do not fetch market data directly
+  from Yahoo, Stooq, IBKR, or another provider inside the skill.
+- If a skill needs richer charts than scalar observations can support, add a typed, bounded
+  presentation model in `domain/models.py` and attach it to `AnalystResult.presentation`. Keep it
+  sanitized, deterministic, and small enough for browser/iPhone rendering.
 
 **Naming convention:**
 - Skill class: `PascalCase` (e.g., `WorthBuyStocksSkill`)
@@ -256,6 +264,7 @@ Minimum test coverage:
 | `test_all_observations_have_derived_source` | Provenance hygiene |
 | `test_skill_instance_is_hashable` | Frozen-dataclass contract |
 | `test_verdict_methods_present` | AnalysisMethod entries complete |
+| `test_presentation_payload_is_bounded` | Optional chart/report payload remains sanitized and small |
 
 Use synthetic `PricePoint` fixtures via `_price_points()` and a mock
 `ProviderRegistry` — see `tests/test_worth_buy_stocks.py` for the pattern.

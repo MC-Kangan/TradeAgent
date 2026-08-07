@@ -16,8 +16,10 @@ from trade_research.domain import (
     AnalysisMethod,
     AnalystResult,
     InstrumentId,
+    MarkovPresentation,
     MetricKind,
     Observation,
+    ReportMarkovRegimePoint,
     ReportStatus,
     SignalKind,
 )
@@ -78,7 +80,12 @@ def _rolling_returns(closes: list[float], window: int) -> list[float]:
 
 
 def _label_regimes(
-    returns: list[float], threshold: float, window: int
+    returns: list[float],
+    threshold: float,
+    window: int,
+    *,
+    bull_threshold: float | None = None,
+    bear_threshold: float | None = None,
 ) -> list[int]:
     """Label each day: 0=Bear, 1=Sideways, 2=Bull.
 
@@ -87,12 +94,14 @@ def _label_regimes(
     neutral starting point so the transition matrix can use all rows.
     """
     n = len(returns)
+    bull = threshold if bull_threshold is None else bull_threshold
+    bear = -threshold if bear_threshold is None else bear_threshold
     labels = [_SIDEWAYS_IDX] * n  # default neutral
     for i in range(window, n):
         r = returns[i]
-        if r >= threshold:
+        if r >= bull:
             labels[i] = _BULL_IDX
-        elif r <= -threshold:
+        elif r <= bear:
             labels[i] = _BEAR_IDX
         else:
             labels[i] = _SIDEWAYS_IDX
@@ -160,6 +169,9 @@ def _walkforward_backtest(
     window: int,
     threshold: float,
     min_train: int,
+    *,
+    bull_threshold: float | None = None,
+    bear_threshold: float | None = None,
 ) -> dict[str, float | int]:
     """Walk-forward backtest: refit matrix at each step, no lookahead.
 
@@ -177,7 +189,13 @@ def _walkforward_backtest(
         # Build matrix from history up to t (exclusive)
         hist_closes = closes[:t]
         hist_returns = _rolling_returns(hist_closes, window)
-        labels = _label_regimes(hist_returns, threshold, window)
+        labels = _label_regimes(
+            hist_returns,
+            threshold,
+            window,
+            bull_threshold=bull_threshold,
+            bear_threshold=bear_threshold,
+        )
         matrix = _build_transition_matrix(labels, window)
         pi = _stationary_distribution(matrix)
         current_label = labels[-1] if labels else _SIDEWAYS_IDX
@@ -291,6 +309,8 @@ class MarkovMethodSkill:
     threshold: float = 0.05
     min_train: int = 252
     run_walkforward: bool = False
+    bull_threshold: float = 0.05
+    bear_threshold: float = -0.05
 
     # -- internal fields --
     _name: str = field(default="markov-method", init=False, repr=False)
@@ -308,6 +328,15 @@ class MarkovMethodSkill:
         if attribute == "name":
             return object.__getattribute__(self, "_name")
         return object.__getattribute__(self, attribute)
+
+    def _effective_thresholds(self) -> tuple[float, float]:
+        """Resolve legacy symmetric construction into the new two-boundary form."""
+        threshold = object.__getattribute__(self, "threshold")
+        bull = object.__getattribute__(self, "bull_threshold")
+        bear = object.__getattribute__(self, "bear_threshold")
+        if threshold != 0.05 and bull == 0.05 and bear == -0.05:
+            return threshold, -threshold
+        return bull, bear
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -328,9 +357,17 @@ class MarkovMethodSkill:
         observed_at: datetime = max(p.observed_at for p in all_prices)
         n_bars = len(closes)
 
+        bull_threshold, bear_threshold = self._effective_thresholds()
+
         # 2. Compute rolling returns and label regimes
         returns = _rolling_returns(closes, self.window)
-        labels = _label_regimes(returns, self.threshold, self.window)
+        labels = _label_regimes(
+            returns,
+            self.threshold,
+            self.window,
+            bull_threshold=bull_threshold,
+            bear_threshold=bear_threshold,
+        )
 
         # 3. Build transition matrix
         matrix = _build_transition_matrix(labels, self.window)
@@ -343,7 +380,11 @@ class MarkovMethodSkill:
 
         # 5. Build observations
         observations: list[Observation] = []
-        threshold_str = str(self.threshold).replace(".", "_").replace("-", "n")
+        threshold_str = (
+            f"b{bull_threshold}_r{bear_threshold}"
+            .replace(".", "_")
+            .replace("-", "n")
+        )
         algo_window = f"{self.window}_day_{threshold_str}"
 
         # Current regime (numeric code: 0=Bear, 1=Sideways, 2=Bull)
@@ -430,7 +471,12 @@ class MarkovMethodSkill:
         missing: list[str] = []
         if self.run_walkforward and n_bars >= self.min_train:
             wf = _walkforward_backtest(
-                closes, self.window, self.threshold, self.min_train
+                closes,
+                self.window,
+                self.threshold,
+                self.min_train,
+                bull_threshold=bull_threshold,
+                bear_threshold=bear_threshold,
             )
             observations.append(
                 _build_obs(
@@ -500,6 +546,20 @@ class MarkovMethodSkill:
             f"Bear={pi[_BEAR_IDX]:.1%}"
         )
 
+        # Keep the presentation bounded while preserving alignment with the
+        # full derived return/label arrays.
+        presentation_prices = all_prices[-520:]
+        point_offset = len(all_prices) - len(presentation_prices)
+        regime_points = tuple(
+            ReportMarkovRegimePoint(
+                observed_at=point.observed_at,
+                close=float(point.close),
+                rolling_return=round(float(returns[index + point_offset]), 10),
+                regime=_REGIME_LABELS[labels[index + point_offset]],
+            )
+            for index, point in enumerate(presentation_prices)
+        )
+
         return AnalystResult(
             analyst="markov-method",
             instrument=instrument,
@@ -510,4 +570,13 @@ class MarkovMethodSkill:
             methods=tuple(methods),
             signal=signal_kind,
             observations=tuple(observations),
+            presentation=MarkovPresentation(
+                window=self.window,
+                bull_threshold=bull_threshold,
+                bear_threshold=bear_threshold,
+                current_regime=current_regime,
+                transition_matrix=tuple(tuple(row) for row in matrix),
+                stationary_distribution=tuple(pi),
+                regime_points=regime_points,
+            ),
         )

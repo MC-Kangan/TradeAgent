@@ -127,6 +127,7 @@ def _project_result(result: AnalystResult, instrument: InstrumentId) -> AnalystR
         citations=tuple(islice(citations, MAX_EXPORT_EVIDENCE)),
         observations=observations,
         evidence=(),
+        presentation=result.presentation,
     )
 
 

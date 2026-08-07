@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from ipaddress import ip_address
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
@@ -31,18 +31,22 @@ SUPPORTED_MARKETS = frozenset(
         "EU",
         "ETF",
         "EURONEXT",
+        "INDEX",
         "LSE",
         "NASDAQ",
         "NYSE",
         "OTC",
         "SIX",
+        "SSE",
+        "SZSE",
+        "BJSE",
         "UK",
         "US",
         "XETRA",
     }
 )
 ASIAN_MARKETS = frozenset(
-    {"ASX", "BSE", "HKEX", "JPX", "KRX", "NSE", "SET", "SGX", "SSE", "SZSE", "TSE", "TWSE"}
+    {"ASX", "BSE", "HKEX", "JPX", "KRX", "NSE", "SET", "SGX", "TSE", "TWSE"}
 )
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
@@ -129,6 +133,8 @@ class InstrumentId(DomainModel):
         # builders additionally use quote(symbol, safe='') as defense-in-depth.
         if self.market == "CRYPTO":
             pattern = r"(?:[A-Z0-9]{2,15}(?:/|-)[A-Z0-9]{2,15}|[A-Z0-9]{2,20})"
+        elif self.market == "INDEX":
+            pattern = r"\^[A-Z0-9]{1,15}|[A-Z0-9][A-Z0-9.^=-]{0,15}"
         else:
             pattern = r"[A-Z0-9^][A-Z0-9.^=-]{0,15}"
         if re.fullmatch(pattern, self.symbol) is None:
@@ -144,6 +150,25 @@ class Position(DomainModel):
     average_cost: float | None = Field(default=None, ge=0)
 
 
+class InlinePriceBar(DomainModel):
+    """One bounded daily OHLCV point supplied for a single research run."""
+
+    observed_at: datetime
+    close: float = Field(gt=0)
+    open: float | None = Field(default=None, gt=0)
+    high: float | None = Field(default=None, gt=0)
+    low: float | None = Field(default=None, gt=0)
+    volume: float | None = Field(default=None, ge=0)
+
+
+class InlinePriceSeries(DomainModel):
+    """A caller-owned price series used without remote provider fallback."""
+
+    instrument: InstrumentId
+    source: Literal["yahoo", "tencent", "mootdx"]
+    bars: tuple[InlinePriceBar, ...] = Field(min_length=1, max_length=520)
+
+
 class AnalysisRequest(DomainModel):
     """One request for selected analysts to research an instrument."""
 
@@ -155,6 +180,7 @@ class AnalysisRequest(DomainModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     positions: tuple[Position, ...] = ()
     skill_parameters: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+    price_series: tuple[InlinePriceSeries, ...] = Field(default=(), max_length=9)
 
     @field_validator("analysts")
     @classmethod
@@ -168,6 +194,13 @@ class AnalysisRequest(DomainModel):
         if len(set(value)) != len(value):
             raise ValueError("analyst names must be unique")
         return value
+
+    @model_validator(mode="after")
+    def require_unique_price_series(self) -> Self:
+        instruments = tuple(item.instrument for item in self.price_series)
+        if len(set(instruments)) != len(instruments):
+            raise ValueError("price series instruments must be unique")
+        return self
 
 
 class Observation(DomainModel):
@@ -261,6 +294,98 @@ class AnalysisMethod(DomainModel):
     window: MethodWindow
 
 
+class ReportPriceBar(DomainModel):
+    """One bounded OHLCV point intended for deterministic report charts."""
+
+    observed_at: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class ReportBenchmark(DomainModel):
+    """A benchmark requested by a skill and its provider-facing instrument."""
+
+    label: MarketSymbol
+    instrument: InstrumentId
+    available: bool
+
+
+class ReportScoreComponent(DomainModel):
+    """A normalized worth-buy score component and its weighted contribution."""
+
+    key: Literal["momentum", "relative_strength", "trend_efficiency"]
+    score: float | None = Field(default=None, ge=0, le=100)
+    weight: float = Field(ge=0, le=1)
+    weighted_score: float = Field(ge=0, le=100)
+
+
+class ReportCheck(DomainModel):
+    """A deterministic risk or confirmation check for presentation."""
+
+    key: Annotated[str, Field(min_length=1, max_length=48, pattern=r"^[a-z0-9_]+$")]
+    status: Literal["pass", "warning", "fail", "unavailable"]
+    value: float | None = None
+
+
+class ReportReferenceLevels(DomainModel):
+    """Model-derived reference levels; these are not order instructions."""
+
+    entry: float | None = Field(default=None, ge=0)
+    stop: float | None = Field(default=None, ge=0)
+    target: float | None = Field(default=None, ge=0)
+
+
+class WorthBuyPresentation(DomainModel):
+    """Bounded data used by clients to render the worth-buy report template."""
+
+    template: Literal["worth-buy-stocks-v1"] = "worth-buy-stocks-v1"
+    verdict: Literal["buy", "watch", "avoid", "reduce_risk", "cannot_score"]
+    entry_class: Literal[
+        "trend_broken",
+        "overextended",
+        "pullback_no_trigger",
+        "trend_continuation",
+        "pullback_reversal",
+        "recovery_reversal",
+        "unknown",
+    ]
+    benchmarks: tuple[ReportBenchmark, ...] = Field(default=(), max_length=8)
+    score_components: tuple[ReportScoreComponent, ...] = Field(default=(), max_length=3)
+    risk_checks: tuple[ReportCheck, ...] = Field(default=(), max_length=8)
+    confirmation_checks: tuple[ReportCheck, ...] = Field(default=(), max_length=10)
+    reference_levels: ReportReferenceLevels = Field(default_factory=ReportReferenceLevels)
+    price_bars: tuple[ReportPriceBar, ...] = Field(default=(), max_length=60)
+
+
+class ReportMarkovRegimePoint(DomainModel):
+    """One bounded point used to render Markov regime context."""
+
+    observed_at: datetime
+    close: float = Field(gt=0)
+    rolling_return: float
+    regime: Literal["Bear", "Sideways", "Bull"]
+
+
+class MarkovPresentation(DomainModel):
+    """Bounded data used by clients to render the Markov framework."""
+
+    template: Literal["markov-method-v1"] = "markov-method-v1"
+    window: int = Field(ge=2, le=252)
+    bull_threshold: float = Field(gt=0, le=1)
+    bear_threshold: float = Field(ge=-1, lt=0)
+    current_regime: Literal["Bear", "Sideways", "Bull"]
+    transition_matrix: tuple[
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ]
+    stationary_distribution: tuple[float, float, float]
+    regime_points: tuple[ReportMarkovRegimePoint, ...] = Field(default=(), max_length=520)
+
+
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
@@ -277,6 +402,7 @@ class AnalystResult(DomainModel):
     citations: tuple[Citation, ...] = ()
     observations: tuple[Observation, ...] = ()
     evidence: tuple[Evidence, ...] = ()
+    presentation: WorthBuyPresentation | MarkovPresentation | None = None
 
 
 class ResearchReport(DomainModel):

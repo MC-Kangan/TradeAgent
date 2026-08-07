@@ -19,6 +19,7 @@ from trade_research.domain import (
 from trade_research.providers import (
     CcxtPriceProvider,
     CikResolver,
+    InlinePriceProvider,
     LocalCsvParquetFundamentalProvider,
     LocalCsvParquetPriceProvider,
     ProviderConfigurationError,
@@ -92,20 +93,26 @@ class ResearchEngine:
     def clock(self) -> Callable[[], datetime]:
         return self._clock
 
-    def validate_analysts(self, selected: Sequence[str]) -> None:
+    def validate_analysts(
+        self,
+        selected: Sequence[str],
+        providers: ProviderRegistry | None = None,
+    ) -> None:
+        active_providers = providers or self._providers
         capabilities: list[CapabilityName] = []
         for skill in self._skills.discover(selected):
             capabilities.extend(skill.required_capabilities)
-        self._providers.ensure_capabilities(tuple(dict.fromkeys(capabilities)))
+        active_providers.ensure_capabilities(tuple(dict.fromkeys(capabilities)))
 
     async def analyze(self, request: AnalysisRequest) -> ResearchReport:
         """Analyze one request without allowing evidence to affect selection."""
 
         request = AnalysisRequest.model_validate(request.model_dump())
-        self.validate_analysts(request.analysts)
+        providers = self._providers_for(request)
+        self.validate_analysts(request.analysts, providers)
         selected = self._skills.discover(request.analysts)
         outcomes = await asyncio.gather(
-            *(self._run_skill(skill, request) for skill in selected),
+            *(self._run_skill(skill, request, providers) for skill in selected),
             return_exceptions=True,
         )
         results: list[AnalystResult] = []
@@ -140,8 +147,15 @@ class ResearchEngine:
             )
         )
 
-    async def _run_skill(self, skill: ResearchSkill, request: AnalysisRequest) -> AnalystResult:
-        return await asyncio.to_thread(skill.analyze, request.instrument, self._providers)
+    async def _run_skill(
+        self,
+        skill: ResearchSkill,
+        request: AnalysisRequest,
+        providers: ProviderRegistry | None = None,
+    ) -> AnalystResult:
+        return await asyncio.to_thread(
+            skill.analyze, request.instrument, providers or self._providers
+        )
 
     async def run_configured_skill(
         self, skill: ResearchSkill, request: AnalysisRequest
@@ -152,8 +166,18 @@ class ResearchEngine:
         this method accepts an already-configured skill instance (e.g. from
         ``configure_skill()``) and runs it directly.
         """
-        self.validate_analysts((skill.name,))
-        return await self._run_skill(skill, request)
+        providers = self._providers_for(request)
+        self.validate_analysts((skill.name,), providers)
+        return await self._run_skill(skill, request, providers)
+
+    def _providers_for(self, request: AnalysisRequest) -> ProviderRegistry:
+        if not request.price_series:
+            return self._providers
+        providers: dict[str, CapabilityProvider] = {
+            name.value: provider for name, provider in self._providers.providers.items()
+        }
+        providers[CapabilityName.PRICES.value] = InlinePriceProvider(request.price_series)
+        return ProviderRegistry(providers)
 
 
 def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:

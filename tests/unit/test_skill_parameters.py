@@ -3,16 +3,16 @@
 import pytest
 from pydantic import ValidationError
 
+from trade_research.application import configure_skill
 from trade_research.skills import (
     FundamentalSkill,
     MarkovMethodSkill,
     TechnicalSkill,
     WorthBuyStocksSkill,
 )
-from trade_research.application import configure_skill
 from trade_research.skills.parameters import (
-    MarkovMethodParameters,
     SKILL_PARAMETER_SCHEMAS,
+    MarkovMethodParameters,
     TechnicalSkillParameters,
     WorthBuyStocksParameters,
 )
@@ -47,8 +47,8 @@ class TestTechnicalSkillParameters:
 class TestWorthBuyStocksParameters:
     def test_defaults(self):
         p = WorthBuyStocksParameters()
-        assert p.benchmark_symbols == "SPY,QQQ"
-        assert p.as_tuple() == ("SPY", "QQQ")
+        assert p.benchmark_symbols == "AUTO"
+        assert p.as_tuple() == ("AUTO",)
 
     def test_single_symbol(self):
         p = WorthBuyStocksParameters(benchmark_symbols="SPY")
@@ -127,7 +127,7 @@ class TestConfigureSkill:
         base = WorthBuyStocksSkill()
         configured = configure_skill(base, {"benchmark_symbols": "IWM,QQQ"})
         assert configured.benchmark_symbols == ("IWM", "QQQ")
-        assert base.benchmark_symbols == ("SPY", "QQQ")
+        assert base.benchmark_symbols == ("AUTO",)
 
     def test_markov_all_params_applied(self):
         base = MarkovMethodSkill()
