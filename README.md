@@ -28,7 +28,8 @@ rather than using LLMs internally — no LLM inference calls exist in the codeba
     SkillRegistry (frozen)     ProviderRegistry
     FundamentalSkill           (validates contracts)
     TechnicalSkill             YahooPriceProvider
-    FilingsSkill               CcxtPriceProvider
+    Price-series skills        CcxtPriceProvider
+    FilingsSkill               InlinePriceProvider
                                SecFilingsProvider
                                LocalCsv/Parquet/Sql providers
                          │
@@ -43,6 +44,7 @@ Key packages under `src/trade_research/`:
 |---|---|
 | `domain/` | Immutable Pydantic types, provenance schema, closed enums |
 | `skills/core.py` | `FundamentalSkill`, `TechnicalSkill`, `FilingsSkill`, `SkillRegistry` |
+| `skills/price_series.py` | Cross-asset technical confirmation, historical risk, and volatility-regime skills |
 | `providers/` | Protocol contracts, local/remote data fetchers, registry |
 | `engine.py` | Async concurrent skill execution, partial-result handling |
 | `application.py` | Transport-neutral use cases |
@@ -103,8 +105,50 @@ standalone signal. Works on any asset. [Original algorithm.](https://github.com/
 
 Requires a `PRICES`-capable provider.
 
+### `technical-basic`
+
+A compact cross-asset confirmation score built from EMA(12/26), ADX/DMI,
+RSI(14), Bollinger Bands, OBV, and current volume versus its 20-day average.
+It requires complete daily OHLCV bars and reports explicit partial results
+when history or volume fields are unavailable.
+
+Supports equities and spot crypto through the same `PRICES` capability.
+
+### `risk-analysis`
+
+Descriptive historical risk statistics from daily closes: annualized and
+downside volatility, maximum drawdown, historical 95% VaR/CVaR, return
+skewness and excess kurtosis, plus best and worst daily returns. Downside
+volatility is measured as shortfall deviation from zero. Equities use 252-day
+annualization and crypto uses 365-day annualization.
+
+This skill is non-directional and supports equities and spot crypto.
+
+### `volatility-regime`
+
+Classifies 20-day realized volatility as compressed, normal, or elevated
+against its trailing 120-observation distribution. Percentiles use mid-ranks
+for ties, so a flat series is neutral rather than incorrectly elevated. It
+also reports whether realized volatility is expanding, stable, or contracting.
+
+This skill is non-directional and supports equities and spot crypto.
+
 > **Detailed specifications:** See `skills/*/SKILL.md` for full algorithm descriptions,
 > input schemas, edge cases, and examples.
+
+### Vibe Research integration
+
+Vibe Research can supply bounded daily series directly through
+`AnalysisRequest.price_series`. The shared instrument contract is
+`{"symbol": "...", "market": "..."}`; the caller selects equity or crypto,
+while TradeAgent derives calendar conventions from the market (for example,
+`CRYPTO`). Inline sources currently include Yahoo, Tencent, Mootdx, and
+Coinbase. Coinbase volume remains fractional.
+
+The HTTP `/skills` catalog exposes `supported_asset_types`. Price-series
+technical, Markov, risk, and volatility-regime skills support both
+`equity` and `crypto`; fundamentals, filings, and `worth-buy-stocks`
+remain equity-only.
 
 ---
 
@@ -328,6 +372,9 @@ trade-research list-skills                          # list registered analysts
 
 # Run one skill synchronously (--market is required for market-aware providers):
 trade-research run-skill technical AAPL --market NASDAQ
+trade-research run-skill technical-basic AAPL --market NASDAQ
+trade-research run-skill risk-analysis BTC-USD --market CRYPTO
+trade-research run-skill volatility-regime BTC-USD --market CRYPTO
 trade-research run-skill fundamental AAPL --market NASDAQ
 trade-research run-skill filings AAPL --market NASDAQ
 
@@ -373,9 +420,12 @@ Claude has access to 9 bounded tools:
 |---|---|---|
 | Equity screening (FCF yield, P/E, ROE) | `fundamental` | `FUNDAMENTALS` (SEC EDGAR or local data) |
 | Technical entry/exit signals (RSI, MACD, Bollinger) | `technical` | `PRICES` (Yahoo, CCXT, local) |
+| Compact cross-asset confirmation | `technical-basic` | `PRICES` (inline, Yahoo, CCXT, local) |
+| Historical tail and drawdown profile | `risk-analysis` | `PRICES` (daily closes) |
+| Realized-volatility state | `volatility-regime` | `PRICES` (daily closes) |
 | SEC filing review (recency, 8-K activity) | `filings` | `FILINGS` (SEC EDGAR, auto CIK) |
 | Combined research note | all | multiple |
-| Crypto technical analysis | `technical` | `PRICES` via CCXT |
+| Crypto price-series analysis | `technical`, `technical-basic`, `markov-method`, `risk-analysis`, `volatility-regime` | `PRICES` via inline Coinbase data or CCXT |
 | LLM-driven analysis via Claude | any | any |
 
 ---
@@ -405,7 +455,7 @@ without restarting the process.
 ### Quality gates
 
 ```sh
-.venv/bin/python -m pytest   # ~298 tests
+.venv/bin/python -m pytest   # 439 tests
 .venv/bin/ruff check .        # linting (E, F, I, UP, B rules)
 .venv/bin/mypy                # strict type checking
 ```

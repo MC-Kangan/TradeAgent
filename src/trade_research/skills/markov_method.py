@@ -540,10 +540,10 @@ class MarkovMethodSkill:
         # 10. Build summary
         summary_text = (
             f"Regime: {current_regime} | "
-            f"Signal: {signal_value:.4f} | "
-            f"Stationary: Bull={pi[_BULL_IDX]:.1%} "
-            f"Sideways={pi[_SIDEWAYS_IDX]:.1%} "
-            f"Bear={pi[_BEAR_IDX]:.1%}"
+            f"Signal: {signal_value:.2f} | "
+            f"Stationary: Bull={pi[_BULL_IDX]:.2%} "
+            f"Sideways={pi[_SIDEWAYS_IDX]:.2%} "
+            f"Bear={pi[_BEAR_IDX]:.2%}"
         )
 
         # Keep the presentation bounded while preserving alignment with the

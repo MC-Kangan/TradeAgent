@@ -248,6 +248,24 @@ def algorithm_for_metric(metric: str) -> str:
         return "markov_transition_matrix"
     if metric.startswith("markov_walkforward_"):
         return "markov_walkforward"
+    if metric.startswith("technical_basic_"):
+        return "technical_basic_composite"
+    if metric.startswith("on_balance_volume_") or metric.startswith("volume_ratio_"):
+        return "technical_basic_composite"
+    if metric in {
+        "annualized_volatility",
+        "downside_volatility",
+        "historical_var_95",
+        "historical_cvar_95",
+        "return_skewness",
+        "return_excess_kurtosis",
+        "best_daily_return",
+        "worst_daily_return",
+        "max_drawdown",
+    }:
+        return "historical_risk_statistics"
+    if metric.startswith("volatility_regime_") or metric == "volatility_trend":
+        return "volatility_regime_percentile"
     raise ValueError(f"unknown derived price metric '{metric}'")
 
 

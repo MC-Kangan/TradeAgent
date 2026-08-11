@@ -280,8 +280,8 @@ class WorthBuyStocksSkill:
 
         # Build summary text
         summary_text = sanitize_text(
-            f"Verdict: {verdict} | Composite: {alpha_composite:.0f}/100 "
-            f"| Risk: {risk_score:.0f}/100 | Reason: {verdict_reason}"
+            f"Verdict: {verdict} | Composite: {alpha_composite:.2f}/100 "
+            f"| Risk: {risk_score:.2f}/100 | Reason: {verdict_reason}"
         )
 
         return AnalystResult(

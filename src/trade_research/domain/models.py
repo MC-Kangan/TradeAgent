@@ -165,7 +165,7 @@ class InlinePriceSeries(DomainModel):
     """A caller-owned price series used without remote provider fallback."""
 
     instrument: InstrumentId
-    source: Literal["yahoo", "tencent", "mootdx"]
+    source: Literal["yahoo", "tencent", "mootdx", "coinbase"]
     bars: tuple[InlinePriceBar, ...] = Field(min_length=1, max_length=520)
 
 

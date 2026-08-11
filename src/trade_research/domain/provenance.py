@@ -20,6 +20,7 @@ class ProviderKind(StrEnum):
     LOCAL_PARQUET = "local_parquet"
     LOCAL_SQL = "local_sql"
     YAHOO = "yahoo"
+    COINBASE = "coinbase"
     TENCENT = "tencent"
     MOOTDX = "mootdx"
     STOOQ = "stooq"
@@ -113,6 +114,23 @@ class MetricKind(StrEnum):
     MARKOV_PERSISTENCE_SIDEWAYS = "markov_persistence_sideways"
     MARKOV_WALKFORWARD_SHARPE = "markov_walkforward_sharpe"
     MARKOV_WALKFORWARD_MAX_DRAWDOWN = "markov_walkforward_max_drawdown"
+    # Reusable price-series analytics
+    TECHNICAL_BASIC_SCORE = "technical_basic_score"
+    EXPONENTIAL_MOVING_AVERAGE_12 = "exponential_moving_average_12"
+    EXPONENTIAL_MOVING_AVERAGE_26 = "exponential_moving_average_26"
+    ON_BALANCE_VOLUME_TREND_20 = "on_balance_volume_trend_20"
+    VOLUME_RATIO_20 = "volume_ratio_20"
+    ANNUALIZED_VOLATILITY = "annualized_volatility"
+    DOWNSIDE_VOLATILITY = "downside_volatility"
+    HISTORICAL_VAR_95 = "historical_var_95"
+    HISTORICAL_CVAR_95 = "historical_cvar_95"
+    RETURN_SKEWNESS = "return_skewness"
+    RETURN_EXCESS_KURTOSIS = "return_excess_kurtosis"
+    BEST_DAILY_RETURN = "best_daily_return"
+    WORST_DAILY_RETURN = "worst_daily_return"
+    VOLATILITY_REGIME_PERCENTILE = "volatility_regime_percentile"
+    VOLATILITY_REGIME_CODE = "volatility_regime_code"
+    VOLATILITY_TREND = "volatility_trend"
 
 
 class VendorField(StrEnum):
@@ -186,6 +204,9 @@ class DerivedAlgorithm(StrEnum):
     MARKOV_TRANSITION_MATRIX = "markov_transition_matrix"
     MARKOV_STATIONARY_DISTRIBUTION = "markov_stationary_distribution"
     MARKOV_WALKFORWARD = "markov_walkforward"
+    TECHNICAL_BASIC_COMPOSITE = "technical_basic_composite"
+    HISTORICAL_RISK_STATISTICS = "historical_risk_statistics"
+    VOLATILITY_REGIME_PERCENTILE = "volatility_regime_percentile"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")

@@ -39,8 +39,11 @@ from trade_research.skills import (
     MarkovMethodSkill,
     ResearchReviewer,
     ResearchSkill,
+    RiskAnalysisSkill,
     SkillRegistry,
+    TechnicalBasicSkill,
     TechnicalSkill,
+    VolatilityRegimeSkill,
     WorthBuyStocksSkill,
 )
 
@@ -73,8 +76,16 @@ class ResearchEngine:
 
         default_skills = cast(
             tuple[ResearchSkill, ...],
-            (FundamentalSkill(), TechnicalSkill(), FilingsSkill(), WorthBuyStocksSkill(),
-             MarkovMethodSkill()),
+            (
+                FundamentalSkill(),
+                TechnicalSkill(),
+                FilingsSkill(),
+                WorthBuyStocksSkill(),
+                MarkovMethodSkill(),
+                TechnicalBasicSkill(),
+                RiskAnalysisSkill(),
+                VolatilityRegimeSkill(),
+            ),
         )
         selected_skills = skills or SkillRegistry(default_skills)
         if providers is None:

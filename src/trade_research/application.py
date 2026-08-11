@@ -92,6 +92,19 @@ class ResearchApplication:
         short_descriptions = {
             "worth-buy-stocks": "Trend, relative strength, and risk checks.",
             "markov-method": "Bull, Bear, and Sideways regime detection.",
+            "technical-basic": "EMA, ADX, RSI, Bollinger, OBV, and volume confirmation.",
+            "risk-analysis": "Historical volatility, tail loss, drawdown, and return shape.",
+            "volatility-regime": "Realized-volatility percentile and expansion state.",
+        }
+        supported_asset_types = {
+            "fundamental": ["equity"],
+            "filings": ["equity"],
+            "worth-buy-stocks": ["equity"],
+            "technical": ["equity", "crypto"],
+            "markov-method": ["equity", "crypto"],
+            "technical-basic": ["equity", "crypto"],
+            "risk-analysis": ["equity", "crypto"],
+            "volatility-regime": ["equity", "crypto"],
         }
         return {
             "name": skill.name,
@@ -101,6 +114,7 @@ class ResearchApplication:
             ),
             "immutable": True,
             "parameters": SKILL_PARAMETER_SCHEMAS.get(name),
+            "supported_asset_types": supported_asset_types.get(name, ["equity"]),
         }
 
     async def run_skill(self, name: str, request: AnalysisRequest) -> JsonObject:
