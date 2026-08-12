@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -19,56 +17,13 @@ from trade_research.reporting import (
     render_markdown,
     sanitize_report,
 )
-from trade_research.skills import ResearchSkill
 from trade_research.skills.parameters import (
+    PORTFOLIO_SKILLS,
     SKILL_PARAMETER_SCHEMAS,
-    MarkovMethodParameters,
-    TechnicalSkillParameters,
-    WorthBuyStocksParameters,
+    configure_skill,
 )
 
 JsonObject = dict[str, Any]
-
-
-def configure_skill(skill: ResearchSkill, params: Mapping[str, object]) -> ResearchSkill:
-    """Return a per-run copy of *skill* with validated *params* applied.
-
-    The frozen registry is never mutated — this returns a new dataclass
-    instance via ``dataclasses.replace()``.
-    """
-    if skill.name == "technical":
-        technical_params = TechnicalSkillParameters.model_validate(params)
-        return replace(skill, window=technical_params.window)  # type: ignore[type-var]
-
-    if skill.name == "worth-buy-stocks":
-        worth_buy_params = WorthBuyStocksParameters.model_validate(params)
-        return replace(  # type: ignore[type-var]
-            skill,
-            benchmark_symbols=worth_buy_params.as_tuple(),
-        )
-
-    if skill.name == "markov-method":
-        markov_params = MarkovMethodParameters.model_validate(params)
-        # A legacy symmetric threshold remains accepted. New clients can
-        # provide independent Bull/Bear boundaries.
-        bull_threshold = markov_params.bull_threshold
-        bear_threshold = markov_params.bear_threshold
-        if "bull_threshold" not in params and "bear_threshold" not in params:
-            bull_threshold = markov_params.threshold
-            bear_threshold = -markov_params.threshold
-        return replace(  # type: ignore[type-var]
-            skill,
-            window=markov_params.window,
-            threshold=markov_params.threshold,
-            bull_threshold=bull_threshold,
-            bear_threshold=bear_threshold,
-            min_train=markov_params.min_train,
-            run_walkforward=markov_params.run_walkforward,
-        )
-
-    if params:
-        raise ValueError(f"Skill '{skill.name}' does not accept parameters")
-    return skill
 
 
 class ResearchApplication:
@@ -89,12 +44,20 @@ class ResearchApplication:
 
     def describe_skill(self, name: str) -> JsonObject:
         skill = self.engine.skills.require(name)
+        missing_capabilities = self.engine.missing_service_capabilities(name)
         short_descriptions = {
+            "fundamental": (
+                "SEC-backed growth, profitability, cash-flow, leverage, "
+                "and valuation factors."
+            ),
+            "filings": "SEC filing activity and reporting-recency checks.",
             "worth-buy-stocks": "Trend, relative strength, and risk checks.",
             "markov-method": "Bull, Bear, and Sideways regime detection.",
             "technical-basic": "EMA, ADX, RSI, Bollinger, OBV, and volume confirmation.",
             "risk-analysis": "Historical volatility, tail loss, drawdown, and return shape.",
             "volatility-regime": "Realized-volatility percentile and expansion state.",
+            "correlation-analysis": "Aligned return correlations and diversification structure.",
+            "asset-allocation": "Long-only price-derived allocation scenarios.",
         }
         supported_asset_types = {
             "fundamental": ["equity"],
@@ -105,7 +68,14 @@ class ResearchApplication:
             "technical-basic": ["equity", "crypto"],
             "risk-analysis": ["equity", "crypto"],
             "volatility-regime": ["equity", "crypto"],
+            "correlation-analysis": ["equity", "crypto"],
+            "asset-allocation": ["equity", "crypto"],
         }
+        scope = (
+            "portfolio"
+            if skill.name in {"correlation-analysis", "asset-allocation"}
+            else "instrument"
+        )
         return {
             "name": skill.name,
             "description": short_descriptions.get(
@@ -115,12 +85,23 @@ class ResearchApplication:
             "immutable": True,
             "parameters": SKILL_PARAMETER_SCHEMAS.get(name),
             "supported_asset_types": supported_asset_types.get(name, ["equity"]),
+            "scope": scope,
+            "available": not missing_capabilities,
+            "missing_capabilities": [item.value for item in missing_capabilities],
         }
 
     async def run_skill(self, name: str, request: AnalysisRequest) -> JsonObject:
+        if (name in PORTFOLIO_SKILLS) != (request.scope == "portfolio"):
+            raise ValueError(
+                f"Skill '{name}' does not support {request.scope}-scoped requests"
+            )
         base_skill = self.engine.skills.require(name)
         params = request.skill_parameters.get(name, {})
-        configured = configure_skill(base_skill, params)
+        configured = configure_skill(
+            base_skill,
+            params,
+            portfolio_instruments=request.portfolio_instruments,
+        )
         result = await self.engine.run_configured_skill(configured, request)
         wrapped = ResearchReport(
             request_id=request.request_id,
@@ -142,7 +123,7 @@ class ResearchApplication:
 
         if self.queue is None:
             raise RuntimeError("a job queue is required to start durable research")
-        self.engine.skills.discover(request.analysts)
+        self.engine.configure_request(request)
         self.engine.validate_analysts(request.analysts)
         submission = self.queue.enqueue(request)
         return {"request_id": str(submission.request_id), "status": submission.status}

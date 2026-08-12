@@ -34,6 +34,8 @@ from trade_research.providers.registry import CapabilityName, CapabilityProvider
 from trade_research.reporting import sanitize_report
 from trade_research.settings import Settings
 from trade_research.skills import (
+    AssetAllocationSkill,
+    CorrelationAnalysisSkill,
     FilingsSkill,
     FundamentalSkill,
     MarkovMethodSkill,
@@ -46,6 +48,7 @@ from trade_research.skills import (
     VolatilityRegimeSkill,
     WorthBuyStocksSkill,
 )
+from trade_research.skills.parameters import PORTFOLIO_SKILLS, configure_skill
 
 
 class ResearchEngine:
@@ -85,6 +88,8 @@ class ResearchEngine:
                 TechnicalBasicSkill(),
                 RiskAnalysisSkill(),
                 VolatilityRegimeSkill(),
+                CorrelationAnalysisSkill(),
+                AssetAllocationSkill(),
             ),
         )
         selected_skills = skills or SkillRegistry(default_skills)
@@ -104,6 +109,17 @@ class ResearchEngine:
     def clock(self) -> Callable[[], datetime]:
         return self._clock
 
+    def missing_service_capabilities(self, skill_name: str) -> tuple[CapabilityName, ...]:
+        """Report capabilities that cannot be supplied inline with a request."""
+
+        skill = self._skills.require(skill_name)
+        request_capabilities = {CapabilityName.PRICES}
+        return tuple(
+            capability
+            for capability in skill.required_capabilities
+            if capability not in request_capabilities and not self._providers.has(capability)
+        )
+
     def validate_analysts(
         self,
         selected: Sequence[str],
@@ -120,8 +136,8 @@ class ResearchEngine:
 
         request = AnalysisRequest.model_validate(request.model_dump())
         providers = self._providers_for(request)
+        selected = self.configure_request(request)
         self.validate_analysts(request.analysts, providers)
-        selected = self._skills.discover(request.analysts)
         outcomes = await asyncio.gather(
             *(self._run_skill(skill, request, providers) for skill in selected),
             return_exceptions=True,
@@ -156,6 +172,22 @@ class ResearchEngine:
                 results=self._reviewer.review(results),
                 generated_at=self._clock(),
             )
+        )
+
+    def configure_request(self, request: AnalysisRequest) -> tuple[ResearchSkill, ...]:
+        """Validate request scope and return immutable per-run analyst instances."""
+        selected_portfolio_skills = set(request.analysts) & PORTFOLIO_SKILLS
+        if request.scope == "portfolio" and selected_portfolio_skills != set(request.analysts):
+            raise ValueError("portfolio requests may select only portfolio-scoped skills")
+        if request.scope == "instrument" and selected_portfolio_skills:
+            raise ValueError("instrument requests cannot select portfolio-scoped skills")
+        return tuple(
+            configure_skill(
+                skill,
+                request.skill_parameters.get(skill.name, {}),
+                portfolio_instruments=request.portfolio_instruments,
+            )
+            for skill in self._skills.discover(request.analysts)
         )
 
     async def _run_skill(
@@ -214,9 +246,7 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
 
     if settings.fundamental_provider in {"local_csv", "local_parquet"}:
         assert settings.fundamental_path is not None
-        providers["fundamentals"] = LocalCsvParquetFundamentalProvider(
-            settings.fundamental_path
-        )
+        providers["fundamentals"] = LocalCsvParquetFundamentalProvider(settings.fundamental_path)
     elif settings.fundamental_provider == "local_sql":
         assert settings.fundamental_path is not None
         providers["fundamentals"] = ReadOnlySqlFundamentalProvider(settings.fundamental_path)

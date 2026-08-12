@@ -59,15 +59,11 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
     )
 
     @api.exception_handler(RequestValidationError)
-    async def invalid_request(
-        _request: Request, _error: RequestValidationError
-    ) -> JSONResponse:
+    async def invalid_request(_request: Request, _error: RequestValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": "invalid request"})
 
     @api.exception_handler(ValidationError)
-    async def invalid_application_value(
-        _request: Request, _error: ValidationError
-    ) -> JSONResponse:
+    async def invalid_application_value(_request: Request, _error: ValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": "invalid request"})
 
     def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -99,9 +95,7 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
         except KeyError as error:
             raise HTTPException(status_code=404, detail="unknown skill") from error
         except ValueError as error:
-            raise HTTPException(
-                status_code=422, detail=str(error)
-            ) from error
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @api.post("/analyze", dependencies=authenticated)
     async def analyze(request: AnalysisRequest) -> dict[str, Any]:
@@ -183,9 +177,7 @@ def run_server(
 ) -> None:
     """Run Uvicorn with request access logging disabled."""
 
-    validated_host = validate_bind_host(
-        host, allow_container_wildcard=allow_container_wildcard
-    )
+    validated_host = validate_bind_host(host, allow_container_wildcard=allow_container_wildcard)
     uvicorn.run(
         create_app(application, bearer_token=bearer_token),
         host=validated_host,

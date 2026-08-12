@@ -234,6 +234,12 @@ def test_compose_defaults_are_non_public_and_share_named_storage() -> None:
         assert service["environment"]["TRADE_RESEARCH_CONFIG"] == (
             "${TRADE_RESEARCH_CONFIG:-/var/lib/trade-research-sources/config.json}"
         )
+        assert service["environment"]["TRADE_RESEARCH_SEC_USER_AGENT"] == (
+            "${TRADE_RESEARCH_SEC_USER_AGENT:-}"
+        )
+        assert service["environment"]["TRADE_RESEARCH_DATA_ROOT"] == (
+            "/var/lib/trade-research"
+        )
         assert service.get("privileged") is not True
         assert service.get("read_only") is True
         assert service.get("network_mode") != "host"

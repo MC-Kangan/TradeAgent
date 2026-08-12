@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from datetime import datetime
@@ -36,6 +37,7 @@ SUPPORTED_MARKETS = frozenset(
         "NASDAQ",
         "NYSE",
         "OTC",
+        "PORTFOLIO",
         "SIX",
         "SSE",
         "SZSE",
@@ -45,9 +47,7 @@ SUPPORTED_MARKETS = frozenset(
         "XETRA",
     }
 )
-ASIAN_MARKETS = frozenset(
-    {"ASX", "BSE", "HKEX", "JPX", "KRX", "NSE", "SET", "SGX", "TSE", "TWSE"}
-)
+ASIAN_MARKETS = frozenset({"ASX", "BSE", "HKEX", "JPX", "KRX", "NSE", "SET", "SGX", "TSE", "TWSE"})
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
 MAX_ANALYSTS = 16
@@ -98,9 +98,7 @@ class InstrumentId(DomainModel):
         if value != value.strip() or any(character.isspace() for character in value):
             raise ValueError("symbol must not contain whitespace")
         normalized = value.upper()
-        if _AWS_ACCESS_KEY_ID_PATTERN.fullmatch(
-            normalized
-        ) or _CREDENTIAL_PATTERN.fullmatch(value):
+        if _AWS_ACCESS_KEY_ID_PATTERN.fullmatch(normalized) or _CREDENTIAL_PATTERN.fullmatch(value):
             raise ValueError("symbol resembles a credential")
         if not _SYMBOL_PATTERN.fullmatch(normalized):
             raise ValueError("symbol has an invalid market-symbol format")
@@ -131,7 +129,9 @@ class InstrumentId(DomainModel):
         # allowed in symbols before they reach provider URL construction. Non-CRYPTO
         # markets forbid '/' and ':' which are meaningful in URL paths. Provider URL
         # builders additionally use quote(symbol, safe='') as defense-in-depth.
-        if self.market == "CRYPTO":
+        if self.market == "PORTFOLIO":
+            pattern = r"BASKET"
+        elif self.market == "CRYPTO":
             pattern = r"(?:[A-Z0-9]{2,15}(?:/|-)[A-Z0-9]{2,15}|[A-Z0-9]{2,20})"
         elif self.market == "INDEX":
             pattern = r"\^[A-Z0-9]{1,15}|[A-Z0-9][A-Z0-9.^=-]{0,15}"
@@ -170,10 +170,12 @@ class InlinePriceSeries(DomainModel):
 
 
 class AnalysisRequest(DomainModel):
-    """One request for selected analysts to research an instrument."""
+    """One bounded instrument or portfolio research request."""
 
     request_id: UUID = Field(default_factory=uuid4)
     instrument: InstrumentId
+    scope: Literal["instrument", "portfolio"] = "instrument"
+    portfolio_instruments: tuple[InstrumentId, ...] = Field(default=(), max_length=9)
     analysts: tuple[AnalystName, ...] = Field(
         default=("fundamental", "technical"), min_length=1, max_length=MAX_ANALYSTS
     )
@@ -196,10 +198,29 @@ class AnalysisRequest(DomainModel):
         return value
 
     @model_validator(mode="after")
-    def require_unique_price_series(self) -> Self:
+    def validate_scope_and_price_series(self) -> Self:
+        basket = InstrumentId(symbol="BASKET", market="PORTFOLIO")
+        if self.scope == "portfolio":
+            if self.instrument != basket:
+                raise ValueError("portfolio requests must use the PORTFOLIO:BASKET identity")
+            if not 2 <= len(self.portfolio_instruments) <= 9:
+                raise ValueError("portfolio requests require between 2 and 9 instruments")
+            if len(set(self.portfolio_instruments)) != len(self.portfolio_instruments):
+                raise ValueError("portfolio instruments must be unique")
+            if any(item.market == "PORTFOLIO" for item in self.portfolio_instruments):
+                raise ValueError("portfolio constituents must be tradable instruments")
+        elif self.instrument.market == "PORTFOLIO" or self.portfolio_instruments:
+            raise ValueError(
+                "instrument requests cannot contain a portfolio identity or constituents"
+            )
         instruments = tuple(item.instrument for item in self.price_series)
         if len(set(instruments)) != len(instruments):
             raise ValueError("price series instruments must be unique")
+        if self.scope == "portfolio" and self.price_series:
+            supplied = set(instruments)
+            required = set(self.portfolio_instruments)
+            if supplied != required:
+                raise ValueError("portfolio price series must exactly match portfolio instruments")
         return self
 
 
@@ -386,6 +407,62 @@ class MarkovPresentation(DomainModel):
     regime_points: tuple[ReportMarkovRegimePoint, ...] = Field(default=(), max_length=520)
 
 
+class PortfolioAssetStat(DomainModel):
+    """One asset's bounded statistics in a portfolio presentation."""
+
+    instrument: InstrumentId
+    annualized_volatility: float = Field(ge=0)
+    weight: float | None = Field(default=None, ge=0, le=1)
+    risk_contribution: float | None = None
+
+
+class CorrelationPresentation(DomainModel):
+    """Aligned multi-asset return correlation data for client charts."""
+
+    template: Literal["correlation-analysis-v1"] = "correlation-analysis-v1"
+    assets: tuple[PortfolioAssetStat, ...] = Field(min_length=2, max_length=9)
+    correlation_matrix: tuple[tuple[float, ...], ...] = Field(min_length=2, max_length=9)
+    aligned_return_count: int = Field(ge=2, le=519)
+    lookback: int = Field(ge=20, le=252)
+
+    @model_validator(mode="after")
+    def validate_square_matrix(self) -> Self:
+        size = len(self.assets)
+        if len(self.correlation_matrix) != size or any(
+            len(row) != size for row in self.correlation_matrix
+        ):
+            raise ValueError("correlation matrix dimensions must match assets")
+        return self
+
+
+class AssetAllocationPresentation(DomainModel):
+    """Long-only mathematical allocation scenario derived from price history."""
+
+    template: Literal["asset-allocation-v1"] = "asset-allocation-v1"
+    method: Literal["equal_weight", "inverse_volatility", "risk_parity", "max_diversification"]
+    assets: tuple[PortfolioAssetStat, ...] = Field(min_length=2, max_length=9)
+    correlation_matrix: tuple[tuple[float, ...], ...] = Field(min_length=2, max_length=9)
+    aligned_return_count: int = Field(ge=2, le=519)
+    lookback: int = Field(ge=20, le=252)
+    portfolio_volatility: float = Field(ge=0)
+    diversification_ratio: float = Field(ge=0)
+    effective_asset_count: float = Field(ge=1, le=9)
+
+    @model_validator(mode="after")
+    def validate_allocation(self) -> Self:
+        size = len(self.assets)
+        if len(self.correlation_matrix) != size or any(
+            len(row) != size for row in self.correlation_matrix
+        ):
+            raise ValueError("correlation matrix dimensions must match assets")
+        weights = [item.weight for item in self.assets]
+        if any(value is None for value in weights) or not math.isclose(
+            sum(value for value in weights if value is not None), 1.0, abs_tol=1e-8
+        ):
+            raise ValueError("allocation weights must be fully invested")
+        return self
+
+
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
@@ -402,7 +479,13 @@ class AnalystResult(DomainModel):
     citations: tuple[Citation, ...] = ()
     observations: tuple[Observation, ...] = ()
     evidence: tuple[Evidence, ...] = ()
-    presentation: WorthBuyPresentation | MarkovPresentation | None = None
+    presentation: (
+        WorthBuyPresentation
+        | MarkovPresentation
+        | CorrelationPresentation
+        | AssetAllocationPresentation
+        | None
+    ) = None
 
 
 class ResearchReport(DomainModel):

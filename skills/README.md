@@ -17,6 +17,8 @@ skills. The runtime cannot load Markdown as code.
 | [filings-analysis/](filings-analysis/SKILL.md) | `filings` | `FILINGS` |
 | [worth-buy-stocks/](worth-buy-stocks/SKILL.md) | `worth-buy-stocks` | `PRICES` |
 | [markov-method/](markov-method/SKILL.md) | `markov-method` | `PRICES` |
+| [correlation-analysis/](correlation-analysis/SKILL.md) | `correlation-analysis` | `PRICES` |
+| [asset-allocation/](asset-allocation/SKILL.md) | `asset-allocation` | `PRICES` |
 | [review/](review/SKILL.md) | built-in reviewer | (none — post-processing) |
 
 For plain-English report narration, see
@@ -30,7 +32,7 @@ See **[../docs/ADDING_A_SKILL.md](../docs/ADDING_A_SKILL.md)** for the complete 
 integration guide. Quick summary of the files involved:
 
 1. Write a SKILL.md and examples.md in a new subdirectory (documentation first)
-2. Implement a frozen dataclass in `src/trade_research/skills/core.py`
+2. Implement a frozen dataclass in `src/trade_research/skills/`
 3. Register the instance in `src/trade_research/engine.py:default_skills`
 4. Extend enums in `src/trade_research/domain/provenance.py` if needed
 5. Export from `src/trade_research/skills/__init__.py`

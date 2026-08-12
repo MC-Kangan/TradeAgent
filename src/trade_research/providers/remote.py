@@ -83,9 +83,7 @@ def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
         if instrument.market != "CRYPTO":
             raise ProviderConfigurationError("CCXT accepts only CRYPTO instruments")
         return instrument.symbol
-    suffixes = {"yahoo": _YAHOO_SUFFIXES, "bloomberg": _BLOOMBERG_SUFFIXES}.get(
-        normalized_provider
-    )
+    suffixes = {"yahoo": _YAHOO_SUFFIXES, "bloomberg": _BLOOMBERG_SUFFIXES}.get(normalized_provider)
     if suffixes is None:
         raise ProviderConfigurationError(f"unknown market-symbol provider '{provider}'")
     try:
@@ -109,9 +107,7 @@ def _http_get(url: str, headers: Mapping[str, str]) -> str:
     last_error: Exception | None = None
     for attempt in range(_RETRY_LIMIT):
         try:
-            response = httpx.get(
-                url, headers=merged, timeout=10.0, follow_redirects=True
-            )
+            response = httpx.get(url, headers=merged, timeout=10.0, follow_redirects=True)
             if response.status_code in _RETRYABLE_STATUSES:
                 raise ProviderConfigurationError(
                     f"remote provider returned HTTP {response.status_code}"
@@ -122,18 +118,14 @@ def _http_get(url: str, headers: Mapping[str, str]) -> str:
             try:
                 return response.content.decode("utf-8")
             except UnicodeDecodeError as error:
-                raise ProviderContractError(
-                    "remote provider returned invalid UTF-8"
-                ) from error
+                raise ProviderContractError("remote provider returned invalid UTF-8") from error
         except (httpx.TimeoutException, httpx.ConnectError) as error:
             last_error = error
         except ProviderConfigurationError:
             raise
         if attempt < _RETRY_LIMIT - 1:
             time.sleep(_RETRY_BACKOFF_BASE * (2**attempt))
-    raise ProviderConfigurationError(
-        "remote provider request failed after retries"
-    ) from last_error
+    raise ProviderConfigurationError("remote provider request failed after retries") from last_error
 
 
 def _bounded_payload(payload: str) -> str:
@@ -328,11 +320,7 @@ class BloombergPriceProvider:
 
     def _ensure_session(self) -> tuple[Any, Any, ModuleType]:
         with self._lock:
-            if (
-                self._session is not None
-                and self._service is not None
-                and self._blpapi is not None
-            ):
+            if self._session is not None and self._service is not None and self._blpapi is not None:
                 return self._session, self._service, self._blpapi
             try:
                 import blpapi
@@ -345,9 +333,7 @@ class BloombergPriceProvider:
             options.setServerPort(self._port)
             session = blpapi.Session(options)
             if not session.start():
-                raise ProviderConfigurationError(
-                    "Bloomberg BPIPE session failed to start"
-                )
+                raise ProviderConfigurationError("Bloomberg BPIPE session failed to start")
             if not session.openService("//blp/refdata"):
                 session.stop()
                 raise ProviderConfigurationError(

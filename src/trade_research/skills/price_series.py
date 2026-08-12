@@ -247,9 +247,7 @@ class RiskAnalysisSkill:
 
         annualization = _annualization_days(instrument)
         annualized_vol = statistics.stdev(returns) * math.sqrt(annualization)
-        downside_deviation = math.sqrt(
-            statistics.fmean(min(value, 0.0) ** 2 for value in returns)
-        )
+        downside_deviation = math.sqrt(statistics.fmean(min(value, 0.0) ** 2 for value in returns))
         downside_vol = downside_deviation * math.sqrt(annualization)
         lower_tail = _quantile(returns, 0.05)
         var95 = max(0.0, -lower_tail)

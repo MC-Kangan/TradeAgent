@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from trade_research.domain import AnalysisRequest, InstrumentId
 
@@ -19,14 +20,27 @@ class PersistedAnalysisRequest(BaseModel):
     request_id: UUID
     instrument: InstrumentId
     analysts: tuple[str, ...]
+    scope: Literal["instrument", "portfolio"] = "instrument"
+    portfolio_instruments: tuple[InstrumentId, ...] = ()
+    skill_parameters: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 
     @classmethod
     def from_request(cls, request: AnalysisRequest) -> PersistedAnalysisRequest:
         validated = AnalysisRequest.model_validate(request.model_dump())
+        safe_parameters: dict[str, dict[str, JsonValue]] = {}
+        if validated.scope == "portfolio":
+            for name in validated.analysts:
+                supplied = validated.skill_parameters.get(name, {})
+                safe_parameters[name] = {
+                    key: value for key, value in supplied.items() if key in {"lookback", "method"}
+                }
         return cls(
             request_id=validated.request_id,
             instrument=validated.instrument,
             analysts=validated.analysts,
+            scope=validated.scope,
+            portfolio_instruments=validated.portfolio_instruments,
+            skill_parameters=safe_parameters,
         )
 
     def to_request(self) -> AnalysisRequest:
@@ -34,6 +48,9 @@ class PersistedAnalysisRequest(BaseModel):
             request_id=self.request_id,
             instrument=self.instrument,
             analysts=self.analysts,
+            scope=self.scope,
+            portfolio_instruments=self.portfolio_instruments,
+            skill_parameters=self.skill_parameters,
         )
 
 
@@ -62,7 +79,9 @@ class RunStore:
 
     def save_request(self, request: AnalysisRequest) -> None:
         """Store the fixed safe DTO, never free-form metadata or positions."""
-        serialized = PersistedAnalysisRequest.from_request(request).model_dump_json()
+        serialized = PersistedAnalysisRequest.from_request(request).model_dump_json(
+            exclude_defaults=True
+        )
         with self._connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO runs (request_id, request_json) VALUES (?, ?)",

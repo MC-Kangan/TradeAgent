@@ -133,6 +133,26 @@ also reports whether realized volatility is expanding, stable, or contracting.
 
 This skill is non-directional and supports equities and spot crypto.
 
+### `correlation-analysis`
+
+Aligns 2–9 equity and/or crypto daily-return series and returns a bounded
+correlation matrix, average pairwise correlation, and per-asset annualized
+volatility. Mixed portfolios use the common trading calendar without filling
+stock weekends as zero returns.
+
+### `asset-allocation`
+
+Builds read-only, long-only allocation scenarios using equal weight, inverse
+volatility, risk parity, or maximum diversification. It reports weights, risk
+contributions, portfolio volatility, diversification ratio, and effective asset
+count. The price-only methodology is adapted from the allocation frameworks
+documented by [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading/blob/main/agent/src/skills/asset-allocation/SKILL.md).
+
+Return-forecast mean variance, Black–Litterman, and turnover-aware optimization
+remain out of scope until explicit forecast/view, current-weight, and cost inputs
+are available. Outputs are mathematical scenarios, never orders or personalized
+target allocations.
+
 > **Detailed specifications:** See `skills/*/SKILL.md` for full algorithm descriptions,
 > input schemas, edge cases, and examples.
 
@@ -145,10 +165,13 @@ while TradeAgent derives calendar conventions from the market (for example,
 `CRYPTO`). Inline sources currently include Yahoo, Tencent, Mootdx, and
 Coinbase. Coinbase volume remains fractional.
 
-The HTTP `/skills` catalog exposes `supported_asset_types`. Price-series
+The HTTP `/skills` catalog exposes `supported_asset_types` and `scope`. Price-series
 technical, Markov, risk, and volatility-regime skills support both
 `equity` and `crypto`; fundamentals, filings, and `worth-buy-stocks`
 remain equity-only.
+Portfolio-scoped correlation and allocation skills accept 2–9 bounded inline
+series in the same authenticated `/analyze` request and never receive broker
+account identifiers or raw positions.
 
 ---
 

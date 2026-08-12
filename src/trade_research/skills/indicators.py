@@ -83,9 +83,7 @@ def sanitize_text(text: str) -> str:
 def summary(missing: Sequence[str]) -> str:
     """Build a standard AnalystResult summary from a missing-metric list."""
     if missing:
-        return sanitize_text(
-            f"partial data: missing {', '.join(dict.fromkeys(missing))}"
-        )
+        return sanitize_text(f"partial data: missing {', '.join(dict.fromkeys(missing))}")
     return "complete data: all required inputs available"
 
 
@@ -687,13 +685,9 @@ def to_weekly(bars: Sequence[PricePoint]) -> list[dict[str, object]]:
         else:
             w = weeks[key]
             # open stays as first bar's open (already set)
-            if bar.high is not None and (
-                w["high"] is None or bar.high > cast(float, w["high"])
-            ):
+            if bar.high is not None and (w["high"] is None or bar.high > cast(float, w["high"])):
                 w["high"] = bar.high
-            if bar.low is not None and (
-                w["low"] is None or bar.low < cast(float, w["low"])
-            ):
+            if bar.low is not None and (w["low"] is None or bar.low < cast(float, w["low"])):
                 w["low"] = bar.low
             w["close"] = bar.close  # last bar's close
             if bar.volume is not None:

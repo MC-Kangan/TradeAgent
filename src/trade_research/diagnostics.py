@@ -69,16 +69,15 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
         },
         "skills": {
             "technical_analysis": (
-                "ready" if prices_available else
-                "unavailable — price provider not configured"
+                "ready" if prices_available else "unavailable — price provider not configured"
             ),
             "fundamental_analysis": (
-                "ready" if fundamentals_available else
-                "unavailable — fundamental provider not configured"
+                "ready"
+                if fundamentals_available
+                else "unavailable — fundamental provider not configured"
             ),
             "filings_analysis": (
-                "ready" if filings_available else
-                "unavailable — SEC user agent not configured"
+                "ready" if filings_available else "unavailable — SEC user agent not configured"
             ),
             "combined_analysis": (
                 "ready"
@@ -86,12 +85,16 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
                 else "unavailable"
             ),
             "worth_buy_stocks_analysis": (
-                "ready" if prices_available else
-                "unavailable — price provider not configured"
+                "ready" if prices_available else "unavailable — price provider not configured"
             ),
             "markov_method_analysis": (
-                "ready" if prices_available else
-                "unavailable — price provider not configured"
+                "ready" if prices_available else "unavailable — price provider not configured"
+            ),
+            "correlation_analysis": (
+                "ready" if prices_available else "unavailable — price provider not configured"
+            ),
+            "asset_allocation_analysis": (
+                "ready" if prices_available else "unavailable — price provider not configured"
             ),
         },
         "llm": {

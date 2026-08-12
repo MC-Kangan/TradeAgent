@@ -121,13 +121,33 @@ def run_skill(
     name: str,
     symbol: str,
     market: Annotated[str, typer.Option("--market")] = "US",
+    portfolio_instrument: Annotated[
+        list[str] | None, typer.Option("--portfolio-instrument")
+    ] = None,
+    method: Annotated[str, typer.Option("--method")] = "risk_parity",
+    lookback: Annotated[int, typer.Option("--lookback", min=20, max=252)] = 120,
 ) -> None:
     try:
+        constituents = tuple(_parse_instrument(value) for value in (portfolio_instrument or []))
+        is_portfolio = bool(constituents)
         request = AnalysisRequest(
-            instrument=InstrumentId(symbol=symbol, market=market),
+            instrument=(
+                InstrumentId(symbol="BASKET", market="PORTFOLIO")
+                if is_portfolio
+                else InstrumentId(symbol=symbol, market=market)
+            ),
+            scope="portfolio" if is_portfolio else "instrument",
+            portfolio_instruments=constituents,
             analysts=(name,),
+            skill_parameters=(
+                {name: {"method": method, "lookback": lookback}}
+                if name == "asset-allocation"
+                else {name: {"lookback": lookback}}
+                if name == "correlation-analysis"
+                else {}
+            ),
         )
-    except ValidationError:
+    except (ValidationError, ValueError):
         raise typer.BadParameter("invalid analysis request") from None
     try:
         result = _run_async(_get_application_or_error().run_skill(name, request))
@@ -138,6 +158,13 @@ def run_skill(
     _write_json(result)
 
 
+def _parse_instrument(value: str) -> InstrumentId:
+    market, separator, symbol = value.partition(":")
+    if not separator:
+        raise ValueError("portfolio instruments must use MARKET:SYMBOL")
+    return InstrumentId(symbol=symbol, market=market)
+
+
 @app.command("research")
 def research(
     symbol: str,
@@ -146,9 +173,7 @@ def research(
     request_id: Annotated[UUID | None, typer.Option("--request-id")] = None,
 ) -> None:
     try:
-        kwargs: dict[str, Any] = {
-            "instrument": InstrumentId(symbol=symbol, market=market)
-        }
+        kwargs: dict[str, Any] = {"instrument": InstrumentId(symbol=symbol, market=market)}
         if analyst:
             kwargs["analysts"] = tuple(analyst)
         if request_id is not None:
@@ -190,9 +215,7 @@ def serve(
         os.environ.get("TRADE_RESEARCH_CONTAINER_INTERNAL_BIND") == "compose-internal-v1"
     )
     try:
-        validated_host = validate_bind_host(
-            host, allow_container_wildcard=internal_container_bind
-        )
+        validated_host = validate_bind_host(host, allow_container_wildcard=internal_container_bind)
     except ValueError:
         raise typer.BadParameter("host must be a private IP literal") from None
     token = _read_secret("TRADE_RESEARCH_API_TOKEN")

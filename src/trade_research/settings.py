@@ -11,9 +11,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_va
 
 from trade_research.providers.contracts import ProviderConfigurationError
 
-PriceProviderName = Literal[
-    "local_csv", "local_parquet", "local_sql", "yahoo", "ccxt", "bloomberg"
-]
+PriceProviderName = Literal["local_csv", "local_parquet", "local_sql", "yahoo", "ccxt", "bloomberg"]
 FundamentalProviderName = Literal["local_csv", "local_parquet", "local_sql", "sec_company_facts"]
 MAX_CONFIG_BYTES: Final = 64 * 1024
 
@@ -109,9 +107,7 @@ class Settings(BaseModel):
         try:
             return cls.model_validate(values)
         except ValidationError as error:
-            raise ProviderConfigurationError(
-                "unknown setting or invalid configuration"
-            ) from error
+            raise ProviderConfigurationError("unknown setting or invalid configuration") from error
 
 
 def _validate_local_path(provider: str, path: Path) -> None:

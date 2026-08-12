@@ -41,6 +41,12 @@ the CLI, MCP server, and HTTP API expose them automatically through
 `SkillRegistry.names`; you never need to add new transport tools, routes, or
 endpoints.
 
+Portfolio-scoped skills use the same registry and report schema, but requests
+must set `scope="portfolio"`, use the canonical `PORTFOLIO:BASKET` identity, and
+provide 2–9 typed `portfolio_instruments`. Constituents belong to the request
+contract, never comma-encoded skill parameters. Verify CLI, immediate HTTP/MCP,
+and queued round trips for every portfolio-scoped skill.
+
 ## Checklist (9 files, ~3 new)
 
 ### Step 1: Define new metrics and algorithms

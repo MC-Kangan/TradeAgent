@@ -234,6 +234,31 @@ def test_sec_company_facts_derives_only_registry_valid_free_cash_flow(tmp_path: 
     assert str(fcf.provenance["reference"]).startswith("sha256:")
 
 
+def test_sec_cik_resolver_uses_stale_valid_cache_when_refresh_fails(tmp_path: Path) -> None:
+    (tmp_path / "sec_cik_map.json").write_text(
+        json.dumps(
+            {
+                "retrieved_at": "2020-01-01T00:00:00+00:00",
+                "content_hash": "sha256:cached",
+                "mapping": {"ACME": "0000000001"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_refresh(_url, _headers):
+        raise ProviderConfigurationError("SEC unavailable")
+
+    resolver = CikResolver(
+        "research@example.test",
+        tmp_path,
+        http_get=fail_refresh,
+    )
+
+    assert resolver.resolve("ACME") == "0000000001"
+    assert resolver.mapping_hash == "sha256:cached"
+
+
 @pytest.mark.parametrize(
     ("market", "expected"),
     [

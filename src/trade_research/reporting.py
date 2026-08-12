@@ -114,8 +114,7 @@ def _project_result(result: AnalystResult, instrument: InstrumentId) -> AnalystR
         analyst=result.analyst,
         instrument=instrument,
         summary=(
-            f"{result.analyst} analysis {status.value} with "
-            f"{len(observations)} numeric factors"
+            f"{result.analyst} analysis {status.value} with {len(observations)} numeric factors"
         ),
         status=status,
         missing_metrics=result.missing_metrics,

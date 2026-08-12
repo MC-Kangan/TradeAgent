@@ -120,7 +120,10 @@ class JobQueue:
                     claimed_at, claim_token, generation
                 ) VALUES (?, ?, 'queued', NULL, NULL, NULL, NULL, 0)
                 """,
-                (str(persisted.request_id), persisted.model_dump_json()),
+                (
+                    str(persisted.request_id),
+                    persisted.model_dump_json(exclude_defaults=True),
+                ),
             )
         return QueueSubmission(request_id=persisted.request_id, status="queued")
 

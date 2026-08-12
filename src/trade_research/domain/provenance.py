@@ -131,6 +131,11 @@ class MetricKind(StrEnum):
     VOLATILITY_REGIME_PERCENTILE = "volatility_regime_percentile"
     VOLATILITY_REGIME_CODE = "volatility_regime_code"
     VOLATILITY_TREND = "volatility_trend"
+    AVERAGE_CORRELATION = "average_correlation"
+    MAXIMUM_CORRELATION = "maximum_correlation"
+    PORTFOLIO_VOLATILITY = "portfolio_volatility"
+    DIVERSIFICATION_RATIO = "diversification_ratio"
+    EFFECTIVE_ASSET_COUNT = "effective_asset_count"
 
 
 class VendorField(StrEnum):
@@ -207,6 +212,8 @@ class DerivedAlgorithm(StrEnum):
     TECHNICAL_BASIC_COMPOSITE = "technical_basic_composite"
     HISTORICAL_RISK_STATISTICS = "historical_risk_statistics"
     VOLATILITY_REGIME_PERCENTILE = "volatility_regime_percentile"
+    CORRELATION_MATRIX = "correlation_matrix"
+    ASSET_ALLOCATION = "asset_allocation"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
@@ -214,9 +221,7 @@ _CURRENCY_PATTERN = re.compile(r"[A-Z]{3}")
 _REFERENCE_KEYS = frozenset(
     {"reference", "period_ref", "prior_period_ref", "snapshot_ref", "series_ref"}
 )
-_TIMESTAMP_KEYS = frozenset(
-    {"observed_at", "timestamp", "valuation_as_of", "start_at", "end_at"}
-)
+_TIMESTAMP_KEYS = frozenset({"observed_at", "timestamp", "valuation_as_of", "start_at", "end_at"})
 _CLOSED_SCALAR_KEYS = frozenset(
     {
         "provider_kind",

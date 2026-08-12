@@ -242,9 +242,7 @@ def _sql_rows(
                 f"SELECT {', '.join(selected)} FROM {table} "
                 "WHERE symbol = ? ORDER BY observed_at ASC LIMIT ?"
             )
-            raw_rows = connection.execute(
-                query, (instrument.symbol, max_rows + 1)
-            ).fetchall()
+            raw_rows = connection.execute(query, (instrument.symbol, max_rows + 1)).fetchall()
     if len(raw_rows) > max_rows:
         raise ProviderContractError("local SQL provider exceeded the row limit")
     return columns, tuple(dict(zip(selected, row, strict=True)) for row in raw_rows)

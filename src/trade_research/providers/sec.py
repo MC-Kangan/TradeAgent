@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -72,18 +74,31 @@ class CikResolver:
     def _load_mapping(self) -> tuple[dict[str, str], str]:
         if self._mapping is not None and self._mapping_hash is not None:
             return self._mapping, self._mapping_hash
+        stale: tuple[dict[str, str], str] | None = None
         if self._cache_path.is_file():
             try:
                 cached = json.loads(self._cache_path.read_text(encoding="utf-8"))
                 retrieved_at = datetime.fromisoformat(cached["retrieved_at"])
+                mapping = {
+                    str(key): str(value)
+                    for key, value in cached["mapping"].items()
+                }
+                content_hash = str(cached["content_hash"])
                 age = datetime.now(tz=UTC) - retrieved_at
                 if age <= self._max_cache_age:
-                    self._mapping = {k: v for k, v in cached["mapping"].items()}
-                    self._mapping_hash = cached["content_hash"]
+                    self._mapping = mapping
+                    self._mapping_hash = content_hash
                     return self._mapping, self._mapping_hash
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                stale = (mapping, content_hash)
+            except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 pass
-        return self._download_mapping()
+        try:
+            return self._download_mapping()
+        except (ProviderConfigurationError, ProviderContractError):
+            if stale is None:
+                raise
+            self._mapping, self._mapping_hash = stale
+            return stale
 
     def _download_mapping(self) -> tuple[dict[str, str], str]:
         text = self._http_get(
@@ -109,18 +124,32 @@ class CikResolver:
             mapping[ticker.upper().strip()] = cik
         content_hash = f"sha256:{hashlib.sha256(text.encode()).hexdigest()}"
         retrieved_at = datetime.now(tz=UTC).isoformat()
-        self._cache_path.write_text(
-            json.dumps(
-                {
-                    "retrieved_at": retrieved_at,
-                    "content_hash": content_hash,
-                    "mapping": mapping,
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            encoding="utf-8",
+        serialized = json.dumps(
+            {
+                "retrieved_at": retrieved_at,
+                "content_hash": content_hash,
+                "mapping": mapping,
+            },
+            indent=2,
+            sort_keys=True,
         )
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                dir=self._cache_dir,
+                encoding="utf-8",
+                prefix=".sec_cik_map.",
+                delete=False,
+            ) as handle:
+                temporary_path = Path(handle.name)
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self._cache_path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
         self._mapping = mapping
         self._mapping_hash = content_hash
         return mapping, content_hash
@@ -365,8 +394,7 @@ def _select_periods(
         (
             d
             for d in annual
-            if int(cast("int", d["fy"])) == current_fy - 1
-            and d.get("fp") == current.get("fp")
+            if int(cast("int", d["fy"])) == current_fy - 1 and d.get("fp") == current.get("fp")
         ),
         None,
     )
@@ -397,10 +425,7 @@ def _build_statement_observation(
     period_end = str(end_date)[:10] if isinstance(end_date, str) else ""
     period_type = "annual" if fp in ("FY", "Q4") else "quarterly"
     period_ref = (
-        "sha256:"
-        + hashlib.sha256(
-            f"{concept}:{fy}:{fp}:{period_end}".encode()
-        ).hexdigest()
+        "sha256:" + hashlib.sha256(f"{concept}:{fy}:{fp}:{period_end}".encode()).hexdigest()
     )
     accession = str(data.get("accn", "")) if data.get("accn") else ""
     reference = (

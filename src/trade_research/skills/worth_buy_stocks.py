@@ -151,9 +151,7 @@ class WorthBuyStocksSkill:
     # analyze()
     # ------------------------------------------------------------------
 
-    def analyze(
-        self, instrument: InstrumentId, providers: ProviderRegistry
-    ) -> AnalystResult:
+    def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
         missing: list[str] = []
         all_factors: list[Observation] = []
 
@@ -193,45 +191,82 @@ class WorthBuyStocksSkill:
 
         # -- 3. Layer 1: ALPHA Weighted score -------------------------
         alpha_factors, alpha_composite = _layer1_alpha_weighted(
-            instrument, closes, highs, lows, vols,
-            target_prices, benchmark_data,
-            self._momentum_weight, self._relative_strength_weight,
-            self._efficiency_weight, has_benchmarks,
+            instrument,
+            closes,
+            highs,
+            lows,
+            vols,
+            target_prices,
+            benchmark_data,
+            self._momentum_weight,
+            self._relative_strength_weight,
+            self._efficiency_weight,
+            has_benchmarks,
         )
         all_factors.extend(alpha_factors)
 
         # -- 4. Layer 2: Risk Veto ------------------------------------
         risk_factors, risk_score, risk_flags = _layer2_risk_veto(
-            instrument, target_prices, closes, highs, lows, vols,
-            self._ma_short, self._ma_long, self._atr_n,
+            instrument,
+            target_prices,
+            closes,
+            highs,
+            lows,
+            vols,
+            self._ma_short,
+            self._ma_long,
+            self._atr_n,
         )
         all_factors.extend(risk_factors)
 
         # -- 5. Layer 3: Technical Confirmation -----------------------
         tech_factors, tech_blocks = _layer3_technical_confirmation(
-            instrument, target_prices, closes, highs, lows, vols,
-            self._kdj_n, self._kdj_k, self._kdj_d, self._adx_n, self._atr_n,
+            instrument,
+            target_prices,
+            closes,
+            highs,
+            lows,
+            vols,
+            self._kdj_n,
+            self._kdj_k,
+            self._kdj_d,
+            self._adx_n,
+            self._atr_n,
         )
         all_factors.extend(tech_factors)
 
         # -- 6. Layer 4: Entry Timing ----------------------------------
         entry_factors = _layer4_entry_timing(
-            instrument, target_prices, closes, highs, lows, vols,
-            self._atr_n, self._ma_short,
+            instrument,
+            target_prices,
+            closes,
+            highs,
+            lows,
+            vols,
+            self._atr_n,
+            self._ma_short,
         )
         all_factors.extend(entry_factors)
 
         # -- 7. Determine verdict --------------------------------------
         verdict, verdict_reason = _determine_verdict(
-            alpha_composite, risk_score, tech_blocks, len(target_prices),
+            alpha_composite,
+            risk_score,
+            tech_blocks,
+            len(target_prices),
             self._min_bars_full,
         )
 
         # -- 8. Build AnalystResult ------------------------------------
         observed_at = max(p.observed_at for p in target_prices)
         # Add verdict as an observation
-        verdict_codes = {_VERDICT_BUY: 5, _VERDICT_WATCH: 3, _VERDICT_NO: 1,
-                         _VERDICT_REDUCE_RISK: 2, _VERDICT_CANNOT_SCORE: 0}
+        verdict_codes = {
+            _VERDICT_BUY: 5,
+            _VERDICT_WATCH: 3,
+            _VERDICT_NO: 1,
+            _VERDICT_REDUCE_RISK: 2,
+            _VERDICT_CANNOT_SCORE: 0,
+        }
         verdict_factor = Observation(
             instrument=instrument,
             metric=MetricKind.WORTH_BUY_VERDICT,
@@ -335,11 +370,17 @@ def _layer1_alpha_weighted(
     if mom is not None:
         mom_score = _normalize_momentum(mom)
         score_parts["momentum"] = mom_score * momentum_weight
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.WORTH_BUY_MOMENTUM_SCORE, mom_score,
-            observed_at, DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED, "momentum_12_1",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.WORTH_BUY_MOMENTUM_SCORE,
+                mom_score,
+                observed_at,
+                DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED,
+                "momentum_12_1",
+                prices=prices,
+            )
+        )
     else:
         score_parts["momentum"] = 0.0
 
@@ -351,12 +392,17 @@ def _layer1_alpha_weighted(
             rs = _relative_strength_score(closes, bm_closes)
             if rs is not None:
                 rs_scores.append(rs)
-                factors.append(_build_scoring_obs(
-                    instrument, MetricKind.WORTH_BUY_RELATIVE_STRENGTH, rs,
-                    observed_at, DerivedAlgorithm.RELATIVE_STRENGTH,
-                    f"vs_{bm_sym.lower()}",
-                    prices=prices,
-                ))
+                factors.append(
+                    _build_scoring_obs(
+                        instrument,
+                        MetricKind.WORTH_BUY_RELATIVE_STRENGTH,
+                        rs,
+                        observed_at,
+                        DerivedAlgorithm.RELATIVE_STRENGTH,
+                        f"vs_{bm_sym.lower()}",
+                        prices=prices,
+                    )
+                )
         if rs_scores:
             score_parts["relative_strength"] = statistics_mean(rs_scores) * rs_weight
         else:
@@ -373,22 +419,33 @@ def _layer1_alpha_weighted(
     er = efficiency_ratio(closes, 30)
     if er is not None:
         score_parts["efficiency"] = er * 100 * efficiency_weight
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.WORTH_BUY_EFFICIENCY_SCORE, er * 100,
-            observed_at, DerivedAlgorithm.KAUFMAN_EFFICIENCY, "30_day",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.WORTH_BUY_EFFICIENCY_SCORE,
+                er * 100,
+                observed_at,
+                DerivedAlgorithm.KAUFMAN_EFFICIENCY,
+                "30_day",
+                prices=prices,
+            )
+        )
     else:
         score_parts["efficiency"] = 0.0
 
     # Composite
     composite = round(sum(score_parts.values()), 2)
-    factors.append(_build_scoring_obs(
-        instrument, MetricKind.WORTH_BUY_COMPOSITE, composite,
-        observed_at, DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED,
-        "composite_0_100",
-        prices=prices,
-    ))
+    factors.append(
+        _build_scoring_obs(
+            instrument,
+            MetricKind.WORTH_BUY_COMPOSITE,
+            composite,
+            observed_at,
+            DerivedAlgorithm.WORTH_BUY_ALPHA_WEIGHTED,
+            "composite_0_100",
+            prices=prices,
+        )
+    )
 
     return factors, composite
 
@@ -404,9 +461,7 @@ def _normalize_momentum(mom: float) -> float:
     return (clamped + 0.5) * 100
 
 
-def _relative_strength_score(
-    target_closes: list[float], bench_closes: list[float]
-) -> float | None:
+def _relative_strength_score(target_closes: list[float], bench_closes: list[float]) -> float | None:
     """Score relative strength over 1m, 3m, 6m windows. Returns 0-100 or None."""
     windows = {"1m": 21, "3m": 63, "6m": 126}
     diffs: list[float] = []
@@ -439,8 +494,10 @@ def _benchmark_instrument(label: str) -> InstrumentId:
     if normalized in _BENCHMARK_ALIASES:
         return _BENCHMARK_ALIASES[normalized]
     if normalized.isdigit() and len(normalized) == 6:
-        market = "SSE" if normalized.startswith(("5", "6", "9")) else (
-            "BJSE" if normalized.startswith(("4", "8")) else "SZSE"
+        market = (
+            "SSE"
+            if normalized.startswith(("5", "6", "9"))
+            else ("BJSE" if normalized.startswith(("4", "8")) else "SZSE")
         )
         return InstrumentId(symbol=normalized, market=market)
     if "." in normalized:
@@ -475,11 +532,17 @@ def _layer2_risk_veto(
     ma_long_val = sma(closes, ma_long)
 
     if ma_short_val is not None and ma_long_val is not None:
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.SIMPLE_MOVING_AVERAGE, ma_short_val,
-            observed_at, DerivedAlgorithm.SIMPLE_MOVING_AVERAGE, f"{ma_short}_observations",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.SIMPLE_MOVING_AVERAGE,
+                ma_short_val,
+                observed_at,
+                DerivedAlgorithm.SIMPLE_MOVING_AVERAGE,
+                f"{ma_short}_observations",
+                prices=prices,
+            )
+        )
         if closes[-1] < ma_short_val < ma_long_val:
             risk_flags.append("bearish_ma_alignment")
             risk_score += 30
@@ -492,11 +555,17 @@ def _layer2_risk_veto(
     # Max drawdown
     dd = max_drawdown(closes, 252)
     if dd is not None:
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.MAX_DRAWDOWN, dd * 100,
-            observed_at, DerivedAlgorithm.EFFICIENCY_RATIO_CALC, "252_day",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.MAX_DRAWDOWN,
+                dd * 100,
+                observed_at,
+                DerivedAlgorithm.EFFICIENCY_RATIO_CALC,
+                "252_day",
+                prices=prices,
+            )
+        )
         if dd < -0.20:
             risk_flags.append("severe_drawdown")
             risk_score += 25
@@ -510,21 +579,31 @@ def _layer2_risk_veto(
         w_closes = [cast(float, w["close"]) for w in weekly]
         bearish_check = weekly_bearish_check(w_closes)
         if bearish_check.get("bearish") is True:
-            factors.append(_build_scoring_obs(
-                instrument, MetricKind.WEEKLY_BEARISH_ALIGNMENT, 1.0,
-                observed_at, DerivedAlgorithm.WORTH_BUY_RISK_VETO,
-                "weekly_ma_bearish",
-                prices=prices,
-            ))
+            factors.append(
+                _build_scoring_obs(
+                    instrument,
+                    MetricKind.WEEKLY_BEARISH_ALIGNMENT,
+                    1.0,
+                    observed_at,
+                    DerivedAlgorithm.WORTH_BUY_RISK_VETO,
+                    "weekly_ma_bearish",
+                    prices=prices,
+                )
+            )
             risk_flags.append("weekly_bearish")
             risk_score += 20
         else:
-            factors.append(_build_scoring_obs(
-                instrument, MetricKind.WEEKLY_BEARISH_ALIGNMENT, 0.0,
-                observed_at, DerivedAlgorithm.WORTH_BUY_RISK_VETO,
-                "weekly_ma_ok",
-                prices=prices,
-            ))
+            factors.append(
+                _build_scoring_obs(
+                    instrument,
+                    MetricKind.WEEKLY_BEARISH_ALIGNMENT,
+                    0.0,
+                    observed_at,
+                    DerivedAlgorithm.WORTH_BUY_RISK_VETO,
+                    "weekly_ma_ok",
+                    prices=prices,
+                )
+            )
 
     # Annualized volatility
     vol = annualized_volatility(closes, 63)
@@ -532,12 +611,17 @@ def _layer2_risk_veto(
         risk_flags.append("high_volatility")
         risk_score += 10
 
-    factors.append(_build_scoring_obs(
-        instrument, MetricKind.WORTH_BUY_RISK_VETO, min(100.0, risk_score),
-        observed_at, DerivedAlgorithm.WORTH_BUY_RISK_VETO,
-        f"flags={','.join(risk_flags) if risk_flags else 'none'}",
-        prices=prices,
-    ))
+    factors.append(
+        _build_scoring_obs(
+            instrument,
+            MetricKind.WORTH_BUY_RISK_VETO,
+            min(100.0, risk_score),
+            observed_at,
+            DerivedAlgorithm.WORTH_BUY_RISK_VETO,
+            f"flags={','.join(risk_flags) if risk_flags else 'none'}",
+            prices=prices,
+        )
+    )
 
     return factors, min(100.0, risk_score), risk_flags
 
@@ -585,11 +669,17 @@ def _layer3_technical_confirmation(
     # RSI(14)
     if len(closes) >= 15:
         rsi14 = rsi(closes, 14)
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.RELATIVE_STRENGTH_INDEX_14, rsi14,
-            observed_at, DerivedAlgorithm.WILDER_RSI, "14_observations",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.RELATIVE_STRENGTH_INDEX_14,
+                rsi14,
+                observed_at,
+                DerivedAlgorithm.WILDER_RSI,
+                "14_observations",
+                prices=prices,
+            )
+        )
         if rsi14 > 70:
             blocks.append("rsi_overbought")
         elif rsi14 < 30:
@@ -602,23 +692,41 @@ def _layer3_technical_confirmation(
         d_val = kdj_result["D"]
         j_val = kdj_result["J"]
         if k_val is not None:
-            factors.append(_build_scoring_obs(
-                instrument, MetricKind.KDJ_K, k_val,
-                observed_at, DerivedAlgorithm.KDJ_CALCULATION, f"{kdj_n}_{kdj_k}_{kdj_d}",
-                prices=prices,
-            ))
+            factors.append(
+                _build_scoring_obs(
+                    instrument,
+                    MetricKind.KDJ_K,
+                    k_val,
+                    observed_at,
+                    DerivedAlgorithm.KDJ_CALCULATION,
+                    f"{kdj_n}_{kdj_k}_{kdj_d}",
+                    prices=prices,
+                )
+            )
         if d_val is not None:
-            factors.append(_build_scoring_obs(
-                instrument, MetricKind.KDJ_D, d_val,
-                observed_at, DerivedAlgorithm.KDJ_CALCULATION, f"{kdj_n}_{kdj_k}_{kdj_d}",
-                prices=prices,
-            ))
+            factors.append(
+                _build_scoring_obs(
+                    instrument,
+                    MetricKind.KDJ_D,
+                    d_val,
+                    observed_at,
+                    DerivedAlgorithm.KDJ_CALCULATION,
+                    f"{kdj_n}_{kdj_k}_{kdj_d}",
+                    prices=prices,
+                )
+            )
         if j_val is not None:
-            factors.append(_build_scoring_obs(
-                instrument, MetricKind.KDJ_J, j_val,
-                observed_at, DerivedAlgorithm.KDJ_CALCULATION, f"{kdj_n}_{kdj_k}_{kdj_d}",
-                prices=prices,
-            ))
+            factors.append(
+                _build_scoring_obs(
+                    instrument,
+                    MetricKind.KDJ_J,
+                    j_val,
+                    observed_at,
+                    DerivedAlgorithm.KDJ_CALCULATION,
+                    f"{kdj_n}_{kdj_k}_{kdj_d}",
+                    prices=prices,
+                )
+            )
             if j_val > 100:
                 blocks.append("kdj_overbought")
         if k_val is not None and d_val is not None and k_val < d_val:
@@ -628,11 +736,17 @@ def _layer3_technical_confirmation(
     adx_result = adx(highs, lows, closes, adx_n)
     adx_val = adx_result["ADX"]
     if adx_val is not None:
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.ADX_14, adx_val,
-            observed_at, DerivedAlgorithm.ADX_CALCULATION, f"{adx_n}_observations",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.ADX_14,
+                adx_val,
+                observed_at,
+                DerivedAlgorithm.ADX_CALCULATION,
+                f"{adx_n}_observations",
+                prices=prices,
+            )
+        )
         if adx_val < 20:
             blocks.append("adx_ranging")
         # Check DI direction
@@ -644,11 +758,17 @@ def _layer3_technical_confirmation(
     # Volume: up/down ratio
     ud_ratio = up_down_volume_ratio(closes, vols, 10)
     if ud_ratio is not None:
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.UP_DOWN_VOLUME_RATIO, ud_ratio,
-            observed_at, DerivedAlgorithm.EFFICIENCY_RATIO_CALC, "10_day",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.UP_DOWN_VOLUME_RATIO,
+                ud_ratio,
+                observed_at,
+                DerivedAlgorithm.EFFICIENCY_RATIO_CALC,
+                "10_day",
+                prices=prices,
+            )
+        )
         if ud_ratio < 0.7:
             blocks.append("distribution_volume")
 
@@ -664,11 +784,17 @@ def _layer3_technical_confirmation(
     # Efficiency ratio
     er = efficiency_ratio(closes, 30)
     if er is not None:
-        factors.append(_build_scoring_obs(
-            instrument, MetricKind.EFFICIENCY_RATIO, er,
-            observed_at, DerivedAlgorithm.EFFICIENCY_RATIO_CALC, "30_day",
-            prices=prices,
-        ))
+        factors.append(
+            _build_scoring_obs(
+                instrument,
+                MetricKind.EFFICIENCY_RATIO,
+                er,
+                observed_at,
+                DerivedAlgorithm.EFFICIENCY_RATIO_CALC,
+                "30_day",
+                prices=prices,
+            )
+        )
 
     return factors, blocks
 
@@ -694,17 +820,24 @@ def _layer4_entry_timing(
     last_close = closes[-1]
 
     # Compute ATR for price levels
-    ohlcv_prices = [p for p in prices
-                    if all(v is not None for v in (p.open, p.high, p.low, p.volume))]
+    ohlcv_prices = [
+        p for p in prices if all(v is not None for v in (p.open, p.high, p.low, p.volume))
+    ]
     atr_val = atr(tuple(ohlcv_prices), atr_period) if len(ohlcv_prices) >= atr_period else None
 
     # Entry price: at-market for now
     entry_price = last_close
-    factors.append(_build_scoring_obs(
-        instrument, MetricKind.WORTH_BUY_ENTRY_PRICE, entry_price,
-        observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING, "current_close",
-        prices=prices,
-    ))
+    factors.append(
+        _build_scoring_obs(
+            instrument,
+            MetricKind.WORTH_BUY_ENTRY_PRICE,
+            entry_price,
+            observed_at,
+            DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
+            "current_close",
+            prices=prices,
+        )
+    )
 
     # Stop price: MA60 or recent swing low, whichever is lower
     ma_short_val = sma(closes, ma_short)
@@ -715,29 +848,45 @@ def _layer4_entry_timing(
     )
     if atr_val is not None:
         stop_price -= atr_val  # Add ATR buffer below stop
-    factors.append(_build_scoring_obs(
-        instrument, MetricKind.WORTH_BUY_STOP_PRICE, round(stop_price, 2),
-        observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
-        f"below_ma{ma_short}_or_swing_low",
-        prices=prices,
-    ))
+    factors.append(
+        _build_scoring_obs(
+            instrument,
+            MetricKind.WORTH_BUY_STOP_PRICE,
+            round(stop_price, 2),
+            observed_at,
+            DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
+            f"below_ma{ma_short}_or_swing_low",
+            prices=prices,
+        )
+    )
 
     # Target price: recent 52-week high
     recent_high = max(highs[-252:]) if len(highs) >= 252 else max(highs)
-    factors.append(_build_scoring_obs(
-        instrument, MetricKind.WORTH_BUY_TARGET_PRICE, recent_high,
-        observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING, "52_week_high",
-        prices=prices,
-    ))
+    factors.append(
+        _build_scoring_obs(
+            instrument,
+            MetricKind.WORTH_BUY_TARGET_PRICE,
+            recent_high,
+            observed_at,
+            DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
+            "52_week_high",
+            prices=prices,
+        )
+    )
 
     # Entry classification
     entry_class = _classify_entry(closes, highs, lows, vols, atr_val, ma_short)
-    factors.append(_build_scoring_obs(
-        instrument, MetricKind.WORTH_BUY_ENTRY_CLASSIFICATION, float(entry_class),
-        observed_at, DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
-        _ENTRY_CLASSES.get(entry_class, "unknown"),
-        prices=prices,
-    ))
+    factors.append(
+        _build_scoring_obs(
+            instrument,
+            MetricKind.WORTH_BUY_ENTRY_CLASSIFICATION,
+            float(entry_class),
+            observed_at,
+            DerivedAlgorithm.WORTH_BUY_ENTRY_TIMING,
+            _ENTRY_CLASSES.get(entry_class, "unknown"),
+            prices=prices,
+        )
+    )
 
     return factors
 
@@ -756,8 +905,11 @@ def _classify_entry(
     last_close = closes[-1]
 
     # Check for trend broken
-    if (ma_short_val is not None and ma_long_val is not None
-            and last_close < ma_short_val < ma_long_val):
+    if (
+        ma_short_val is not None
+        and ma_long_val is not None
+        and last_close < ma_short_val < ma_long_val
+    ):
         # Check for recovery reversal
         high_30d = max(highs[-30:]) if len(highs) >= 30 else max(highs)
         depth = (last_close - high_30d) / high_30d
@@ -771,7 +923,7 @@ def _classify_entry(
     if atr_val is not None and ma20 is not None:
         rsi14 = rsi(closes, 14) if len(closes) >= 15 else 50.0
         ext_atr = (last_close - ma20) / atr_val
-        if (ext_atr > 3.0 or rsi14 > 80):
+        if ext_atr > 3.0 or rsi14 > 80:
             return 1  # overextended
         if ext_atr > 2.2 or rsi14 > 75:
             return 1  # overextended (soft threshold)
@@ -795,8 +947,7 @@ def _classify_entry(
         macd_vals = macd_series(closes, 12, 26) if len(closes) >= 27 else []
         signal_vals = ema_series(macd_vals, 9) if macd_vals else []
         adx_val = adx(highs, lows, closes, 14)["ADX"]
-        if (signal_vals and macd_vals[-1] > signal_vals[-1]
-                and adx_val is not None and adx_val > 25):
+        if signal_vals and macd_vals[-1] > signal_vals[-1] and adx_val is not None and adx_val > 25:
             return 3  # trend_continuation
 
     return 2  # default to pullback_no_trigger
@@ -830,16 +981,24 @@ def _count_reversal_signals(
     if len(closes) >= 11:
         ma10 = sma(closes, 10)
         ma10_prev = sma(closes[:-1], 10)
-        if (ma10 is not None and ma10_prev is not None
-                and last_close > ma10 and prev_close <= ma10_prev):
+        if (
+            ma10 is not None
+            and ma10_prev is not None
+            and last_close > ma10
+            and prev_close <= ma10_prev
+        ):
             signals += 1
 
     # 4. Reclaim MA20
     if len(closes) >= 21:
         ma20 = sma(closes, 20)
         ma20_prev = sma(closes[:-1], 20)
-        if (ma20 is not None and ma20_prev is not None
-                and last_close > ma20 and prev_close <= ma20_prev):
+        if (
+            ma20 is not None
+            and ma20_prev is not None
+            and last_close > ma20
+            and prev_close <= ma20_prev
+        ):
             signals += 1
 
     # 5. KDJ golden cross within last 3 days
@@ -950,19 +1109,24 @@ def _build_presentation(
         ReportCheck(
             key="trend_alignment",
             status=(
-                "unavailable" if not ma_available else
-                "fail" if risk_flags & {"bearish_ma_alignment", "below_ma_short"} else
-                "pass"
+                "unavailable"
+                if not ma_available
+                else "fail"
+                if risk_flags & {"bearish_ma_alignment", "below_ma_short"}
+                else "pass"
             ),
             value=first(MetricKind.SIMPLE_MOVING_AVERAGE),
         ),
         ReportCheck(
             key="max_drawdown",
             status=(
-                "unavailable" if drawdown is None else
-                "fail" if "severe_drawdown" in risk_flags else
-                "warning" if "moderate_drawdown" in risk_flags else
-                "pass"
+                "unavailable"
+                if drawdown is None
+                else "fail"
+                if "severe_drawdown" in risk_flags
+                else "warning"
+                if "moderate_drawdown" in risk_flags
+                else "pass"
             ),
             value=drawdown,
         ),
@@ -974,9 +1138,11 @@ def _build_presentation(
         ReportCheck(
             key="volatility",
             status=(
-                "unavailable" if len(prices) < 64 else
-                "fail" if "high_volatility" in risk_flags else
-                "pass"
+                "unavailable"
+                if len(prices) < 64
+                else "fail"
+                if "high_volatility" in risk_flags
+                else "pass"
             ),
         ),
     )
@@ -1030,7 +1196,8 @@ def _build_presentation(
     )
 
     complete_prices = [
-        point for point in prices
+        point
+        for point in prices
         if all(value is not None for value in (point.open, point.high, point.low, point.volume))
     ][-60:]
     price_bars = tuple(
@@ -1118,9 +1285,7 @@ def _build_scoring_obs(
     )
 
 
-def _empty_result(
-    instrument: InstrumentId, name: str, missing: list[str]
-) -> AnalystResult:
+def _empty_result(instrument: InstrumentId, name: str, missing: list[str]) -> AnalystResult:
     return AnalystResult(
         analyst=name,
         instrument=instrument,
@@ -1135,4 +1300,5 @@ def _empty_result(
 def statistics_mean(values: list[float]) -> float:
     """Safe mean that avoids importing statistics at module level for frozen dataclass."""
     import statistics
+
     return statistics.fmean(values)

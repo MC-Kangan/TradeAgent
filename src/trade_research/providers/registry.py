@@ -36,9 +36,7 @@ class CapabilityName(StrEnum):
     PORTFOLIO = "portfolio"
 
 
-type CapabilityProvider = (
-    PriceProvider | FundamentalProvider | FilingProvider | PortfolioProvider
-)
+type CapabilityProvider = PriceProvider | FundamentalProvider | FilingProvider | PortfolioProvider
 
 
 class ProviderRegistry:
@@ -210,9 +208,10 @@ def _require_auditable_reference(
     provenance: Mapping[str, object], key: str, provider_label: str
 ) -> str:
     value = provenance.get(key)
-    if not isinstance(value, str) or sanitize_provider_reference({"reference": value}).get(
-        "reference"
-    ) != value:
+    if (
+        not isinstance(value, str)
+        or sanitize_provider_reference({"reference": value}).get("reference") != value
+    ):
         raise ProviderContractError(
             f"{provider_label} provider provenance requires a valid {key} reference"
         )
@@ -223,9 +222,7 @@ def _validate_fundamental_metadata(observation: Observation) -> None:
     provenance = observation.provenance
     source = normalize_provider_kind(observation.source)
     if provenance.get("provider_kind") != source.value:
-        raise ProviderContractError(
-            "fundamental provider provenance does not match its source"
-        )
+        raise ProviderContractError("fundamental provider provenance does not match its source")
     _require_auditable_reference(provenance, "snapshot_ref", "fundamental")
     _require_auditable_reference(provenance, "reference", "fundamental")
 
@@ -239,9 +236,7 @@ def _validate_fundamental_metadata(observation: Observation) -> None:
     raise ProviderContractError("fundamental provider returned unsupported metadata")
 
 
-def _validate_statement_metadata(
-    provenance: Mapping[str, object], observed_at: datetime
-) -> None:
+def _validate_statement_metadata(provenance: Mapping[str, object], observed_at: datetime) -> None:
     if provenance.get("period_role") not in {"current", "prior"}:
         raise ProviderContractError("fundamental statement metadata requires a period role")
     if provenance.get("period_type") not in {"annual", "quarterly", "ttm"}:
@@ -260,14 +255,10 @@ def _validate_statement_metadata(
     _require_currency(provenance, "statement")
     _require_auditable_reference(provenance, "period_ref", "fundamental statement")
     if "prior_period_ref" in provenance:
-        _require_auditable_reference(
-            provenance, "prior_period_ref", "fundamental statement"
-        )
+        _require_auditable_reference(provenance, "prior_period_ref", "fundamental statement")
 
 
-def _validate_valuation_metadata(
-    provenance: Mapping[str, object], observed_at: datetime
-) -> None:
+def _validate_valuation_metadata(provenance: Mapping[str, object], observed_at: datetime) -> None:
     valuation_as_of = provenance.get("valuation_as_of")
     if not isinstance(valuation_as_of, str):
         raise ProviderContractError("fundamental valuation metadata requires an as-of timestamp")
@@ -285,6 +276,4 @@ def _validate_valuation_metadata(
 def _require_currency(provenance: Mapping[str, object], metadata_kind: str) -> None:
     currency = provenance.get("currency")
     if not isinstance(currency, str) or len(currency) != 3 or not currency.isupper():
-        raise ProviderContractError(
-            f"fundamental {metadata_kind} metadata requires a currency"
-        )
+        raise ProviderContractError(f"fundamental {metadata_kind} metadata requires a currency")

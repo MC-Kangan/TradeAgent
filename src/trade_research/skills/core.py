@@ -85,8 +85,7 @@ class SkillRegistry:
         for skill in skill_items:
             required_capabilities = getattr(skill, "required_capabilities", None)
             if not isinstance(required_capabilities, tuple) or any(
-                not isinstance(capability, CapabilityName)
-                for capability in required_capabilities
+                not isinstance(capability, CapabilityName) for capability in required_capabilities
             ):
                 raise TypeError(
                     f"skill '{skill.name}' required_capabilities must be a tuple of CapabilityName"
@@ -572,20 +571,35 @@ class FilingsSkill:
         eight_k_forms = [f for f in filings if f["form"] in ("8-K", "8-K/A")]
 
         _append_filing_factor(
-            factors, instrument, "recent_filing_count", len(filings),
-            filings, algorithm="filing_count", window="all_available",
+            factors,
+            instrument,
+            "recent_filing_count",
+            len(filings),
+            filings,
+            algorithm="filing_count",
+            window="all_available",
         )
         _append_filing_factor(
-            factors, instrument, "material_event_count", len(eight_k_forms),
-            filings, algorithm="filing_count", window="form_8k",
+            factors,
+            instrument,
+            "material_event_count",
+            len(eight_k_forms),
+            filings,
+            algorithm="filing_count",
+            window="form_8k",
         )
 
         if ten_k_forms:
             latest_10k = max(ten_k_forms, key=lambda f: cast(date, f["filing_date"]))
             age_days = (now.date() - cast(date, latest_10k["filing_date"])).days
             _append_filing_factor(
-                factors, instrument, "annual_report_age_days", age_days,
-                filings, algorithm="filing_age", window="latest_10k",
+                factors,
+                instrument,
+                "annual_report_age_days",
+                age_days,
+                filings,
+                algorithm="filing_age",
+                window="latest_10k",
             )
         else:
             missing.append("annual_report_age_days")
@@ -594,8 +608,13 @@ class FilingsSkill:
             latest_10q = max(ten_q_forms, key=lambda f: cast(date, f["filing_date"]))
             age_days = (now.date() - cast(date, latest_10q["filing_date"])).days
             _append_filing_factor(
-                factors, instrument, "quarterly_report_age_days", age_days,
-                filings, algorithm="filing_age", window="latest_10q",
+                factors,
+                instrument,
+                "quarterly_report_age_days",
+                age_days,
+                filings,
+                algorithm="filing_age",
+                window="latest_10q",
             )
         else:
             missing.append("quarterly_report_age_days")
@@ -722,9 +741,7 @@ def _append_ratio(
             _numeric_value(numerator) / _numeric_value(denominator),
             (numerator, denominator),
             algorithm="ratio",
-            window=(
-                "same_period" if compatibility == "statement" else "valuation_and_period"
-            ),
+            window=("same_period" if compatibility == "statement" else "valuation_and_period"),
         )
     )
 
@@ -913,10 +930,7 @@ def _append_filing_factor(
     algorithm: str,
     window: str,
 ) -> None:
-    filing_refs = [
-        {"form": str(f["form"]), "filing_date": str(f["filing_date"])}
-        for f in filings
-    ]
+    filing_refs = [{"form": str(f["form"]), "filing_date": str(f["filing_date"])} for f in filings]
     reference = json.dumps(filing_refs, separators=(",", ":"), sort_keys=True)
     factors.append(
         Observation(

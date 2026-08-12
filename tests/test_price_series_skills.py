@@ -88,6 +88,12 @@ def test_application_declares_equity_and_crypto_support(tmp_path: Path) -> None:
     catalog = {item["name"]: item for item in app.list_skills()}
     for name in ("technical-basic", "risk-analysis", "volatility-regime"):
         assert catalog[name]["supported_asset_types"] == ["equity", "crypto"]
+    assert catalog["fundamental"]["description"].startswith("SEC-backed")
+    assert catalog["filings"]["description"].startswith("SEC filing")
+    assert catalog["technical-basic"]["available"] is True
+    assert catalog["technical-basic"]["missing_capabilities"] == []
+    assert catalog["fundamental"]["available"] is False
+    assert catalog["fundamental"]["missing_capabilities"] == ["fundamentals"]
 
 
 def test_technical_basic_scores_complete_uptrend() -> None:

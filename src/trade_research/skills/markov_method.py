@@ -108,9 +108,7 @@ def _label_regimes(
     return labels
 
 
-def _build_transition_matrix(
-    labels: list[int], start_idx: int
-) -> list[list[float]]:
+def _build_transition_matrix(labels: list[int], start_idx: int) -> list[list[float]]:
     """Build 3×3 MLE transition matrix from regime labels.
 
     Rows are from-states (Bear=0, Sideways=1, Bull=2), columns are
@@ -152,9 +150,7 @@ def _stationary_distribution(matrix: list[list[float]]) -> list[float]:
     return pi
 
 
-def _compute_signal(
-    pi: list[float], matrix: list[list[float]], current_regime_idx: int
-) -> float:
+def _compute_signal(pi: list[float], matrix: list[list[float]], current_regime_idx: int) -> float:
     """Compute signed signal = P(Bull | current) − P(Bear | current).
 
     Uses the next-step probabilities from the transition matrix row
@@ -225,11 +221,11 @@ def _walkforward_backtest(
 
     mean_ret = sum(returns) / n_trades
     var_ret = sum((r - mean_ret) ** 2 for r in returns) / n_trades
-    std_ret = var_ret ** 0.5
+    std_ret = var_ret**0.5
 
     # Annualised Sharpe (assuming daily data, √252)
     if std_ret > 0:
-        sharpe = (mean_ret / std_ret) * (252 ** 0.5)
+        sharpe = (mean_ret / std_ret) * (252**0.5)
     else:
         sharpe = 0.0 if mean_ret == 0.0 else float("inf") if mean_ret > 0 else float("-inf")
 
@@ -342,9 +338,7 @@ class MarkovMethodSkill:
     # Main entry point
     # ------------------------------------------------------------------
 
-    def analyze(
-        self, instrument: InstrumentId, providers: ProviderRegistry
-    ) -> AnalystResult:
+    def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
         # 1. Fetch and validate prices
         prices = providers.prices(instrument)
         clean_prices, discarded, _ = validated_prices(prices)
@@ -380,11 +374,7 @@ class MarkovMethodSkill:
 
         # 5. Build observations
         observations: list[Observation] = []
-        threshold_str = (
-            f"b{bull_threshold}_r{bear_threshold}"
-            .replace(".", "_")
-            .replace("-", "n")
-        )
+        threshold_str = f"b{bull_threshold}_r{bear_threshold}".replace(".", "_").replace("-", "n")
         algo_window = f"{self.window}_day_{threshold_str}"
 
         # Current regime (numeric code: 0=Bear, 1=Sideways, 2=Bull)
