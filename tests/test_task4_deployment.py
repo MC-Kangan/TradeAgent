@@ -479,6 +479,7 @@ def test_public_interfaces_and_dependencies_match_exact_research_only_allowlists
         ("GET", "/skills"),
         ("GET", "/skills/{name}"),
         ("POST", "/skills/{name}/run"),
+        ("POST", "/analyze"),
         ("POST", "/research"),
         ("GET", "/research/{request_id}/status"),
         ("GET", "/research/{request_id}/result"),

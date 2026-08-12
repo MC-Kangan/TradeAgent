@@ -103,6 +103,20 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
                 status_code=422, detail=str(error)
             ) from error
 
+    @api.post("/analyze", dependencies=authenticated)
+    async def analyze(request: AnalysisRequest) -> dict[str, Any]:
+        """Run all selected deterministic skills in one bounded request."""
+        try:
+            return await application.research(request)
+        except ProviderConfigurationError as error:
+            raise HTTPException(
+                status_code=503, detail="selected capability unavailable"
+            ) from error
+        except KeyError as error:
+            raise HTTPException(status_code=422, detail="unknown selected skill") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @api.post("/research", dependencies=authenticated, status_code=202)
     async def research(request: AnalysisRequest) -> dict[str, Any]:
         try:
