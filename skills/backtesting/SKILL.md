@@ -6,13 +6,15 @@
 - Positive, finite Open, High, Low, and Close values; Volume is optional.
 - One validated built-in strategy configuration or bounded external signal list.
 - Explicit cash, commission, spread, position size, and optional stop/target assumptions.
+- Optional performance start date plus a minimum holding period of 1–520 daily bars.
 
 ## Method
 
 Generate causal entry/exit booleans from data available through each bar. Run
 the fixed long/flat execution strategy using pinned `backtesting.py` 0.6.6.
-Orders generated at bar t execute at bar t+1 open. The engine finalizes an open
-trade on the last bar so performance and trade output agree. Crypto uses the
+Orders generated at bar t execute at bar t+1 open. Early exit signals remain
+pending until the minimum hold is satisfied. An open trade is marked to the
+last close rather than forcibly sold. Crypto uses the
 engine's fractional-unit adapter; equities retain whole-share execution.
 
 ## Output
@@ -20,6 +22,7 @@ engine's fractional-unit adapter; equities retain whole-share execution.
 - Final equity, strategy and buy/hold returns, maximum drawdown, trade count,
   win rate, and Sharpe ratio when the engine can calculate them.
 - At most 520 equity/drawdown points and 200 closed trades.
+- Bounded daily price and strategy-indicator series plus an optional open-position snapshot.
 - SHA-256 references for input prices and the derived signal vector.
 - Complete bounded strategy, capital, cost, sizing, and protective-level
   assumptions with a canonical configuration reference.

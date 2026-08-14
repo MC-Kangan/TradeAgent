@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from ipaddress import ip_address
 from typing import Annotated, Literal, Self
@@ -472,6 +472,22 @@ class BacktestCurvePoint(DomainModel):
     drawdown: float = Field(ge=0, le=1)
 
 
+class BacktestIndicatorPoint(DomainModel):
+    """One chart-ready value produced by the selected backtest strategy."""
+
+    observed_at: datetime
+    value: float
+
+
+class BacktestIndicatorSeries(DomainModel):
+    """A bounded renderer-neutral strategy indicator series."""
+
+    key: Annotated[str, Field(min_length=1, max_length=48, pattern=r"^[a-z0-9_]+$")]
+    label: Annotated[str, Field(min_length=1, max_length=64)]
+    panel: Literal["price", "oscillator", "regime"]
+    points: tuple[BacktestIndicatorPoint, ...] = Field(default=(), max_length=520)
+
+
 class BacktestTrade(DomainModel):
     """One closed long trade, expressed as research output rather than an order."""
 
@@ -481,6 +497,18 @@ class BacktestTrade(DomainModel):
     entry_price: float = Field(gt=0)
     exit_price: float = Field(gt=0)
     pnl: float
+    return_ratio: float
+    duration_bars: int = Field(ge=0)
+
+
+class BacktestOpenPosition(DomainModel):
+    """One long position still open and marked to the final test close."""
+
+    entry_at: datetime
+    size: float = Field(gt=0)
+    entry_price: float = Field(gt=0)
+    current_price: float = Field(gt=0)
+    unrealized_pnl: float
     return_ratio: float
     duration_bars: int = Field(ge=0)
 
@@ -508,6 +536,8 @@ class BacktestAssumptions(DomainModel):
     """Bounded simulation settings required to reproduce a backtest."""
 
     execution: Literal["signal_close_next_open"] = "signal_close_next_open"
+    start_date: date | None = None
+    minimum_holding_bars: int = Field(default=1, ge=1, le=520)
     cash: float = Field(gt=0)
     commission: float = Field(ge=0)
     spread: float = Field(ge=0)
@@ -531,8 +561,11 @@ class BacktestPresentation(DomainModel):
     strategy_name: AnalystName
     signal_reference: OpaqueReference
     assumptions: BacktestAssumptions
+    price_bars: tuple[ReportPriceBar, ...] = Field(default=(), max_length=520)
+    indicator_series: tuple[BacktestIndicatorSeries, ...] = Field(default=(), max_length=4)
     curve: tuple[BacktestCurvePoint, ...] = Field(default=(), max_length=520)
     trades: tuple[BacktestTrade, ...] = Field(default=(), max_length=200)
+    open_position: BacktestOpenPosition | None = None
     presentation_reduced: bool = False
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -152,6 +152,8 @@ BacktestStrategyParameters = Annotated[
 
 class BacktestingSkillParameters(_BacktestParameters):
     strategy: BacktestStrategyParameters = Field(default_factory=SmaCrossoverParameters)
+    start_date: date | None = None
+    minimum_holding_bars: int = Field(default=1, ge=1, le=520)
     cash: float = Field(default=10_000, gt=0, le=1_000_000_000)
     commission: float = Field(default=0.001, ge=0, le=0.1)
     spread: float = Field(default=0, ge=0, le=0.1)
@@ -254,6 +256,8 @@ def configure_skill(
         return replace(  # type: ignore[type-var]
             skill,
             strategy=backtest_params.strategy_configuration(),
+            start_date=backtest_params.start_date,
+            minimum_holding_bars=backtest_params.minimum_holding_bars,
             cash=backtest_params.cash,
             commission=backtest_params.commission,
             spread=backtest_params.spread,

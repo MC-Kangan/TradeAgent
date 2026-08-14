@@ -121,6 +121,69 @@ def test_external_signal_fills_at_next_bar_open() -> None:
     assert result.presentation.trades[0].exit_price == points[4].open
 
 
+def test_start_date_uses_prior_bars_only_for_warmup() -> None:
+    points = _prices([100, 99, 98, 101, 104, 106, 103, 100, 105])
+    start_date = points[3].observed_at.date()
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "start_date": start_date.isoformat(),
+            "strategy": {"kind": "sma_crossover", "fast_window": 2, "slow_window": 3},
+            "commission": 0,
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    assert result.presentation.assumptions.start_date == start_date
+    assert result.presentation.price_bars[0].observed_at == points[3].observed_at
+    assert len(result.presentation.curve) == len(points) - 3
+    assert all(trade.entry_at >= points[3].observed_at for trade in result.presentation.trades)
+
+
+def test_early_exit_is_deferred_until_minimum_holding_period() -> None:
+    points = _prices([100, 101, 102, 103, 104, 105, 106])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "minimum_holding_bars": 3,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "minimum-hold-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"},
+                    {"observed_at": points[2].observed_at.isoformat(), "action": "exit_long"},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    assert result.presentation.trades[0].entry_at == points[2].observed_at
+    assert result.presentation.trades[0].exit_at == points[5].observed_at
+    assert result.presentation.trades[0].duration_bars == 3
+
+
+def test_backtest_returns_chart_ready_indicator_series() -> None:
+    points = _prices([100, 99, 98, 101, 104, 106])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {"strategy": {"kind": "sma_crossover", "fast_window": 2, "slow_window": 3}},
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    assert [series.key for series in result.presentation.indicator_series] == [
+        "sma_fast", "sma_slow"
+    ]
+    assert result.presentation.indicator_series[0].points[-1].observed_at == points[-1].observed_at
+
+
 def test_crypto_backtest_uses_fractional_units_at_realistic_prices() -> None:
     points = _prices([50_000.0, 51_000.0, 52_000.0, 53_000.0, 54_000.0], market="CRYPTO")
     configured = configure_skill(
@@ -143,8 +206,8 @@ def test_crypto_backtest_uses_fractional_units_at_realistic_prices() -> None:
 
     assert result.status is ReportStatus.COMPLETE
     assert result.presentation is not None
-    assert len(result.presentation.trades) == 1
-    assert 0 < result.presentation.trades[0].size < 1
+    assert result.presentation.open_position is not None
+    assert 0 < result.presentation.open_position.size < 1
 
 
 def test_report_preserves_reproducibility_assumptions() -> None:
@@ -210,6 +273,40 @@ def test_protective_levels_are_anchored_to_actual_entry_price() -> None:
     assert trade.exit_price == 135.0
 
 
+def test_protective_exit_waits_for_minimum_holding_period() -> None:
+    original = _prices([100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0])
+    points = (
+        *original[:3],
+        replace(original[3], low=80.0),
+        original[4],
+        replace(original[5], low=80.0),
+        original[6],
+    )
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "commission": 0,
+            "minimum_holding_bars": 3,
+            "stop_loss_pct": 0.1,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "minimum-hold-stop-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"}
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    trade = result.presentation.trades[0]
+    assert trade.entry_at == points[2].observed_at
+    assert trade.exit_at == points[5].observed_at
+    assert trade.duration_bars == 3
+
+
 def test_unexecuted_entry_signal_is_reported_partial() -> None:
     points = _prices([50_000.0, 51_000.0, 52_000.0, 53_000.0, 54_000.0])
     configured = configure_skill(
@@ -258,7 +355,7 @@ def test_external_event_matches_same_instant_with_different_offset() -> None:
 
     assert result.status is ReportStatus.COMPLETE
     assert result.presentation is not None
-    assert len(result.presentation.trades) == 1
+    assert result.presentation.open_position is not None
 
 
 def test_sma_backtest_produces_bounded_report_data() -> None:
@@ -404,7 +501,8 @@ async def test_vibe_request_uses_existing_run_skill_and_inline_price_flow(
 
     presentation = payload["results"][0]["presentation"]
     assert presentation["template"] == "backtesting-v1"
-    assert len(presentation["trades"]) == 1
+    assert presentation["trades"] == []
+    assert presentation["open_position"]["entry_at"] == "2025-01-03T00:00:00Z"
     assert presentation["assumptions"]["cash"] == 10_000
     assert presentation["assumptions"]["strategy_parameters"] == [
         {"key": "event_count", "value": 1}

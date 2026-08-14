@@ -163,10 +163,12 @@ instead send an ordered, alternating list of timestamped `enter_long` and
 `exit_long` events in `skill_parameters.backtesting.strategy`.
 
 Execution is deliberately fixed: long/flat only, signals on bar *t* fill at
-bar *t+1* open, and optional commission, spread, stop-loss, and take-profit
-assumptions are explicit. Results include core performance observations plus
-bounded equity, drawdown, closed-trade data, and the complete bounded assumptions
-needed to reproduce the run. Crypto simulations use fractional units. Protective
+bar *t+1* open, early exits respect the configured minimum holding bars, and
+optional commission, spread, stop-loss, and take-profit assumptions are explicit.
+An optional start date separates causal warm-up from measured performance.
+Results include core observations plus bounded price, indicator, equity,
+drawdown, closed-trade, and open-position data with the assumptions needed to
+reproduce the run. Crypto simulations use fractional units. Protective
 levels are anchored to the actual next-open fill price. It does not expose Python,
 optimization, plotting, brokers, or order APIs. Backtests and inline series are
 immediate-only (`run_skill`, `/analyze`, or MCP equivalents), because the safe

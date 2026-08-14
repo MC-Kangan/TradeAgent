@@ -6,8 +6,9 @@ import hashlib
 import json
 import math
 import statistics
+import warnings
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal, cast
 
 import backtesting
@@ -20,6 +21,9 @@ from trade_research.domain import (
     AnalystResult,
     BacktestAssumptions,
     BacktestCurvePoint,
+    BacktestIndicatorPoint,
+    BacktestIndicatorSeries,
+    BacktestOpenPosition,
     BacktestPresentation,
     BacktestStrategyParameter,
     BacktestTrade,
@@ -27,6 +31,7 @@ from trade_research.domain import (
     LimitationKind,
     MetricKind,
     Observation,
+    ReportPriceBar,
     ReportStatus,
     SignalKind,
 )
@@ -77,10 +82,27 @@ class StrategyConfiguration:
 
 
 @dataclass(frozen=True, slots=True)
+class IndicatorDefinition:
+    key: str
+    label: str
+    panel: Literal["price", "oscillator", "regime"]
+    values: tuple[float | None, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyEvaluation:
+    entries: tuple[bool, ...]
+    exits: tuple[bool, ...]
+    indicators: tuple[IndicatorDefinition, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestingSkill:
     """Simulate bounded daily long/flat ideas without broker or order capabilities."""
 
     strategy: StrategyConfiguration = field(default_factory=StrategyConfiguration)
+    start_date: date | None = None
+    minimum_holding_bars: int = 1
     cash: float = 10_000.0
     commission: float = 0.001
     spread: float = 0.0
@@ -116,11 +138,20 @@ class BacktestingSkill:
             return _partial(instrument, tuple(dict.fromkeys(input_limitations)))
 
         try:
-            entries, exits = _signals(self.strategy, prices)
+            start_index = _start_index(prices, self.start_date)
+            if start_index is None or (
+                self.start_date is not None
+                and start_index < _minimum_points(self.strategy) - 1
+            ):
+                return _partial(instrument, (LimitationKind.INSUFFICIENT_HISTORY,))
+            evaluation = _signals(self.strategy, prices, start_index)
         except ValueError:
             return _partial(instrument, (LimitationKind.INCOMPATIBLE_INPUTS,))
 
-        data = _data_frame(prices, entries, exits)
+        simulation_prices = prices[start_index:]
+        entries = list(evaluation.entries[start_index:])
+        exits = list(evaluation.exits[start_index:])
+        data = _data_frame(simulation_prices, entries, exits)
         engine = FractionalBacktest if instrument.market == "CRYPTO" else Backtest
         simulation = engine(
             data,
@@ -131,21 +162,32 @@ class BacktestingSkill:
             trade_on_close=False,
             hedging=False,
             exclusive_orders=True,
-            finalize_trades=True,
+            finalize_trades=False,
         )
-        stats = simulation.run(
-            position_size=self.position_size,
-            stop_loss_pct=self.stop_loss_pct,
-            take_profit_pct=self.take_profit_pct,
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Some trades remain open")
+            stats = simulation.run(
+                position_size=self.position_size,
+                minimum_holding_bars=self.minimum_holding_bars,
+                stop_loss_pct=self.stop_loss_pct,
+                take_profit_pct=self.take_profit_pct,
+            )
+        presentation = _presentation(
+            stats, simulation_prices, self, entries, exits,
+            _slice_indicators(evaluation.indicators, start_index),
+            fractional_unit=1e-8 if instrument.market == "CRYPTO" else 1.0,
         )
-        presentation = _presentation(stats, prices, self, entries, exits)
-        observations = _observations(instrument, prices, stats)
+        observations = _observations(instrument, simulation_prices, stats)
         limitations: list[LimitationKind] = []
         if discarded:
             limitations.append(LimitationKind.INVALID_ROWS_DISCARDED)
         if presentation.presentation_reduced:
             limitations.append(LimitationKind.BOUNDED_INPUT)
-        if any(entries[:-1]) and not presentation.trades:
+        if (
+            any(entries[:-1])
+            and not presentation.trades
+            and presentation.open_position is None
+        ):
             limitations.append(LimitationKind.UNEXECUTED_SIGNALS)
         summary = (
             "partial data: one or more entry signals were not executed"
@@ -174,23 +216,42 @@ class LongFlatSignalStrategy(Strategy):  # type: ignore[misc]
     """One fixed execution policy; callers supply data, never executable code."""
 
     position_size = 0.95
+    minimum_holding_bars = 1
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
 
     def init(self) -> None:
-        pass
+        self.pending_exit = False
 
     def next(self) -> None:
         if self.position:
-            for trade in self.trades:
-                if self.stop_loss_pct and trade.sl is None:
-                    trade.sl = trade.entry_price * (1 - self.stop_loss_pct)
-                if self.take_profit_pct and trade.tp is None:
-                    trade.tp = trade.entry_price * (1 + self.take_profit_pct)
-        if bool(self.data.Exit[-1]) and self.position:
-            self.position.close()
-        elif bool(self.data.Entry[-1]) and not self.position:
+            if bool(self.data.Exit[-1]):
+                self.pending_exit = True
+            current_bar = len(self.data) - 1
+            entry_bar = min(trade.entry_bar for trade in self.trades)
+            minimum_holding_met = (
+                current_bar - entry_bar + 1 >= self.minimum_holding_bars
+            )
+            if minimum_holding_met:
+                for trade in self.trades:
+                    if self.stop_loss_pct and trade.sl is None:
+                        trade.sl = trade.entry_price * (1 - self.stop_loss_pct)
+                    if self.take_profit_pct and trade.tp is None:
+                        trade.tp = trade.entry_price * (1 + self.take_profit_pct)
+            if self.pending_exit and minimum_holding_met:
+                self.position.close()
+                self.pending_exit = False
+        elif bool(self.data.Entry[-1]):
             self.buy(size=self.position_size)
+
+
+def _start_index(prices: tuple[PricePoint, ...], start_date: date | None) -> int | None:
+    if start_date is None:
+        return 0
+    return next(
+        (index for index, point in enumerate(prices) if point.observed_at.date() >= start_date),
+        None,
+    )
 
 
 def _minimum_points(config: StrategyConfiguration) -> int:
@@ -217,13 +278,17 @@ def _is_daily(prices: tuple[PricePoint, ...]) -> bool:
 
 
 def _signals(
-    config: StrategyConfiguration, prices: tuple[PricePoint, ...]
-) -> tuple[list[bool], list[bool]]:
+    config: StrategyConfiguration, prices: tuple[PricePoint, ...], start_index: int = 0
+) -> StrategyEvaluation:
     closes = [point.close for point in prices]
     if config.kind == "sma_crossover":
         fast = _sma(closes, config.fast_window)
         slow = _sma(closes, config.slow_window)
-        return _cross_signals(fast, slow)
+        entries, exits = _cross_signals(fast, slow)
+        return StrategyEvaluation(tuple(entries), tuple(exits), (
+            IndicatorDefinition("sma_fast", f"SMA {config.fast_window}", "price", tuple(fast)),
+            IndicatorDefinition("sma_slow", f"SMA {config.slow_window}", "price", tuple(slow)),
+        ))
     if config.kind == "macd_crossover":
         fast = _ema(closes, config.fast_window)
         slow = _ema(closes, config.slow_window)
@@ -232,14 +297,32 @@ def _signals(
             for a, b in zip(fast, slow, strict=False)
         ]
         signal = _ema_optional(macd, config.signal_window)
-        return _cross_signals(macd, signal)
+        entries, exits = _cross_signals(macd, signal)
+        return StrategyEvaluation(tuple(entries), tuple(exits), (
+            IndicatorDefinition("macd", "MACD", "oscillator", tuple(macd)),
+            IndicatorDefinition("macd_signal", "Signal", "oscillator", tuple(signal)),
+        ))
     if config.kind == "rsi_mean_reversion":
         values = _rsi(closes, config.rsi_window)
         entries = [value is not None and value <= config.entry_threshold for value in values]
         exits = [value is not None and value >= config.exit_threshold for value in values]
-        return entries, exits
+        return StrategyEvaluation(tuple(entries), tuple(exits), (
+            IndicatorDefinition("rsi", f"RSI {config.rsi_window}", "oscillator", tuple(values)),
+            IndicatorDefinition(
+                "rsi_entry",
+                "Entry threshold",
+                "oscillator",
+                tuple(float(config.entry_threshold) for _ in values),
+            ),
+            IndicatorDefinition(
+                "rsi_exit",
+                "Exit threshold",
+                "oscillator",
+                tuple(float(config.exit_threshold) for _ in values),
+            ),
+        ))
     if config.kind == "markov_regime":
-        return _markov_signals(closes, config)
+        return _markov_signals(closes, config, start_index)
     by_time = {
         point.observed_at.astimezone(UTC).isoformat(): index
         for index, point in enumerate(prices)
@@ -251,7 +334,7 @@ def _signals(
         if index is None or index == len(prices) - 1:
             raise ValueError("external event must align to a non-final price bar")
         (entries if event.action == "enter_long" else exits)[index] = True
-    return entries, exits
+    return StrategyEvaluation(tuple(entries), tuple(exits))
 
 
 def _sma(values: list[float], window: int) -> list[float | None]:
@@ -312,8 +395,8 @@ def _rsi(values: list[float], window: int) -> list[float | None]:
 
 
 def _markov_signals(
-    closes: list[float], config: StrategyConfiguration
-) -> tuple[list[bool], list[bool]]:
+    closes: list[float], config: StrategyConfiguration, start_index: int = 0
+) -> StrategyEvaluation:
     from trade_research.skills.markov_method import walkforward_signal_series
 
     entries = [False] * len(closes)
@@ -326,7 +409,19 @@ def _markov_signals(
         bull_threshold=config.bull_threshold,
         bear_threshold=config.bear_threshold,
     )
+    regimes: list[float | None] = [None] * len(closes)
+    for index in range(config.regime_window, len(closes)):
+        rolling_return = closes[index] / closes[index - config.regime_window] - 1
+        regimes[index] = (
+            1.0
+            if rolling_return >= config.bull_threshold
+            else -1.0
+            if rolling_return <= config.bear_threshold
+            else 0.0
+        )
     for index, signal in enumerate(signals[:-1]):
+        if index < start_index:
+            continue
         if signal is None:
             continue
         if signal > 0.3 and not active:
@@ -335,7 +430,19 @@ def _markov_signals(
         elif signal <= 0 and active:
             exits[index] = True
             active = False
-    return entries, exits
+    return StrategyEvaluation(tuple(entries), tuple(exits), (
+        IndicatorDefinition("markov_signal", "Markov signal", "oscillator", tuple(signals)),
+        IndicatorDefinition("markov_regime", "Regime", "regime", tuple(regimes)),
+    ))
+
+
+def _slice_indicators(
+    indicators: tuple[IndicatorDefinition, ...], start_index: int
+) -> tuple[IndicatorDefinition, ...]:
+    return tuple(
+        IndicatorDefinition(item.key, item.label, item.panel, item.values[start_index:])
+        for item in indicators
+    )
 
 
 def _data_frame(
@@ -398,6 +505,9 @@ def _presentation(
     skill: BacktestingSkill,
     entries: list[bool],
     exits: list[bool],
+    indicators: tuple[IndicatorDefinition, ...],
+    *,
+    fractional_unit: float,
 ) -> BacktestPresentation:
     curve_frame = cast(pd.DataFrame, stats["_equity_curve"])
     trade_frame = cast(pd.DataFrame, stats["_trades"])
@@ -429,6 +539,39 @@ def _presentation(
         )
         for _, row in trade_frame.iterrows()
     )
+    strategy = stats["_strategy"]
+    open_trade = strategy.trades[0] if strategy.trades else None
+    open_position = None if open_trade is None else BacktestOpenPosition(
+        entry_at=open_trade.entry_time,
+        size=abs(float(open_trade.size)) * fractional_unit,
+        entry_price=float(open_trade.entry_price) / fractional_unit,
+        current_price=float(prices[-1].close),
+        unrealized_pnl=float(open_trade.pl),
+        return_ratio=float(open_trade.pl_pct),
+        duration_bars=max(0, len(prices) - 1 - int(open_trade.entry_bar)),
+    )
+    price_bars = tuple(
+        ReportPriceBar(
+            observed_at=point.observed_at,
+            open=float(cast(float, point.open)),
+            high=float(cast(float, point.high)),
+            low=float(cast(float, point.low)),
+            close=point.close,
+            volume=float(point.volume or 0),
+        )
+        for point in prices
+    )
+    indicator_series = tuple(
+        BacktestIndicatorSeries(
+            key=item.key, label=item.label, panel=item.panel,
+            points=tuple(
+                BacktestIndicatorPoint(observed_at=point.observed_at, value=float(value))
+                for point, value in zip(prices, item.values, strict=True)
+                if value is not None and math.isfinite(value)
+            ),
+        )
+        for item in indicators
+    )
     config = skill.strategy
     canonical = json.dumps({"entry": entries, "exit": exits}, separators=(",", ":"))
     signal_reference = f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
@@ -439,8 +582,11 @@ def _presentation(
         strategy_name=config.name,
         signal_reference=signal_reference,
         assumptions=assumptions,
+        price_bars=price_bars,
+        indicator_series=indicator_series,
         curve=curve,
         trades=trades,
+        open_position=open_position,
         presentation_reduced=reduced,
     )
 
@@ -452,6 +598,8 @@ def _assumptions(
     canonical = json.dumps(
         {
             "cash": skill.cash,
+            "start_date": skill.start_date.isoformat() if skill.start_date else None,
+            "minimum_holding_bars": skill.minimum_holding_bars,
             "commission": skill.commission,
             "spread": skill.spread,
             "position_size": skill.position_size,
@@ -468,6 +616,8 @@ def _assumptions(
     )
     return BacktestAssumptions(
         cash=skill.cash,
+        start_date=skill.start_date,
+        minimum_holding_bars=skill.minimum_holding_bars,
         commission=skill.commission,
         spread=skill.spread,
         position_size=skill.position_size,
