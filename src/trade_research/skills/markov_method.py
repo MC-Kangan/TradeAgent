@@ -160,6 +160,34 @@ def _compute_signal(pi: list[float], matrix: list[list[float]], current_regime_i
     return row[_BULL_IDX] - row[_BEAR_IDX]
 
 
+def walkforward_signal_series(
+    closes: list[float],
+    window: int,
+    min_train: int,
+    *,
+    bull_threshold: float,
+    bear_threshold: float,
+) -> list[float | None]:
+    """Return causal Markov signals aligned to closes, with no forward returns."""
+
+    signals: list[float | None] = [None] * len(closes)
+    for index in range(min_train, len(closes)):
+        history = closes[: index + 1]
+        returns = _rolling_returns(history, window)
+        labels = _label_regimes(
+            returns,
+            bull_threshold,
+            window,
+            bull_threshold=bull_threshold,
+            bear_threshold=bear_threshold,
+        )
+        matrix = _build_transition_matrix(labels, window)
+        signals[index] = _compute_signal(
+            _stationary_distribution(matrix), matrix, labels[-1]
+        )
+    return signals
+
+
 def _walkforward_backtest(
     closes: list[float],
     window: int,

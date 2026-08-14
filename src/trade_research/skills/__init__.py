@@ -1,5 +1,6 @@
 """Built-in immutable analyst skills and their composition helpers."""
 
+from trade_research.skills.backtesting import BacktestingSkill
 from trade_research.skills.core import (
     FilingsSkill,
     FundamentalSkill,
@@ -13,6 +14,7 @@ from trade_research.skills.markov_method import MarkovMethodSkill
 from trade_research.skills.parameters import (
     SKILL_PARAMETER_SCHEMAS,
     AssetAllocationParameters,
+    BacktestingSkillParameters,
     MarkovMethodParameters,
     PortfolioSkillParameters,
     TechnicalSkillParameters,
@@ -30,6 +32,8 @@ __all__ = [
     "FilingsSkill",
     "AssetAllocationParameters",
     "AssetAllocationSkill",
+    "BacktestingSkill",
+    "BacktestingSkillParameters",
     "CorrelationAnalysisSkill",
     "FundamentalSkill",
     "MarkovMethodParameters",

@@ -45,6 +45,7 @@ Key packages under `src/trade_research/`:
 | `domain/` | Immutable Pydantic types, provenance schema, closed enums |
 | `skills/core.py` | `FundamentalSkill`, `TechnicalSkill`, `FilingsSkill`, `SkillRegistry` |
 | `skills/price_series.py` | Cross-asset technical confirmation, historical risk, and volatility-regime skills |
+| `skills/backtesting.py` | Bounded daily long/flat strategy simulation |
 | `providers/` | Protocol contracts, local/remote data fetchers, registry |
 | `engine.py` | Async concurrent skill execution, partial-result handling |
 | `application.py` | Transport-neutral use cases |
@@ -153,6 +154,24 @@ remain out of scope until explicit forecast/view, current-weight, and cost input
 are available. Outputs are mathematical scenarios, never orders or personalized
 target allocations.
 
+### `backtesting`
+
+Runs reproducible, instrument-scoped daily backtests through pinned
+`backtesting.py` 0.6.6. Built-in strategies are SMA crossover, MACD crossover,
+RSI mean reversion, and the existing Markov regime method. Vibe Research may
+instead send an ordered, alternating list of timestamped `enter_long` and
+`exit_long` events in `skill_parameters.backtesting.strategy`.
+
+Execution is deliberately fixed: long/flat only, signals on bar *t* fill at
+bar *t+1* open, and optional commission, spread, stop-loss, and take-profit
+assumptions are explicit. Results include core performance observations plus
+bounded equity, drawdown, closed-trade data, and the complete bounded assumptions
+needed to reproduce the run. Crypto simulations use fractional units. Protective
+levels are anchored to the actual next-open fill price. It does not expose Python,
+optimization, plotting, brokers, or order APIs. Backtests and inline series are
+immediate-only (`run_skill`, `/analyze`, or MCP equivalents), because the safe
+job queue intentionally does not persist price bars or external signals.
+
 > **Detailed specifications:** See `skills/*/SKILL.md` for full algorithm descriptions,
 > input schemas, edge cases, and examples.
 
@@ -169,6 +188,8 @@ The HTTP `/skills` catalog exposes `supported_asset_types` and `scope`. Price-se
 technical, Markov, risk, and volatility-regime skills support both
 `equity` and `crypto`; fundamentals, filings, and `worth-buy-stocks`
 remain equity-only.
+The `backtesting` skill supports both equity and crypto daily series and accepts
+Vibe Research signals as bounded data rather than runtime strategy code.
 Portfolio-scoped correlation and allocation skills accept 2–9 bounded inline
 series in the same authenticated `/analyze` request and never receive broker
 account identifiers or raw positions.

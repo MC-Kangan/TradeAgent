@@ -458,6 +458,7 @@ def test_launcher_executes_from_resolved_project_root_not_external_cwd(tmp_path:
 def test_public_interfaces_and_dependencies_match_exact_research_only_allowlists() -> None:
     configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert set(configuration["project"]["dependencies"]) == {
+        "backtesting==0.6.6",
         "fastapi==0.116.1",
         "httpx==0.28.1",
         "mcp==1.12.4",

@@ -136,6 +136,14 @@ class MetricKind(StrEnum):
     PORTFOLIO_VOLATILITY = "portfolio_volatility"
     DIVERSIFICATION_RATIO = "diversification_ratio"
     EFFECTIVE_ASSET_COUNT = "effective_asset_count"
+    # Reproducible long/flat strategy simulation
+    BACKTEST_FINAL_EQUITY = "backtest_final_equity"
+    BACKTEST_TOTAL_RETURN = "backtest_total_return"
+    BACKTEST_BUY_HOLD_RETURN = "backtest_buy_hold_return"
+    BACKTEST_MAX_DRAWDOWN = "backtest_max_drawdown"
+    BACKTEST_TRADE_COUNT = "backtest_trade_count"
+    BACKTEST_WIN_RATE = "backtest_win_rate"
+    BACKTEST_SHARPE_RATIO = "backtest_sharpe_ratio"
 
 
 class VendorField(StrEnum):
@@ -214,6 +222,7 @@ class DerivedAlgorithm(StrEnum):
     VOLATILITY_REGIME_PERCENTILE = "volatility_regime_percentile"
     CORRELATION_MATRIX = "correlation_matrix"
     ASSET_ALLOCATION = "asset_allocation"
+    BACKTESTING_PY_SIMULATION = "backtesting_py_simulation"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")

@@ -35,6 +35,7 @@ from trade_research.reporting import sanitize_report
 from trade_research.settings import Settings
 from trade_research.skills import (
     AssetAllocationSkill,
+    BacktestingSkill,
     CorrelationAnalysisSkill,
     FilingsSkill,
     FundamentalSkill,
@@ -90,6 +91,7 @@ class ResearchEngine:
                 VolatilityRegimeSkill(),
                 CorrelationAnalysisSkill(),
                 AssetAllocationSkill(),
+                BacktestingSkill(),
             ),
         )
         selected_skills = skills or SkillRegistry(default_skills)

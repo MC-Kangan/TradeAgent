@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from trade_research.domain import InstrumentId
+from trade_research.skills.backtesting import SignalEvent, StrategyConfiguration
 from trade_research.skills.core import ResearchSkill
 
 PORTFOLIO_SKILLS = frozenset({"correlation-analysis", "asset-allocation"})
@@ -52,6 +54,143 @@ class AssetAllocationParameters(PortfolioSkillParameters):
     method: Literal["equal_weight", "inverse_volatility", "risk_parity", "max_diversification"] = (
         "risk_parity"
     )
+
+
+class _BacktestParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class SmaCrossoverParameters(_BacktestParameters):
+    kind: Literal["sma_crossover"] = "sma_crossover"
+    fast_window: int = Field(default=20, ge=2, le=252)
+    slow_window: int = Field(default=50, ge=3, le=520)
+
+    @model_validator(mode="after")
+    def validate_windows(self) -> Self:
+        if self.fast_window >= self.slow_window:
+            raise ValueError("fast_window must be smaller than slow_window")
+        return self
+
+
+class MacdCrossoverParameters(_BacktestParameters):
+    kind: Literal["macd_crossover"]
+    fast_window: int = Field(default=12, ge=2, le=252)
+    slow_window: int = Field(default=26, ge=3, le=520)
+    signal_window: int = Field(default=9, ge=2, le=252)
+
+    @model_validator(mode="after")
+    def validate_windows(self) -> Self:
+        if self.fast_window >= self.slow_window:
+            raise ValueError("fast_window must be smaller than slow_window")
+        return self
+
+
+class RsiMeanReversionParameters(_BacktestParameters):
+    kind: Literal["rsi_mean_reversion"]
+    window: int = Field(default=14, ge=2, le=252)
+    entry_threshold: float = Field(default=30, ge=1, le=99)
+    exit_threshold: float = Field(default=70, ge=1, le=99)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> Self:
+        if self.entry_threshold >= self.exit_threshold:
+            raise ValueError("entry_threshold must be smaller than exit_threshold")
+        return self
+
+
+class MarkovRegimeParameters(_BacktestParameters):
+    kind: Literal["markov_regime"]
+    window: int = Field(default=20, ge=2, le=252)
+    bull_threshold: float = Field(default=0.05, gt=0, le=1)
+    bear_threshold: float = Field(default=-0.05, ge=-1, lt=0)
+    min_train: int = Field(default=252, ge=50, le=2520)
+
+
+class ExternalSignalEventParameters(_BacktestParameters):
+    observed_at: datetime
+    action: Literal["enter_long", "exit_long"]
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("observed_at must include a timezone")
+        return value
+
+
+class ExternalSignalsParameters(_BacktestParameters):
+    kind: Literal["external_signals"]
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9-]*$")
+    events: tuple[ExternalSignalEventParameters, ...] = Field(min_length=1, max_length=520)
+
+    @field_validator("events")
+    @classmethod
+    def validate_events(
+        cls, events: tuple[ExternalSignalEventParameters, ...]
+    ) -> tuple[ExternalSignalEventParameters, ...]:
+        if list(events) != sorted(events, key=lambda event: event.observed_at):
+            raise ValueError("events must be ordered by observed_at")
+        if len({event.observed_at for event in events}) != len(events):
+            raise ValueError("event timestamps must be unique")
+        expected = "enter_long"
+        for event in events:
+            if event.action != expected:
+                raise ValueError("events must alternate, starting with enter_long")
+            expected = "exit_long" if expected == "enter_long" else "enter_long"
+        return events
+
+
+BacktestStrategyParameters = Annotated[
+    SmaCrossoverParameters
+    | MacdCrossoverParameters
+    | RsiMeanReversionParameters
+    | MarkovRegimeParameters
+    | ExternalSignalsParameters,
+    Field(discriminator="kind"),
+]
+
+
+class BacktestingSkillParameters(_BacktestParameters):
+    strategy: BacktestStrategyParameters = Field(default_factory=SmaCrossoverParameters)
+    cash: float = Field(default=10_000, gt=0, le=1_000_000_000)
+    commission: float = Field(default=0.001, ge=0, le=0.1)
+    spread: float = Field(default=0, ge=0, le=0.1)
+    position_size: float = Field(default=0.95, gt=0, lt=1)
+    stop_loss_pct: float | None = Field(default=None, gt=0, lt=1)
+    take_profit_pct: float | None = Field(default=None, gt=0, le=10)
+
+    def strategy_configuration(self) -> StrategyConfiguration:
+        strategy = self.strategy
+        if isinstance(strategy, SmaCrossoverParameters):
+            return StrategyConfiguration(
+                kind=strategy.kind, name="sma-crossover",
+                fast_window=strategy.fast_window, slow_window=strategy.slow_window,
+            )
+        if isinstance(strategy, MacdCrossoverParameters):
+            return StrategyConfiguration(
+                kind=strategy.kind, name="macd-crossover",
+                fast_window=strategy.fast_window, slow_window=strategy.slow_window,
+                signal_window=strategy.signal_window,
+            )
+        if isinstance(strategy, RsiMeanReversionParameters):
+            return StrategyConfiguration(
+                kind=strategy.kind, name="rsi-mean-reversion", rsi_window=strategy.window,
+                entry_threshold=strategy.entry_threshold, exit_threshold=strategy.exit_threshold,
+            )
+        if isinstance(strategy, MarkovRegimeParameters):
+            return StrategyConfiguration(
+                kind=strategy.kind, name="markov-regime", regime_window=strategy.window,
+                bull_threshold=strategy.bull_threshold, bear_threshold=strategy.bear_threshold,
+                min_train=strategy.min_train,
+            )
+        return StrategyConfiguration(
+            kind=strategy.kind,
+            name=strategy.name,
+            events=tuple(
+                SignalEvent(event.observed_at.astimezone(UTC).isoformat(), event.action)
+                for event in strategy.events
+            ),
+        )
 
 
 def configure_skill(
@@ -110,6 +249,19 @@ def configure_skill(
             method=allocation_params.method,
         )
 
+    if skill.name == "backtesting":
+        backtest_params = BacktestingSkillParameters.model_validate(params)
+        return replace(  # type: ignore[type-var]
+            skill,
+            strategy=backtest_params.strategy_configuration(),
+            cash=backtest_params.cash,
+            commission=backtest_params.commission,
+            spread=backtest_params.spread,
+            position_size=backtest_params.position_size,
+            stop_loss_pct=backtest_params.stop_loss_pct,
+            take_profit_pct=backtest_params.take_profit_pct,
+        )
+
     if params:
         raise ValueError(f"Skill '{skill.name}' does not accept parameters")
     return skill
@@ -121,4 +273,5 @@ SKILL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     "markov-method": MarkovMethodParameters.model_json_schema(),
     "correlation-analysis": PortfolioSkillParameters.model_json_schema(),
     "asset-allocation": AssetAllocationParameters.model_json_schema(),
+    "backtesting": BacktestingSkillParameters.model_json_schema(),
 }

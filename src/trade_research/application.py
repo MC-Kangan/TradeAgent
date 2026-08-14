@@ -58,6 +58,7 @@ class ResearchApplication:
             "volatility-regime": "Realized-volatility percentile and expansion state.",
             "correlation-analysis": "Aligned return correlations and diversification structure.",
             "asset-allocation": "Long-only price-derived allocation scenarios.",
+            "backtesting": "Daily long/flat simulation for built-in or timestamped signals.",
         }
         supported_asset_types = {
             "fundamental": ["equity"],
@@ -70,6 +71,7 @@ class ResearchApplication:
             "volatility-regime": ["equity", "crypto"],
             "correlation-analysis": ["equity", "crypto"],
             "asset-allocation": ["equity", "crypto"],
+            "backtesting": ["equity", "crypto"],
         }
         scope = (
             "portfolio"
@@ -123,6 +125,10 @@ class ResearchApplication:
 
         if self.queue is None:
             raise RuntimeError("a job queue is required to start durable research")
+        if request.price_series or "backtesting" in request.analysts:
+            raise ValueError(
+                "inline price series and backtesting are immediate-only; use run_skill or research"
+            )
         self.engine.configure_request(request)
         self.engine.validate_analysts(request.analysts)
         submission = self.queue.enqueue(request)

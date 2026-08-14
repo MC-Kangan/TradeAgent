@@ -286,6 +286,7 @@ class LimitationKind(StrEnum):
     ANALYST_FAILURE = "analyst_failure"
     EVIDENCE_OMITTED = "evidence_omitted"
     BOUNDED_INPUT = "bounded_input"
+    UNEXECUTED_SIGNALS = "unexecuted_signals"
 
 
 class InferenceKind(StrEnum):
@@ -463,6 +464,78 @@ class AssetAllocationPresentation(DomainModel):
         return self
 
 
+class BacktestCurvePoint(DomainModel):
+    """One bounded equity-curve point from a completed simulation."""
+
+    observed_at: datetime
+    equity: float = Field(ge=0)
+    drawdown: float = Field(ge=0, le=1)
+
+
+class BacktestTrade(DomainModel):
+    """One closed long trade, expressed as research output rather than an order."""
+
+    entry_at: datetime
+    exit_at: datetime
+    size: float = Field(gt=0)
+    entry_price: float = Field(gt=0)
+    exit_price: float = Field(gt=0)
+    pnl: float
+    return_ratio: float
+    duration_bars: int = Field(ge=0)
+
+
+class BacktestStrategyParameter(DomainModel):
+    """One closed strategy setting retained for reproducibility."""
+
+    key: Literal[
+        "fast_window",
+        "slow_window",
+        "signal_window",
+        "rsi_window",
+        "entry_threshold",
+        "exit_threshold",
+        "regime_window",
+        "bull_threshold",
+        "bear_threshold",
+        "min_train",
+        "event_count",
+    ]
+    value: int | float
+
+
+class BacktestAssumptions(DomainModel):
+    """Bounded simulation settings required to reproduce a backtest."""
+
+    execution: Literal["signal_close_next_open"] = "signal_close_next_open"
+    cash: float = Field(gt=0)
+    commission: float = Field(ge=0)
+    spread: float = Field(ge=0)
+    position_size: float = Field(gt=0, lt=1)
+    stop_loss_pct: float | None = Field(default=None, gt=0, lt=1)
+    take_profit_pct: float | None = Field(default=None, gt=0)
+    strategy_parameters: tuple[BacktestStrategyParameter, ...] = Field(max_length=11)
+    configuration_reference: OpaqueReference
+
+
+class BacktestPresentation(DomainModel):
+    """Bounded, renderer-neutral output for a reproducible backtest."""
+
+    template: Literal["backtesting-v1"] = "backtesting-v1"
+    engine: Literal["backtesting.py"] = "backtesting.py"
+    engine_version: Annotated[str, Field(min_length=1, max_length=16)]
+    strategy_kind: Literal[
+        "sma_crossover", "macd_crossover", "rsi_mean_reversion", "markov_regime",
+        "external_signals",
+    ]
+    strategy_name: AnalystName
+    signal_reference: OpaqueReference
+    assumptions: BacktestAssumptions
+    curve: tuple[BacktestCurvePoint, ...] = Field(default=(), max_length=520)
+    trades: tuple[BacktestTrade, ...] = Field(default=(), max_length=200)
+    presentation_reduced: bool = False
+
+
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
@@ -484,6 +557,7 @@ class AnalystResult(DomainModel):
         | MarkovPresentation
         | CorrelationPresentation
         | AssetAllocationPresentation
+        | BacktestPresentation
         | None
     ) = None
 
