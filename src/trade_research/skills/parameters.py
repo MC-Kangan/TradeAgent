@@ -108,7 +108,7 @@ class MarkovRegimeParameters(_BacktestParameters):
 
 class ExternalSignalEventParameters(_BacktestParameters):
     observed_at: datetime
-    action: Literal["enter_long", "exit_long"]
+    action: Literal["add_long", "reduce_long", "exit_long"]
 
     @field_validator("observed_at")
     @classmethod
@@ -132,11 +132,6 @@ class ExternalSignalsParameters(_BacktestParameters):
             raise ValueError("events must be ordered by observed_at")
         if len({event.observed_at for event in events}) != len(events):
             raise ValueError("event timestamps must be unique")
-        expected = "enter_long"
-        for event in events:
-            if event.action != expected:
-                raise ValueError("events must alternate, starting with enter_long")
-            expected = "exit_long" if expected == "enter_long" else "enter_long"
         return events
 
 
@@ -157,9 +152,17 @@ class BacktestingSkillParameters(_BacktestParameters):
     cash: float = Field(default=10_000, gt=0, le=1_000_000_000)
     commission: float = Field(default=0.001, ge=0, le=0.1)
     spread: float = Field(default=0, ge=0, le=0.1)
-    position_size: float = Field(default=0.95, gt=0, lt=1)
+    capital_per_add: float = Field(default=0.2, gt=0, le=1)
+    max_allocation: float = Field(default=0.6, gt=0, le=1)
+    minimum_addition_bars: int = Field(default=1, ge=1, le=520)
     stop_loss_pct: float | None = Field(default=None, gt=0, lt=1)
     take_profit_pct: float | None = Field(default=None, gt=0, le=10)
+
+    @model_validator(mode="after")
+    def validate_position_sizing(self) -> Self:
+        if self.capital_per_add > self.max_allocation:
+            raise ValueError("capital_per_add must not exceed max_allocation")
+        return self
 
     def strategy_configuration(self) -> StrategyConfiguration:
         strategy = self.strategy
@@ -261,7 +264,9 @@ def configure_skill(
             cash=backtest_params.cash,
             commission=backtest_params.commission,
             spread=backtest_params.spread,
-            position_size=backtest_params.position_size,
+            capital_per_add=backtest_params.capital_per_add,
+            max_allocation=backtest_params.max_allocation,
+            minimum_addition_bars=backtest_params.minimum_addition_bars,
             stop_loss_pct=backtest_params.stop_loss_pct,
             take_profit_pct=backtest_params.take_profit_pct,
         )

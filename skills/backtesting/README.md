@@ -1,6 +1,6 @@
 # Backtesting
 
-This immutable analyst skill tests simple daily long/flat ideas against standard
+This immutable analyst skill tests simple daily long-only ideas against standard
 OHLC price bars. It wraps `backtesting.py` 0.6.6 behind Trade Research's existing
 provider, provenance, report, HTTP, CLI, and MCP boundaries.
 
@@ -19,24 +19,36 @@ An external Vibe Research idea looks like:
     "kind": "external_signals",
     "name": "vibe-momentum-test",
     "events": [
-      {"observed_at": "2026-01-05T00:00:00Z", "action": "enter_long"},
+      {"observed_at": "2026-01-05T00:00:00Z", "action": "add_long"},
+      {"observed_at": "2026-01-20T00:00:00Z", "action": "reduce_long"},
       {"observed_at": "2026-02-02T00:00:00Z", "action": "exit_long"}
     ]
   },
   "cash": 10000,
   "commission": 0.001,
-  "position_size": 0.95
+  "capital_per_add": 0.2,
+  "max_allocation": 0.6,
+  "minimum_addition_bars": 1
 }
 ```
 
 Events must be timezone-aware, ordered, unique, aligned exactly to supplied
-bars after normalization to UTC, and alternate starting with `enter_long`. The final exit may be omitted;
-the engine then reports the position open and marked to the final close.
+bars after normalization to UTC. `add_long` creates one fixed-notional
+fractional lot when the cooldown, cash, and maximum-allocation checks pass.
+`reduce_long` closes the oldest eligible lot, while `exit_long` closes every
+eligible lot. A minimum holding period can defer either sell action. Final exits
+may be omitted, in which case remaining lots are marked to the final close.
+
+Built-in SMA, MACD, RSI, and Markov strategies add only on state transitions and
+use `exit_long` when their thesis reverses. In particular, a persistent RSI
+condition does not add a new lot on every bar. RSI backtests use the same shared
+Wilder calculation as `technical-basic` and return the complete RSI curve plus
+entry and exit threshold series for charting.
 
 The output is research, not execution advice. Signals fill on the next bar's
 open. Stops and targets are calculated from that actual fill and become active
-for subsequent bars. Crypto uses fractional units; equity simulations retain
-whole-share behavior and explicitly report entry signals that could not execute.
+for subsequent bars. All markets use the same fractional-share execution model,
+so an asset price above starting cash does not by itself prevent a fill.
 Positions still open at the end are marked to the final close and reported
 separately from closed-trade statistics.
 Every result retains its bounded strategy and cost assumptions plus a canonical

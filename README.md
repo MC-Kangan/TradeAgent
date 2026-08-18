@@ -45,7 +45,7 @@ Key packages under `src/trade_research/`:
 | `domain/` | Immutable Pydantic types, provenance schema, closed enums |
 | `skills/core.py` | `FundamentalSkill`, `TechnicalSkill`, `FilingsSkill`, `SkillRegistry` |
 | `skills/price_series.py` | Cross-asset technical confirmation, historical risk, and volatility-regime skills |
-| `skills/backtesting.py` | Bounded daily long/flat strategy simulation |
+| `skills/backtesting.py` | Bounded daily long-only tranche simulation |
 | `providers/` | Protocol contracts, local/remote data fetchers, registry |
 | `engine.py` | Async concurrent skill execution, partial-result handling |
 | `application.py` | Transport-neutral use cases |
@@ -159,17 +159,22 @@ target allocations.
 Runs reproducible, instrument-scoped daily backtests through pinned
 `backtesting.py` 0.6.6. Built-in strategies are SMA crossover, MACD crossover,
 RSI mean reversion, and the existing Markov regime method. Vibe Research may
-instead send an ordered, alternating list of timestamped `enter_long` and
-`exit_long` events in `skill_parameters.backtesting.strategy`.
+instead send an ordered list of timestamped `add_long`, `reduce_long`, and
+`exit_long` events in `skill_parameters.backtesting.strategy`. Additions create
+fractional lots, reductions remove the oldest eligible lot, and exits flatten
+all eligible lots.
 
-Execution is deliberately fixed: long/flat only, signals on bar *t* fill at
-bar *t+1* open, early exits respect the configured minimum holding bars, and
-optional commission, spread, stop-loss, and take-profit assumptions are explicit.
+Execution is deliberately fixed: long-only with no leverage, signals on bar
+*t* fill at bar *t+1* open, and each signal acts on a fractional-share tranche
+whose target notional is a configured percentage of starting capital. Early
+additions respect a cooldown and a maximum allocation; exits respect the
+configured minimum holding bars. Optional commission, spread, stop-loss, and
+take-profit assumptions are explicit.
 An optional start date separates causal warm-up from measured performance.
 Results include core observations plus bounded price, indicator, equity,
 drawdown, closed-trade, and open-position data with the assumptions needed to
-reproduce the run. Crypto simulations use fractional units. Protective
-levels are anchored to the actual next-open fill price. It does not expose Python,
+reproduce the run. Every market uses the same fractional-unit execution model.
+Protective levels are anchored to the actual next-open fill price. It does not expose Python,
 optimization, plotting, brokers, or order APIs. Backtests and inline series are
 immediate-only (`run_skill`, `/analyze`, or MCP equivalents), because the safe
 job queue intentionally does not persist price bars or external signals.

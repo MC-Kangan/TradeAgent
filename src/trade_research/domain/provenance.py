@@ -136,7 +136,7 @@ class MetricKind(StrEnum):
     PORTFOLIO_VOLATILITY = "portfolio_volatility"
     DIVERSIFICATION_RATIO = "diversification_ratio"
     EFFECTIVE_ASSET_COUNT = "effective_asset_count"
-    # Reproducible long/flat strategy simulation
+    # Reproducible long-only tranche strategy simulation
     BACKTEST_FINAL_EQUITY = "backtest_final_equity"
     BACKTEST_TOTAL_RETURN = "backtest_total_return"
     BACKTEST_BUY_HOLD_RETURN = "backtest_buy_hold_return"

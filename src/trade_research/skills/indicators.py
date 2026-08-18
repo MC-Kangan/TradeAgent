@@ -390,17 +390,34 @@ def ema_series(values: Sequence[float], period: int) -> list[float]:
     return result
 
 
-def rsi(values: Sequence[float], period: int) -> float:
-    """Wilder's RSI(period).  Returns 50.0 for a flat series."""
+def rsi_series(values: Sequence[float], period: int) -> list[float | None]:
+    """Wilder's RSI(period) at each observation after the warm-up window."""
+    result: list[float | None] = [None] * len(values)
+    if len(values) <= period:
+        return result
     changes = [values[index] - values[index - 1] for index in range(1, len(values))]
     average_gain = statistics.fmean(max(change, 0) for change in changes[:period])
     average_loss = statistics.fmean(max(-change, 0) for change in changes[:period])
-    for change in changes[period:]:
+    result[period] = _rsi_value(average_gain, average_loss)
+    for index, change in enumerate(changes[period:], start=period + 1):
         average_gain = (average_gain * (period - 1) + max(change, 0)) / period
         average_loss = (average_loss * (period - 1) + max(-change, 0)) / period
+        result[index] = _rsi_value(average_gain, average_loss)
+    return result
+
+
+def _rsi_value(average_gain: float, average_loss: float) -> float:
     if average_loss == 0:
         return 100.0 if average_gain > 0 else 50.0
     return 100 - 100 / (1 + average_gain / average_loss)
+
+
+def rsi(values: Sequence[float], period: int) -> float:
+    """Latest Wilder RSI(period). Returns 50.0 for a flat series."""
+    value = rsi_series(values, period)[-1]
+    if value is None:
+        raise ValueError("RSI requires more observations than its period")
+    return value
 
 
 def macd_series(values: Sequence[float], fast: int, slow: int) -> list[float]:

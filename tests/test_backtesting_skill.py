@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from trade_research.application import ResearchApplication
 from trade_research.domain import (
@@ -16,7 +15,6 @@ from trade_research.domain import (
     InlinePriceBar,
     InlinePriceSeries,
     InstrumentId,
-    LimitationKind,
     ReportStatus,
     SignalKind,
 )
@@ -68,24 +66,39 @@ def test_backtesting_parameters_publish_discriminated_strategy_schema() -> None:
     schema = BacktestingSkillParameters.model_json_schema()
     assert "strategy" in schema["properties"]
     assert BacktestingSkillParameters().strategy.kind == "sma_crossover"
+    assert BacktestingSkillParameters().capital_per_add == 0.2
+    assert BacktestingSkillParameters().max_allocation == 0.6
+    assert BacktestingSkillParameters().minimum_addition_bars == 1
 
-
-def test_external_events_must_alternate() -> None:
-    timestamp = datetime(2025, 1, 1, tzinfo=UTC)
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="capital_per_add"):
         BacktestingSkillParameters.model_validate(
-            {
-                "strategy": {
-                    "kind": "external_signals",
-                    "name": "vibe-test",
-                    "events": [
-                        {"observed_at": timestamp.isoformat(), "action": "enter_long"},
-                        {"observed_at": (timestamp + timedelta(days=1)).isoformat(),
-                         "action": "enter_long"},
-                    ],
-                }
-            }
+            {"capital_per_add": 0.5, "max_allocation": 0.4}
         )
+
+
+def test_external_events_allow_repeated_buy_and_sell_signals() -> None:
+    timestamp = datetime(2025, 1, 1, tzinfo=UTC)
+    parameters = BacktestingSkillParameters.model_validate(
+        {
+            "strategy": {
+                "kind": "external_signals",
+                "name": "vibe-test",
+                "events": [
+                    {"observed_at": timestamp.isoformat(), "action": "add_long"},
+                    {"observed_at": (timestamp + timedelta(days=1)).isoformat(),
+                     "action": "add_long"},
+                    {"observed_at": (timestamp + timedelta(days=2)).isoformat(),
+                     "action": "reduce_long"},
+                    {"observed_at": (timestamp + timedelta(days=3)).isoformat(),
+                     "action": "exit_long"},
+                ],
+            }
+        }
+    )
+
+    assert [event.action for event in parameters.strategy.events] == [
+        "add_long", "add_long", "reduce_long", "exit_long",
+    ]
 
 
 def test_external_signal_fills_at_next_bar_open() -> None:
@@ -94,13 +107,13 @@ def test_external_signal_fills_at_next_bar_open() -> None:
         {
             "cash": 10_000,
             "commission": 0,
-            "position_size": 0.5,
+            "capital_per_add": 0.5,
             "strategy": {
                 "kind": "external_signals",
                 "name": "vibe-test",
                 "events": [
                     {"observed_at": points[1].observed_at.isoformat(),
-                     "action": "enter_long"},
+                     "action": "add_long"},
                     {"observed_at": points[3].observed_at.isoformat(),
                      "action": "exit_long"},
                 ],
@@ -116,9 +129,9 @@ def test_external_signal_fills_at_next_bar_open() -> None:
     assert result.presentation.template == "backtesting-v1"
     assert len(result.presentation.trades) == 1
     assert result.presentation.trades[0].entry_at == points[2].observed_at
-    assert result.presentation.trades[0].entry_price == points[2].open
+    assert result.presentation.trades[0].entry_price == pytest.approx(points[2].open)
     assert result.presentation.trades[0].exit_at == points[4].observed_at
-    assert result.presentation.trades[0].exit_price == points[4].open
+    assert result.presentation.trades[0].exit_price == pytest.approx(points[4].open)
 
 
 def test_start_date_uses_prior_bars_only_for_warmup() -> None:
@@ -153,7 +166,7 @@ def test_early_exit_is_deferred_until_minimum_holding_period() -> None:
                 "kind": "external_signals",
                 "name": "minimum-hold-test",
                 "events": [
-                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"},
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
                     {"observed_at": points[2].observed_at.isoformat(), "action": "exit_long"},
                 ],
             },
@@ -184,30 +197,112 @@ def test_backtest_returns_chart_ready_indicator_series() -> None:
     assert result.presentation.indicator_series[0].points[-1].observed_at == points[-1].observed_at
 
 
-def test_crypto_backtest_uses_fractional_units_at_realistic_prices() -> None:
-    points = _prices([50_000.0, 51_000.0, 52_000.0, 53_000.0, 54_000.0], market="CRYPTO")
+def test_persistent_rsi_condition_adds_only_on_threshold_transition() -> None:
+    points = _prices([100.0 - index for index in range(24)])
     configured = configure_skill(
         BacktestingSkill(),
         {
+            "cash": 1_000,
+            "commission": 0,
+            "strategy": {
+                "kind": "rsi_mean_reversion",
+                "window": 3,
+                "entry_threshold": 30,
+                "exit_threshold": 70,
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.COMPLETE
+    assert result.presentation is not None
+    assert len(result.presentation.open_positions) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("market", ["US", "CRYPTO"])
+async def test_rsi_curve_matches_technical_skill_across_asset_classes(
+    market: str,
+) -> None:
+    closes = [100.0 + (index % 9) * 1.5 - (index % 5) * 0.8 for index in range(90)]
+    points = _prices(closes, market=market)
+    instrument = points[0].instrument
+    request = AnalysisRequest(
+        instrument=instrument,
+        analysts=("backtesting", "technical-basic"),
+        skill_parameters={
+            "backtesting": {
+                "commission": 0,
+                "strategy": {
+                    "kind": "rsi_mean_reversion",
+                    "window": 14,
+                    "entry_threshold": 30,
+                    "exit_threshold": 70,
+                },
+            }
+        },
+    )
+
+    report = await ResearchEngine.from_settings(providers=_providers(points)).analyze(
+        request
+    )
+    results = {result.analyst: result for result in report.results}
+    presentation = results["backtesting"].presentation
+
+    assert presentation is not None
+    series = {item.key: item for item in presentation.indicator_series}
+    assert set(series) == {"rsi", "rsi_entry", "rsi_exit"}
+    assert series["rsi"].panel == "oscillator"
+    assert {point.value for point in series["rsi_entry"].points} == {30.0}
+    assert {point.value for point in series["rsi_exit"].points} == {70.0}
+    technical_rsi = next(
+        item.value
+        for item in results["technical-basic"].observations
+        if item.metric.value == "relative_strength_index_14"
+    )
+    assert series["rsi"].points[-1].value == pytest.approx(technical_rsi)
+
+
+@pytest.mark.parametrize("market", ["US", "CRYPTO"])
+def test_every_market_uses_fractional_units_at_prices_above_starting_cash(
+    market: str,
+) -> None:
+    points = _prices([50_000.0, 51_000.0, 52_000.0, 53_000.0, 54_000.0], market="CRYPTO")
+    if market == "US":
+        points = _prices([50_000.0, 51_000.0, 52_000.0, 53_000.0, 54_000.0])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "cash": 1_000,
+            "capital_per_add": 0.2,
+            "max_allocation": 1,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
                 "name": "crypto-test",
                 "events": [
-                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"}
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
                 ],
             },
         },
     )
 
     result = configured.analyze(
-        InstrumentId(symbol="BTC-USD", market="CRYPTO"), _providers(points)
+        InstrumentId(symbol="BTC-USD" if market == "CRYPTO" else "TEST", market=market),
+        _providers(points),
     )
 
     assert result.status is ReportStatus.COMPLETE
     assert result.presentation is not None
-    assert result.presentation.open_position is not None
-    assert 0 < result.presentation.open_position.size < 1
+    assert len(result.presentation.open_positions) == 1
+    assert 0 < result.presentation.open_positions[0].size < 1
+    assert (
+        result.presentation.open_positions[0].size
+        * result.presentation.open_positions[0].entry_price
+    ) == pytest.approx(200, abs=0.01)
 
 
 def test_report_preserves_reproducibility_assumptions() -> None:
@@ -218,7 +313,9 @@ def test_report_preserves_reproducibility_assumptions() -> None:
             "cash": 25_000,
             "commission": 0.002,
             "spread": 0.001,
-            "position_size": 0.75,
+            "capital_per_add": 0.25,
+            "max_allocation": 0.75,
+            "minimum_addition_bars": 4,
             "stop_loss_pct": 0.08,
             "take_profit_pct": 0.2,
             "strategy": {"kind": "sma_crossover", "fast_window": 2, "slow_window": 3},
@@ -232,7 +329,9 @@ def test_report_preserves_reproducibility_assumptions() -> None:
     assert assumptions.cash == 25_000
     assert assumptions.commission == 0.002
     assert assumptions.spread == 0.001
-    assert assumptions.position_size == 0.75
+    assert assumptions.capital_per_add == 0.25
+    assert assumptions.max_allocation == 0.75
+    assert assumptions.minimum_addition_bars == 4
     assert assumptions.stop_loss_pct == 0.08
     assert assumptions.take_profit_pct == 0.2
     assert assumptions.execution == "signal_close_next_open"
@@ -259,7 +358,7 @@ def test_protective_levels_are_anchored_to_actual_entry_price() -> None:
                 "kind": "external_signals",
                 "name": "gap-test",
                 "events": [
-                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"}
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
                 ],
             },
         },
@@ -292,7 +391,7 @@ def test_protective_exit_waits_for_minimum_holding_period() -> None:
                 "kind": "external_signals",
                 "name": "minimum-hold-stop-test",
                 "events": [
-                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"}
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
                 ],
             },
         },
@@ -307,31 +406,179 @@ def test_protective_exit_waits_for_minimum_holding_period() -> None:
     assert trade.duration_bars == 3
 
 
-def test_unexecuted_entry_signal_is_reported_partial() -> None:
-    points = _prices([50_000.0, 51_000.0, 52_000.0, 53_000.0, 54_000.0])
+def test_repeated_signals_add_and_remove_fixed_notional_tranches() -> None:
+    points = _prices([100.0] * 8)
     configured = configure_skill(
         BacktestingSkill(),
         {
+            "cash": 1_000,
+            "capital_per_add": 0.2,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
-                "name": "expensive-equity-test",
+                "name": "tranche-test",
                 "events": [
-                    {"observed_at": points[1].observed_at.isoformat(), "action": "enter_long"}
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[2].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[3].observed_at.isoformat(), "action": "reduce_long"},
+                    {"observed_at": points[4].observed_at.isoformat(), "action": "reduce_long"},
                 ],
             },
         },
     )
 
-    with pytest.warns(UserWarning):
-        result = configured.analyze(
-            InstrumentId(symbol="TEST", market="US"), _providers(points)
-        )
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.COMPLETE
+    assert result.presentation is not None
+    assert len(result.presentation.trades) == 2
+    assert [trade.entry_at for trade in result.presentation.trades] == [
+        points[2].observed_at, points[3].observed_at,
+    ]
+    assert [trade.exit_at for trade in result.presentation.trades] == [
+        points[4].observed_at, points[5].observed_at,
+    ]
+    assert all(trade.size == pytest.approx(2.0) for trade in result.presentation.trades)
+    assert not result.presentation.open_positions
+
+
+def test_entry_is_skipped_when_a_full_tranche_is_not_available() -> None:
+    points = _prices([100.0] * 9)
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "cash": 1_000,
+            "capital_per_add": 0.2,
+            "max_allocation": 1,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "cash-limit-test",
+                "events": [
+                    {
+                        "observed_at": points[index].observed_at.isoformat(),
+                        "action": "add_long",
+                    }
+                    for index in range(1, 7)
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
 
     assert result.status is ReportStatus.PARTIAL
-    assert LimitationKind.UNEXECUTED_SIGNALS in result.limitations
     assert result.presentation is not None
-    assert not result.presentation.trades
+    assert len(result.presentation.open_positions) == 5
+    assert all(
+        position.size * position.entry_price == pytest.approx(200, abs=0.01)
+        for position in result.presentation.open_positions
+    )
+
+
+def test_maximum_allocation_caps_additions() -> None:
+    points = _prices([100.0] * 9)
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "cash": 1_000,
+            "capital_per_add": 0.2,
+            "max_allocation": 0.6,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "allocation-cap-test",
+                "events": [
+                    {
+                        "observed_at": points[index].observed_at.isoformat(),
+                        "action": "add_long",
+                    }
+                    for index in range(1, 7)
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.PARTIAL
+    assert result.presentation is not None
+    assert len(result.presentation.open_positions) == 3
+
+
+def test_exit_long_closes_all_open_tranches() -> None:
+    points = _prices([100.0] * 9)
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "cash": 1_000,
+            "capital_per_add": 0.2,
+            "max_allocation": 0.8,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "exit-all-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[2].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[3].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[4].observed_at.isoformat(), "action": "exit_long"},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.COMPLETE
+    assert result.presentation is not None
+    assert len(result.presentation.trades) == 3
+    assert {trade.exit_at for trade in result.presentation.trades} == {
+        points[5].observed_at
+    }
+    assert not result.presentation.open_positions
+
+
+def test_addition_cooldown_skips_near_duplicate_signals() -> None:
+    points = _prices([100.0] * 9)
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "cash": 1_000,
+            "capital_per_add": 0.2,
+            "max_allocation": 0.8,
+            "minimum_addition_bars": 3,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "cooldown-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[2].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[4].observed_at.isoformat(), "action": "add_long"},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.PARTIAL
+    assert result.presentation is not None
+    assert [position.entry_at for position in result.presentation.open_positions] == [
+        points[2].observed_at,
+        points[5].observed_at,
+    ]
 
 
 def test_external_event_matches_same_instant_with_different_offset() -> None:
@@ -345,7 +592,7 @@ def test_external_event_matches_same_instant_with_different_offset() -> None:
                 "kind": "external_signals",
                 "name": "offset-test",
                 "events": [
-                    {"observed_at": same_instant.isoformat(), "action": "enter_long"}
+                    {"observed_at": same_instant.isoformat(), "action": "add_long"}
                 ],
             },
         },
@@ -355,7 +602,7 @@ def test_external_event_matches_same_instant_with_different_offset() -> None:
 
     assert result.status is ReportStatus.COMPLETE
     assert result.presentation is not None
-    assert result.presentation.open_position is not None
+    assert result.presentation.open_positions
 
 
 def test_sma_backtest_produces_bounded_report_data() -> None:
@@ -419,7 +666,7 @@ def test_misaligned_external_event_returns_partial() -> None:
                 "events": [
                     {
                         "observed_at": datetime(2024, 1, 1, tzinfo=UTC).isoformat(),
-                        "action": "enter_long",
+                        "action": "add_long",
                     }
                 ],
             }
@@ -469,7 +716,7 @@ async def test_vibe_request_uses_existing_run_skill_and_inline_price_flow(
                     "events": [
                         {
                             "observed_at": points[1].observed_at.isoformat(),
-                            "action": "enter_long",
+                            "action": "add_long",
                         }
                     ],
                 },
@@ -502,7 +749,7 @@ async def test_vibe_request_uses_existing_run_skill_and_inline_price_flow(
     presentation = payload["results"][0]["presentation"]
     assert presentation["template"] == "backtesting-v1"
     assert presentation["trades"] == []
-    assert presentation["open_position"]["entry_at"] == "2025-01-03T00:00:00Z"
+    assert presentation["open_positions"][0]["entry_at"] == "2025-01-03T00:00:00Z"
     assert presentation["assumptions"]["cash"] == 10_000
     assert presentation["assumptions"]["strategy_parameters"] == [
         {"key": "event_count", "value": 1}
@@ -554,7 +801,7 @@ def test_serialized_report_omits_raw_external_events(tmp_path: Path) -> None:
             "strategy": {
                 "kind": "external_signals",
                 "name": "vibe-private-idea",
-                "events": [{"observed_at": event_at, "action": "enter_long"}],
+                "events": [{"observed_at": event_at, "action": "add_long"}],
             }
         },
     )
@@ -576,5 +823,5 @@ def test_serialized_report_omits_raw_external_events(tmp_path: Path) -> None:
         )
     )
     assert event_at not in payload
-    assert "enter_long" not in payload
+    assert "add_long" not in payload
     assert app.describe_skill("backtesting")["supported_asset_types"] == ["equity", "crypto"]

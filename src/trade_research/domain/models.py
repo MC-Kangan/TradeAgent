@@ -541,7 +541,9 @@ class BacktestAssumptions(DomainModel):
     cash: float = Field(gt=0)
     commission: float = Field(ge=0)
     spread: float = Field(ge=0)
-    position_size: float = Field(gt=0, lt=1)
+    capital_per_add: float = Field(gt=0, le=1)
+    max_allocation: float = Field(gt=0, le=1)
+    minimum_addition_bars: int = Field(default=1, ge=1, le=520)
     stop_loss_pct: float | None = Field(default=None, gt=0, lt=1)
     take_profit_pct: float | None = Field(default=None, gt=0)
     strategy_parameters: tuple[BacktestStrategyParameter, ...] = Field(max_length=11)
@@ -565,7 +567,7 @@ class BacktestPresentation(DomainModel):
     indicator_series: tuple[BacktestIndicatorSeries, ...] = Field(default=(), max_length=4)
     curve: tuple[BacktestCurvePoint, ...] = Field(default=(), max_length=520)
     trades: tuple[BacktestTrade, ...] = Field(default=(), max_length=200)
-    open_position: BacktestOpenPosition | None = None
+    open_positions: tuple[BacktestOpenPosition, ...] = Field(default=(), max_length=520)
     presentation_reduced: bool = False
 
 

@@ -1,4 +1,4 @@
-"""Bounded long/flat backtesting built on the pinned backtesting.py engine."""
+"""Bounded long-only tranche backtesting on the pinned backtesting.py engine."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Literal, cast
 
 import backtesting
 import pandas as pd
-from backtesting import Backtest, Strategy
+from backtesting import Strategy
 from backtesting.lib import FractionalBacktest
 
 from trade_research.domain import (
@@ -37,7 +37,11 @@ from trade_research.domain import (
 )
 from trade_research.domain.provenance import DerivedAlgorithm, normalize_provider_kind
 from trade_research.providers import CapabilityName, PricePoint, ProviderRegistry
-from trade_research.skills.indicators import price_series_reference, validated_prices
+from trade_research.skills.indicators import (
+    price_series_reference,
+    rsi_series,
+    validated_prices,
+)
 
 StrategyKind = Literal[
     "sma_crossover", "macd_crossover", "rsi_mean_reversion", "markov_regime",
@@ -61,7 +65,7 @@ BacktestParameterKey = Literal[
 @dataclass(frozen=True, slots=True)
 class SignalEvent:
     observed_at: str
-    action: Literal["enter_long", "exit_long"]
+    action: Literal["add_long", "reduce_long", "exit_long"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,14 +95,15 @@ class IndicatorDefinition:
 
 @dataclass(frozen=True, slots=True)
 class StrategyEvaluation:
-    entries: tuple[bool, ...]
+    additions: tuple[bool, ...]
+    reductions: tuple[bool, ...]
     exits: tuple[bool, ...]
     indicators: tuple[IndicatorDefinition, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class BacktestingSkill:
-    """Simulate bounded daily long/flat ideas without broker or order capabilities."""
+    """Simulate bounded daily long-only ideas without broker capabilities."""
 
     strategy: StrategyConfiguration = field(default_factory=StrategyConfiguration)
     start_date: date | None = None
@@ -106,7 +111,9 @@ class BacktestingSkill:
     cash: float = 10_000.0
     commission: float = 0.001
     spread: float = 0.0
-    position_size: float = 0.95
+    capital_per_add: float = 0.2
+    max_allocation: float = 0.6
+    minimum_addition_bars: int = 1
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     _name: str = field(default="backtesting", init=False, repr=False)
@@ -149,33 +156,38 @@ class BacktestingSkill:
             return _partial(instrument, (LimitationKind.INCOMPATIBLE_INPUTS,))
 
         simulation_prices = prices[start_index:]
-        entries = list(evaluation.entries[start_index:])
+        additions = list(evaluation.additions[start_index:])
+        reductions = list(evaluation.reductions[start_index:])
         exits = list(evaluation.exits[start_index:])
-        data = _data_frame(simulation_prices, entries, exits)
-        engine = FractionalBacktest if instrument.market == "CRYPTO" else Backtest
-        simulation = engine(
+        data = _data_frame(simulation_prices, additions, reductions, exits)
+        fractional_unit = 1e-8
+        simulation = FractionalBacktest(
             data,
-            LongFlatSignalStrategy,
+            FractionalTrancheSignalStrategy,
             cash=self.cash,
             commission=self.commission,
             spread=self.spread,
             trade_on_close=False,
             hedging=False,
-            exclusive_orders=True,
+            exclusive_orders=False,
             finalize_trades=False,
+            fractional_unit=fractional_unit,
         )
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="Some trades remain open")
             stats = simulation.run(
-                position_size=self.position_size,
+                initial_cash=self.cash,
+                capital_per_add=self.capital_per_add,
+                max_allocation=self.max_allocation,
+                minimum_addition_bars=self.minimum_addition_bars,
                 minimum_holding_bars=self.minimum_holding_bars,
                 stop_loss_pct=self.stop_loss_pct,
                 take_profit_pct=self.take_profit_pct,
             )
         presentation = _presentation(
-            stats, simulation_prices, self, entries, exits,
+            stats, simulation_prices, self, additions, reductions, exits,
             _slice_indicators(evaluation.indicators, start_index),
-            fractional_unit=1e-8 if instrument.market == "CRYPTO" else 1.0,
+            fractional_unit=fractional_unit,
         )
         observations = _observations(instrument, simulation_prices, stats)
         limitations: list[LimitationKind] = []
@@ -183,16 +195,13 @@ class BacktestingSkill:
             limitations.append(LimitationKind.INVALID_ROWS_DISCARDED)
         if presentation.presentation_reduced:
             limitations.append(LimitationKind.BOUNDED_INPUT)
-        if (
-            any(entries[:-1])
-            and not presentation.trades
-            and presentation.open_position is None
-        ):
+        executed_entries = len(stats["_trades"]) + len(stats["_strategy"].trades)
+        if sum(additions[:-1]) > executed_entries:
             limitations.append(LimitationKind.UNEXECUTED_SIGNALS)
         summary = (
             "partial data: one or more entry signals were not executed"
             if LimitationKind.UNEXECUTED_SIGNALS in limitations
-            else "complete data: reproducible long/flat backtest completed"
+            else "complete data: reproducible long-only tranche backtest completed"
         )
         return AnalystResult(
             analyst=self.name,
@@ -212,37 +221,83 @@ class BacktestingSkill:
         )
 
 
-class LongFlatSignalStrategy(Strategy):  # type: ignore[misc]
-    """One fixed execution policy; callers supply data, never executable code."""
+class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
+    """Fixed-notional fractional tranches; callers supply data, never code."""
 
-    position_size = 0.95
+    initial_cash = 10_000.0
+    capital_per_add = 0.2
+    max_allocation = 0.6
+    minimum_addition_bars = 1
     minimum_holding_bars = 1
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
 
     def init(self) -> None:
-        self.pending_exit = False
+        self.pending_reductions = 0
+        self.pending_exit_all = False
+        self.last_addition_bar: int | None = None
 
     def next(self) -> None:
-        if self.position:
-            if bool(self.data.Exit[-1]):
-                self.pending_exit = True
-            current_bar = len(self.data) - 1
-            entry_bar = min(trade.entry_bar for trade in self.trades)
+        current_bar = len(self.data) - 1
+        self.pending_reductions = min(self.pending_reductions, len(self.trades))
+        eligible = []
+        for trade in self.trades:
             minimum_holding_met = (
-                current_bar - entry_bar + 1 >= self.minimum_holding_bars
+                current_bar - trade.entry_bar + 1 >= self.minimum_holding_bars
             )
-            if minimum_holding_met:
-                for trade in self.trades:
-                    if self.stop_loss_pct and trade.sl is None:
-                        trade.sl = trade.entry_price * (1 - self.stop_loss_pct)
-                    if self.take_profit_pct and trade.tp is None:
-                        trade.tp = trade.entry_price * (1 + self.take_profit_pct)
-            if self.pending_exit and minimum_holding_met:
-                self.position.close()
-                self.pending_exit = False
-        elif bool(self.data.Entry[-1]):
-            self.buy(size=self.position_size)
+            if not minimum_holding_met:
+                continue
+            eligible.append(trade)
+            if self.stop_loss_pct and trade.sl is None:
+                trade.sl = trade.entry_price * (1 - self.stop_loss_pct)
+            if self.take_profit_pct and trade.tp is None:
+                trade.tp = trade.entry_price * (1 + self.take_profit_pct)
+
+        if bool(self.data.ExitAll[-1]) and self.trades:
+            self.pending_exit_all = True
+            self.pending_reductions = 0
+        elif bool(self.data.Reduce[-1]) and self.trades:
+            self.pending_reductions = min(
+                self.pending_reductions + 1,
+                len(self.trades),
+            )
+
+        eligible.sort(key=lambda item: item.entry_bar)
+        if self.pending_exit_all:
+            for trade in eligible:
+                trade.close()
+        else:
+            for trade in eligible:
+                if self.pending_reductions <= 0:
+                    break
+                trade.close()
+                self.pending_reductions -= 1
+
+        if not self.trades:
+            self.pending_reductions = 0
+            self.pending_exit_all = False
+
+        cooldown_met = (
+            self.last_addition_bar is None
+            or current_bar - self.last_addition_bar >= self.minimum_addition_bars
+        )
+        if bool(self.data.Add[-1]) and not self.pending_exit_all and cooldown_met:
+            current_exposure = sum(trade.value for trade in self.trades)
+            available_cash = max(
+                0.0,
+                self.equity - current_exposure,
+            )
+            tranche_cash = self.initial_cash * self.capital_per_add
+            allocation_headroom = (
+                self.initial_cash * self.max_allocation - current_exposure
+            )
+            if (
+                tranche_cash > 0
+                and available_cash + 1e-9 >= tranche_cash
+                and allocation_headroom + 1e-9 >= tranche_cash
+            ):
+                self.buy(size=min(tranche_cash / available_cash, 0.999999))
+                self.last_addition_bar = current_bar
 
 
 def _start_index(prices: tuple[PricePoint, ...], start_date: date | None) -> int | None:
@@ -284,8 +339,8 @@ def _signals(
     if config.kind == "sma_crossover":
         fast = _sma(closes, config.fast_window)
         slow = _sma(closes, config.slow_window)
-        entries, exits = _cross_signals(fast, slow)
-        return StrategyEvaluation(tuple(entries), tuple(exits), (
+        additions, exits = _cross_signals(fast, slow)
+        return StrategyEvaluation(tuple(additions), _empty_signals(closes), tuple(exits), (
             IndicatorDefinition("sma_fast", f"SMA {config.fast_window}", "price", tuple(fast)),
             IndicatorDefinition("sma_slow", f"SMA {config.slow_window}", "price", tuple(slow)),
         ))
@@ -297,16 +352,19 @@ def _signals(
             for a, b in zip(fast, slow, strict=False)
         ]
         signal = _ema_optional(macd, config.signal_window)
-        entries, exits = _cross_signals(macd, signal)
-        return StrategyEvaluation(tuple(entries), tuple(exits), (
+        additions, exits = _cross_signals(macd, signal)
+        return StrategyEvaluation(tuple(additions), _empty_signals(closes), tuple(exits), (
             IndicatorDefinition("macd", "MACD", "oscillator", tuple(macd)),
             IndicatorDefinition("macd_signal", "Signal", "oscillator", tuple(signal)),
         ))
     if config.kind == "rsi_mean_reversion":
-        values = _rsi(closes, config.rsi_window)
-        entries = [value is not None and value <= config.entry_threshold for value in values]
-        exits = [value is not None and value >= config.exit_threshold for value in values]
-        return StrategyEvaluation(tuple(entries), tuple(exits), (
+        values = rsi_series(closes, config.rsi_window)
+        additions, exits = _threshold_cross_signals(
+            values,
+            config.entry_threshold,
+            config.exit_threshold,
+        )
+        return StrategyEvaluation(tuple(additions), _empty_signals(closes), tuple(exits), (
             IndicatorDefinition("rsi", f"RSI {config.rsi_window}", "oscillator", tuple(values)),
             IndicatorDefinition(
                 "rsi_entry",
@@ -327,14 +385,26 @@ def _signals(
         point.observed_at.astimezone(UTC).isoformat(): index
         for index, point in enumerate(prices)
     }
-    entries = [False] * len(prices)
+    additions = [False] * len(prices)
+    reductions = [False] * len(prices)
     exits = [False] * len(prices)
     for event in config.events:
         index = by_time.get(event.observed_at)
         if index is None or index == len(prices) - 1:
             raise ValueError("external event must align to a non-final price bar")
-        (entries if event.action == "enter_long" else exits)[index] = True
-    return StrategyEvaluation(tuple(entries), tuple(exits))
+        target = (
+            additions
+            if event.action == "add_long"
+            else reductions
+            if event.action == "reduce_long"
+            else exits
+        )
+        target[index] = True
+    return StrategyEvaluation(tuple(additions), tuple(reductions), tuple(exits))
+
+
+def _empty_signals(values: list[float]) -> tuple[bool, ...]:
+    return tuple(False for _ in values)
 
 
 def _sma(values: list[float], window: int) -> list[float | None]:
@@ -367,31 +437,35 @@ def _ema_optional(values: list[float | None], window: int) -> list[float | None]
 def _cross_signals(
     left: list[float | None], right: list[float | None]
 ) -> tuple[list[bool], list[bool]]:
-    entries = [False] * len(left)
+    additions = [False] * len(left)
     exits = [False] * len(left)
     for index in range(1, len(left)):
         values = left[index - 1], right[index - 1], left[index], right[index]
         if all(value is not None for value in values):
             prior_left, prior_right, current_left, current_right = cast(tuple[float, ...], values)
-            entries[index] = prior_left <= prior_right and current_left > current_right
+            additions[index] = (
+                prior_left <= prior_right and current_left > current_right
+            )
             exits[index] = prior_left >= prior_right and current_left < current_right
-    return entries, exits
+    return additions, exits
 
 
-def _rsi(values: list[float], window: int) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    if len(values) <= window:
-        return result
-    changes = [values[index] - values[index - 1] for index in range(1, len(values))]
-    gain = sum(max(change, 0) for change in changes[:window]) / window
-    loss = sum(max(-change, 0) for change in changes[:window]) / window
-    for index in range(window, len(values)):
-        if index > window:
-            change = changes[index - 1]
-            gain = (gain * (window - 1) + max(change, 0)) / window
-            loss = (loss * (window - 1) + max(-change, 0)) / window
-        result[index] = 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss)
-    return result
+def _threshold_cross_signals(
+    values: list[float | None], entry_threshold: float, exit_threshold: float
+) -> tuple[list[bool], list[bool]]:
+    additions = [False] * len(values)
+    exits = [False] * len(values)
+    for index, current in enumerate(values):
+        if current is None:
+            continue
+        prior = values[index - 1] if index > 0 else None
+        additions[index] = current <= entry_threshold and (
+            prior is None or prior > entry_threshold
+        )
+        exits[index] = current >= exit_threshold and (
+            prior is None or prior < exit_threshold
+        )
+    return additions, exits
 
 
 def _markov_signals(
@@ -399,7 +473,7 @@ def _markov_signals(
 ) -> StrategyEvaluation:
     from trade_research.skills.markov_method import walkforward_signal_series
 
-    entries = [False] * len(closes)
+    additions = [False] * len(closes)
     exits = [False] * len(closes)
     active = False
     signals = walkforward_signal_series(
@@ -425,12 +499,12 @@ def _markov_signals(
         if signal is None:
             continue
         if signal > 0.3 and not active:
-            entries[index] = True
+            additions[index] = True
             active = True
         elif signal <= 0 and active:
             exits[index] = True
             active = False
-    return StrategyEvaluation(tuple(entries), tuple(exits), (
+    return StrategyEvaluation(tuple(additions), _empty_signals(closes), tuple(exits), (
         IndicatorDefinition("markov_signal", "Markov signal", "oscillator", tuple(signals)),
         IndicatorDefinition("markov_regime", "Regime", "regime", tuple(regimes)),
     ))
@@ -446,7 +520,10 @@ def _slice_indicators(
 
 
 def _data_frame(
-    prices: tuple[PricePoint, ...], entries: list[bool], exits: list[bool]
+    prices: tuple[PricePoint, ...],
+    additions: list[bool],
+    reductions: list[bool],
+    exits: list[bool],
 ) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -455,8 +532,9 @@ def _data_frame(
             "Low": [point.low for point in prices],
             "Close": [point.close for point in prices],
             "Volume": [point.volume or 0.0 for point in prices],
-            "Entry": entries,
-            "Exit": exits,
+            "Add": additions,
+            "Reduce": reductions,
+            "ExitAll": exits,
         },
         index=pd.DatetimeIndex([point.observed_at for point in prices]),
     )
@@ -503,7 +581,8 @@ def _presentation(
     stats: pd.Series,
     prices: tuple[PricePoint, ...],
     skill: BacktestingSkill,
-    entries: list[bool],
+    additions: list[bool],
+    reductions: list[bool],
     exits: list[bool],
     indicators: tuple[IndicatorDefinition, ...],
     *,
@@ -540,15 +619,17 @@ def _presentation(
         for _, row in trade_frame.iterrows()
     )
     strategy = stats["_strategy"]
-    open_trade = strategy.trades[0] if strategy.trades else None
-    open_position = None if open_trade is None else BacktestOpenPosition(
-        entry_at=open_trade.entry_time,
-        size=abs(float(open_trade.size)) * fractional_unit,
-        entry_price=float(open_trade.entry_price) / fractional_unit,
-        current_price=float(prices[-1].close),
-        unrealized_pnl=float(open_trade.pl),
-        return_ratio=float(open_trade.pl_pct),
-        duration_bars=max(0, len(prices) - 1 - int(open_trade.entry_bar)),
+    open_positions = tuple(
+        BacktestOpenPosition(
+            entry_at=trade.entry_time,
+            size=abs(float(trade.size)) * fractional_unit,
+            entry_price=float(trade.entry_price) / fractional_unit,
+            current_price=float(prices[-1].close),
+            unrealized_pnl=float(trade.pl),
+            return_ratio=float(trade.pl_pct),
+            duration_bars=max(0, len(prices) - 1 - int(trade.entry_bar)),
+        )
+        for trade in strategy.trades
     )
     price_bars = tuple(
         ReportPriceBar(
@@ -573,7 +654,10 @@ def _presentation(
         for item in indicators
     )
     config = skill.strategy
-    canonical = json.dumps({"entry": entries, "exit": exits}, separators=(",", ":"))
+    canonical = json.dumps(
+        {"add": additions, "reduce": reductions, "exit_all": exits},
+        separators=(",", ":"),
+    )
     signal_reference = f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
     assumptions = _assumptions(skill, signal_reference)
     return BacktestPresentation(
@@ -586,7 +670,7 @@ def _presentation(
         indicator_series=indicator_series,
         curve=curve,
         trades=trades,
-        open_position=open_position,
+        open_positions=open_positions,
         presentation_reduced=reduced,
     )
 
@@ -602,7 +686,9 @@ def _assumptions(
             "minimum_holding_bars": skill.minimum_holding_bars,
             "commission": skill.commission,
             "spread": skill.spread,
-            "position_size": skill.position_size,
+            "capital_per_add": skill.capital_per_add,
+            "max_allocation": skill.max_allocation,
+            "minimum_addition_bars": skill.minimum_addition_bars,
             "stop_loss_pct": skill.stop_loss_pct,
             "take_profit_pct": skill.take_profit_pct,
             "strategy_kind": skill.strategy.kind,
@@ -620,7 +706,9 @@ def _assumptions(
         minimum_holding_bars=skill.minimum_holding_bars,
         commission=skill.commission,
         spread=skill.spread,
-        position_size=skill.position_size,
+        capital_per_add=skill.capital_per_add,
+        max_allocation=skill.max_allocation,
+        minimum_addition_bars=skill.minimum_addition_bars,
         stop_loss_pct=skill.stop_loss_pct,
         take_profit_pct=skill.take_profit_pct,
         strategy_parameters=parameters,

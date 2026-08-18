@@ -58,7 +58,9 @@ class ResearchApplication:
             "volatility-regime": "Realized-volatility percentile and expansion state.",
             "correlation-analysis": "Aligned return correlations and diversification structure.",
             "asset-allocation": "Long-only price-derived allocation scenarios.",
-            "backtesting": "Daily long/flat simulation for built-in or timestamped signals.",
+            "backtesting": (
+                "Daily fractional-tranche simulation for built-in or timestamped signals."
+            ),
         }
         supported_asset_types = {
             "fundamental": ["equity"],
