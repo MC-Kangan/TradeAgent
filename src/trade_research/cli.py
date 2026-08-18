@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import typer
-from click import Abort, ClickException
+from click import Abort, BadParameter, ClickException
 from click.exceptions import Exit
 from dotenv import dotenv_values, find_dotenv
 from pydantic import ValidationError
@@ -50,6 +50,21 @@ _SETTINGS_ENVIRONMENT_NAMES = frozenset(
         "TRADE_RESEARCH_DATA_ROOT",
         "TRADE_RESEARCH_SEC_USER_AGENT",
         "DISCORD_WEBHOOK_URL",
+    }
+)
+
+# These are authored by this module and contain no user-supplied values.  We
+# may show them in a container log; arbitrary Click messages can echo command
+# arguments (which may be credentials or private paths), so those remain
+# intentionally generic.
+_SAFE_CLICK_ERROR_MESSAGES = frozenset(
+    {
+        "research configuration is invalid",
+        "host must be a private IP literal",
+        "TRADE_RESEARCH_API_TOKEN must be set",
+        "research queue is unavailable",
+        "TRADE_RESEARCH_API_TOKEN_FILE is not readable",
+        "TRADE_RESEARCH_API_TOKEN_FILE is too large",
     }
 )
 
@@ -276,7 +291,14 @@ def _read_secret(name: str) -> str:
 
 
 def main() -> None:
-    """Run the CLI behind a fail-closed exception and logging boundary."""
+    """Run the CLI behind a fail-closed exception and logging boundary.
+
+    Keep failures useful to an operator without printing arbitrary exception
+    values.  In particular, Docker/Compose used to show the same generic
+    ``invalid command or arguments`` line for every ``BadParameter`` raised
+    during startup, which made missing secret files and invalid bind settings
+    indistinguishable in NAS logs.
+    """
 
     try:
         exit_code = app(standalone_mode=False)
@@ -286,10 +308,23 @@ def main() -> None:
         typer.echo("Aborted!", err=True)
         raise SystemExit(1) from None
     except ClickException as error:
-        typer.echo("Error: invalid command or arguments", err=True)
+        # Only reveal messages authored by this module.  Click's default
+        # usage errors include the rejected argument, which could be a token
+        # or private path.  The allowlist still makes Docker logs useful for
+        # startup failures such as a missing secret or invalid bind host.
+        if isinstance(error, BadParameter) and error.message in _SAFE_CLICK_ERROR_MESSAGES:
+            typer.echo(f"Error: {error.message}", err=True)
+        else:
+            typer.echo("Error: invalid command or arguments", err=True)
         raise SystemExit(error.exit_code) from None
-    except Exception:
-        typer.echo("Error: request could not be processed", err=True)
+    except Exception as error:
+        # The class name is stable, non-sensitive context (unlike str(error))
+        # and is enough to distinguish an unexpected startup failure in
+        # Docker logs without exposing provider URLs, paths, or credentials.
+        typer.echo(
+            f"Error: request could not be processed ({type(error).__name__})",
+            err=True,
+        )
         raise SystemExit(1) from None
     if isinstance(exit_code, int):
         raise SystemExit(exit_code) from None
