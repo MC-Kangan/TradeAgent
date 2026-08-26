@@ -19,6 +19,7 @@ from trade_research.domain import (
 from trade_research.providers import (
     CcxtPriceProvider,
     CikResolver,
+    InlineOutcomeProvider,
     InlinePriceProvider,
     LocalCsvParquetFundamentalProvider,
     LocalCsvParquetPriceProvider,
@@ -40,9 +41,11 @@ from trade_research.skills import (
     FilingsSkill,
     FundamentalSkill,
     MarkovMethodSkill,
+    PriceActionStructureSkill,
     ResearchReviewer,
     ResearchSkill,
     RiskAnalysisSkill,
+    SignalEvaluationSkill,
     SkillRegistry,
     TechnicalBasicSkill,
     TechnicalSkill,
@@ -89,6 +92,8 @@ class ResearchEngine:
                 TechnicalBasicSkill(),
                 RiskAnalysisSkill(),
                 VolatilityRegimeSkill(),
+                PriceActionStructureSkill(),
+                SignalEvaluationSkill(),
                 CorrelationAnalysisSkill(),
                 AssetAllocationSkill(),
                 BacktestingSkill(),
@@ -115,7 +120,7 @@ class ResearchEngine:
         """Report capabilities that cannot be supplied inline with a request."""
 
         skill = self._skills.require(skill_name)
-        request_capabilities = {CapabilityName.PRICES}
+        request_capabilities = {CapabilityName.PRICES, CapabilityName.OUTCOMES}
         return tuple(
             capability
             for capability in skill.required_capabilities
@@ -216,12 +221,19 @@ class ResearchEngine:
         return await self._run_skill(skill, request, providers)
 
     def _providers_for(self, request: AnalysisRequest) -> ProviderRegistry:
-        if not request.price_series:
+        if not request.price_series and not request.outcome_series:
             return self._providers
         providers: dict[str, CapabilityProvider] = {
             name.value: provider for name, provider in self._providers.providers.items()
         }
-        providers[CapabilityName.PRICES.value] = InlinePriceProvider(request.price_series)
+        if request.price_series:
+            providers[CapabilityName.PRICES.value] = InlinePriceProvider(
+                request.price_series
+            )
+        if request.outcome_series:
+            providers[CapabilityName.OUTCOMES.value] = InlineOutcomeProvider(
+                request.outcome_series
+            )
         return ProviderRegistry(providers)
 
 

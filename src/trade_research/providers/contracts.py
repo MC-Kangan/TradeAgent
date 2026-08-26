@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
-from typing import Final, NotRequired, Protocol, TypedDict, runtime_checkable
+from typing import Final, Literal, NotRequired, Protocol, TypedDict, runtime_checkable
 
 from pydantic import JsonValue
 
-from trade_research.domain import Evidence, InstrumentId, Observation, Position
+from trade_research.domain import (
+    Evidence,
+    InstrumentId,
+    Observation,
+    OutcomeSeriesSpec,
+    Position,
+)
 from trade_research.domain.provenance import (
     PeriodRole,
     PeriodType,
@@ -32,6 +39,7 @@ class ProviderContractError(ProviderConfigurationError):
 MAX_HTTP_BYTES: Final = 4 * 1024 * 1024
 MAX_LOCAL_BYTES: Final = 16 * 1024 * 1024
 MAX_PRICE_POINTS: Final = 4096
+MAX_OUTCOME_POINTS: Final = 8192
 MAX_FUNDAMENTAL_ROWS: Final = 1024
 MAX_FILING_ROWS: Final = 64
 
@@ -94,6 +102,57 @@ class PricePoint:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class OutcomePoint:
+    """One provider-independent scalar observation used for outcome evaluation."""
+
+    observed_at: datetime
+    value: float
+    high: float | None = None
+    low: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.observed_at.tzinfo is None:
+            raise ValueError("outcome timestamps must include a timezone")
+        values = tuple(
+            value for value in (self.value, self.high, self.low) if value is not None
+        )
+        if any(not math.isfinite(value) for value in values):
+            raise ValueError("outcome values must be finite")
+        upper = self.value if self.high is None else self.high
+        lower = self.value if self.low is None else self.low
+        if lower > self.value or upper < self.value or lower > upper:
+            raise ValueError("outcome high/low values must contain the observed value")
+
+    @property
+    def upper(self) -> float:
+        return self.value if self.high is None else self.high
+
+    @property
+    def lower(self) -> float:
+        return self.value if self.low is None else self.low
+
+
+@dataclass(frozen=True)
+class OutcomeSeries:
+    """One normalized bounded series with source and barrier semantics."""
+
+    instrument: InstrumentId
+    spec: OutcomeSeriesSpec
+    points: tuple[OutcomePoint, ...]
+    source: ProviderKind | str
+    barrier_basis: Literal["observed_value", "high_low"]
+    provenance: Mapping[str, JsonValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source", normalize_provider_kind(self.source))
+        object.__setattr__(
+            self,
+            "provenance",
+            MappingProxyType(sanitize_provenance(self.provenance)),
+        )
+
+
 @runtime_checkable
 class PriceProvider(Protocol):
     """A bounded historical OHLCV capability.
@@ -103,6 +162,15 @@ class PriceProvider(Protocol):
     """
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]: ...
+
+
+@runtime_checkable
+class OutcomeSeriesProvider(Protocol):
+    """A bounded source of normalized price, volatility, or generic outcomes."""
+
+    def outcome_history(
+        self, instrument: InstrumentId, spec: OutcomeSeriesSpec
+    ) -> OutcomeSeries: ...
 
 
 @runtime_checkable

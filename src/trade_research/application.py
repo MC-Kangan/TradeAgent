@@ -56,10 +56,15 @@ class ResearchApplication:
             "technical-basic": "EMA, ADX, RSI, Bollinger, OBV, and volume confirmation.",
             "risk-analysis": "Historical volatility, tail loss, drawdown, and return shape.",
             "volatility-regime": "Realized-volatility percentile and expansion state.",
+            "price-action-structure": "Confirmed daily swing structure and ATR-scaled price zones.",
             "correlation-analysis": "Aligned return correlations and diversification structure.",
             "asset-allocation": "Long-only price-derived allocation scenarios.",
             "backtesting": (
                 "Daily fractional-tranche simulation for built-in or timestamped signals."
+            ),
+            "signal-evaluation": (
+                "Source-independent win-rate and reward/risk evaluation for "
+                "timestamped signals."
             ),
         }
         supported_asset_types = {
@@ -71,9 +76,11 @@ class ResearchApplication:
             "technical-basic": ["equity", "crypto"],
             "risk-analysis": ["equity", "crypto"],
             "volatility-regime": ["equity", "crypto"],
+            "price-action-structure": ["equity", "crypto"],
             "correlation-analysis": ["equity", "crypto"],
             "asset-allocation": ["equity", "crypto"],
             "backtesting": ["equity", "crypto"],
+            "signal-evaluation": ["equity", "crypto"],
         }
         scope = (
             "portfolio"
@@ -127,9 +134,15 @@ class ResearchApplication:
 
         if self.queue is None:
             raise RuntimeError("a job queue is required to start durable research")
-        if request.price_series or "backtesting" in request.analysts:
+        immediate_only = {"backtesting", "signal-evaluation"}
+        if (
+            request.price_series
+            or request.outcome_series
+            or immediate_only.intersection(request.analysts)
+        ):
             raise ValueError(
-                "inline price series and backtesting are immediate-only; use run_skill or research"
+                "inline price/outcome series, backtesting, and signal evaluation are "
+                "immediate-only; use run_skill or research"
             )
         self.engine.configure_request(request)
         self.engine.validate_analysts(request.analysts)

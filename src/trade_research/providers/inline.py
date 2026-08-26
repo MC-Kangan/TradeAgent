@@ -6,8 +6,13 @@ import hashlib
 import json
 from collections.abc import Mapping
 
-from trade_research.domain import InlinePriceSeries, InstrumentId
-from trade_research.providers.contracts import PricePoint
+from trade_research.domain import (
+    InlineOutcomeSeries,
+    InlinePriceSeries,
+    InstrumentId,
+    OutcomeSeriesSpec,
+)
+from trade_research.providers.contracts import OutcomePoint, OutcomeSeries, PricePoint
 
 
 class InlinePriceProvider:
@@ -56,6 +61,68 @@ class InlinePriceProvider:
                 },
             )
             for bar, row in zip(item.bars, rows, strict=True)
+        )
+
+
+class InlineOutcomeProvider:
+    """Expose exact normalized outcome series supplied for the current request."""
+
+    def __init__(self, series: tuple[InlineOutcomeSeries, ...]) -> None:
+        self._series: Mapping[tuple[InstrumentId, str], InlineOutcomeSeries] = {
+            (item.instrument, item.spec.name): item for item in series
+        }
+
+    def outcome_history(
+        self, instrument: InstrumentId, spec: OutcomeSeriesSpec
+    ) -> OutcomeSeries:
+        item = self._series.get((instrument, spec.name))
+        if item is None or item.spec != spec:
+            return OutcomeSeries(
+                instrument=instrument,
+                spec=spec,
+                points=(),
+                source="derived",
+                barrier_basis="observed_value",
+                provenance={
+                    "provider_kind": "derived",
+                    "reference": _sha256([]),
+                },
+            )
+        rows = [
+            {
+                "observed_at": point.observed_at.isoformat(),
+                "value": point.value,
+                "high": point.high,
+                "low": point.low,
+            }
+            for point in item.points
+        ]
+        reference = _sha256(
+            {
+                "spec": item.spec.model_dump(mode="json"),
+                "barrier_basis": item.barrier_basis,
+                "points": rows,
+            }
+        )
+        return OutcomeSeries(
+            instrument=instrument,
+            spec=item.spec,
+            points=tuple(
+                OutcomePoint(
+                    observed_at=point.observed_at,
+                    value=point.value,
+                    high=point.high,
+                    low=point.low,
+                )
+                for point in item.points
+            ),
+            source=item.source,
+            barrier_basis=item.barrier_basis,
+            provenance={
+                "provider_kind": item.source.value,
+                "reference": reference,
+                "series_ref": reference,
+            },
         )
 
 

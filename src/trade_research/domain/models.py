@@ -169,6 +169,105 @@ class InlinePriceSeries(DomainModel):
     bars: tuple[InlinePriceBar, ...] = Field(min_length=1, max_length=520)
 
 
+class OutcomeSeriesSpec(DomainModel):
+    """Typed identity for the scalar series used to judge signal outcomes."""
+
+    name: AnalystName
+    kind: Literal["price", "implied_volatility", "generic"]
+    unit: Literal["price", "decimal_volatility", "generic"]
+    strike_convention: Literal["not_applicable", "floating_delta", "fixed_strike"] = (
+        "not_applicable"
+    )
+    call_delta: float | None = Field(default=None, gt=0, lt=1)
+    tenor: str | None = Field(
+        default=None, pattern=r"^[1-9][0-9]{0,2}(?:d|w|m|y)$"
+    )
+    strike: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_series_identity(self) -> Self:
+        option_values = (self.call_delta, self.tenor, self.strike)
+        if self.kind == "price":
+            if self.unit != "price" or self.strike_convention != "not_applicable":
+                raise ValueError("price outcome series must use price units")
+            if any(value is not None for value in option_values):
+                raise ValueError("price outcome series cannot contain option coordinates")
+        elif self.kind == "generic":
+            if self.unit != "generic" or self.strike_convention != "not_applicable":
+                raise ValueError("generic outcome series must use generic units")
+            if any(value is not None for value in option_values):
+                raise ValueError("generic outcome series cannot contain option coordinates")
+        else:
+            if self.unit != "decimal_volatility" or self.tenor is None:
+                raise ValueError(
+                    "implied-volatility outcome series require decimal units and tenor"
+                )
+            if self.strike_convention == "floating_delta":
+                if self.call_delta is None or self.strike is not None:
+                    raise ValueError(
+                        "floating-delta volatility requires call_delta and no fixed strike"
+                    )
+            elif self.strike_convention == "fixed_strike":
+                if self.strike is None or self.call_delta is not None:
+                    raise ValueError(
+                        "fixed-strike volatility requires strike and no call_delta"
+                    )
+            else:
+                raise ValueError("implied volatility requires a strike convention")
+        return self
+
+
+class InlineOutcomePoint(DomainModel):
+    """One caller-supplied observation in a normalized scalar outcome series."""
+
+    observed_at: datetime
+    value: float
+    high: float | None = None
+    low: float | None = None
+
+    @model_validator(mode="after")
+    def validate_values(self) -> Self:
+        values = tuple(
+            value for value in (self.value, self.high, self.low) if value is not None
+        )
+        if any(not math.isfinite(value) for value in values):
+            raise ValueError("outcome values must be finite")
+        upper = self.value if self.high is None else self.high
+        lower = self.value if self.low is None else self.low
+        if lower > self.value or upper < self.value or lower > upper:
+            raise ValueError("outcome high/low values must contain the observed value")
+        return self
+
+
+class InlineOutcomeSeries(DomainModel):
+    """A bounded normalized outcome series supplied for one immediate research run."""
+
+    instrument: InstrumentId
+    spec: OutcomeSeriesSpec
+    source: ProviderKind
+    barrier_basis: Literal["observed_value", "high_low"]
+    points: tuple[InlineOutcomePoint, ...] = Field(min_length=1, max_length=8192)
+
+    @model_validator(mode="after")
+    def validate_points(self) -> Self:
+        timestamps = [point.observed_at for point in self.points]
+        if any(timestamp.tzinfo is None for timestamp in timestamps):
+            raise ValueError("outcome timestamps must include a timezone")
+        if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
+            raise ValueError("outcome points must have ordered unique timestamps")
+        complete = [point.high is not None and point.low is not None for point in self.points]
+        partial = [
+            (point.high is None) != (point.low is None) for point in self.points
+        ]
+        if any(partial):
+            raise ValueError("outcome high and low must be supplied together")
+        if self.barrier_basis == "high_low" and not all(complete):
+            raise ValueError("high_low barrier basis requires high and low for every point")
+        if self.barrier_basis == "observed_value" and any(complete):
+            raise ValueError("observed_value barrier basis cannot include high or low")
+        return self
+
+
 class AnalysisRequest(DomainModel):
     """One bounded instrument or portfolio research request."""
 
@@ -183,6 +282,7 @@ class AnalysisRequest(DomainModel):
     positions: tuple[Position, ...] = ()
     skill_parameters: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     price_series: tuple[InlinePriceSeries, ...] = Field(default=(), max_length=9)
+    outcome_series: tuple[InlineOutcomeSeries, ...] = Field(default=(), max_length=9)
 
     @field_validator("analysts")
     @classmethod
@@ -221,6 +321,17 @@ class AnalysisRequest(DomainModel):
             required = set(self.portfolio_instruments)
             if supplied != required:
                 raise ValueError("portfolio price series must exactly match portfolio instruments")
+        outcome_keys = tuple(
+            (item.instrument, item.spec.name) for item in self.outcome_series
+        )
+        if len(set(outcome_keys)) != len(outcome_keys):
+            raise ValueError("outcome series instrument/name pairs must be unique")
+        if self.scope == "portfolio" and self.outcome_series:
+            raise ValueError("portfolio requests cannot contain outcome series")
+        if self.scope == "instrument" and any(
+            item.instrument != self.instrument for item in self.outcome_series
+        ):
+            raise ValueError("outcome series must match the requested instrument")
         return self
 
 
@@ -571,6 +682,117 @@ class BacktestPresentation(DomainModel):
     presentation_reduced: bool = False
 
 
+class ReportSignalOutcome(DomainModel):
+    """One bounded historical outcome produced from a timestamped instruction."""
+
+    signal_at: datetime
+    entry_at: datetime
+    exit_at: datetime
+    direction: Literal["long", "short"]
+    entry_value: float
+    exit_value: float
+    change: float
+    duration_bars: int = Field(ge=1, le=4096)
+    exit_reason: Literal["fixed_horizon", "profit_target", "stop_loss", "time_limit"]
+    same_bar_ambiguous: bool = False
+
+
+class SignalEvaluationSummary(DomainModel):
+    """Performance statistics for one historical outcome definition."""
+
+    event_count: int = Field(ge=0, le=520)
+    non_overlapping_event_count: int = Field(ge=0, le=520)
+    skipped_event_count: int = Field(ge=0, le=520)
+    win_count: int = Field(ge=0, le=520)
+    loss_count: int = Field(ge=0, le=520)
+    breakeven_count: int = Field(ge=0, le=520)
+    win_rate: float | None = Field(default=None, ge=0, le=1)
+    non_overlapping_win_rate: float | None = Field(default=None, ge=0, le=1)
+    non_overlapping_win_rate_lower_95: float | None = Field(
+        default=None, ge=0, le=1
+    )
+    average_win: float | None = Field(default=None, gt=0)
+    average_loss: float | None = Field(default=None, gt=0)
+    reward_risk_ratio: float | None = Field(default=None, gt=0)
+    opportunity_score: float | None = Field(default=None, ge=0)
+    expected_change: float | None = None
+    expectancy_r: float | None = None
+    profit_factor: float | None = Field(default=None, gt=0)
+    events: tuple[ReportSignalOutcome, ...] = Field(default=(), max_length=200)
+    presentation_reduced: bool = False
+
+
+class SignalEvaluationPresentation(DomainModel):
+    """Renderer-neutral fixed-horizon and triple-barrier signal study."""
+
+    template: Literal["signal-evaluation-v1"] = "signal-evaluation-v1"
+    signal_name: AnalystName
+    target_series: OutcomeSeriesSpec
+    change_kind: Literal["relative", "absolute"]
+    barrier_basis: Literal["observed_value", "high_low"]
+    entry_lag_bars: int = Field(ge=1, le=520)
+    fixed_horizon_bars: int = Field(ge=1, le=520)
+    profit_target: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    max_holding_bars: int = Field(ge=1, le=520)
+    same_bar_policy: Literal["loss"] = "loss"
+    signal_reference: OpaqueReference
+    series_reference: OpaqueReference
+    configuration_reference: OpaqueReference
+    fixed_horizon: SignalEvaluationSummary
+    triple_barrier: SignalEvaluationSummary
+
+
+class PriceActionBar(DomainModel):
+    """One daily OHLC point used by the price-action report."""
+
+    observed_at: datetime
+    open: float = Field(gt=0)
+    high: float = Field(gt=0)
+    low: float = Field(gt=0)
+    close: float = Field(gt=0)
+    volume: float | None = Field(default=None, ge=0)
+
+
+class PriceActionPivot(DomainModel):
+    """One confirmed, non-lookahead swing point."""
+
+    observed_at: datetime
+    price: float = Field(gt=0)
+    kind: Literal["high", "low"]
+    status: Literal["confirmed"] = "confirmed"
+    label: Literal["HH", "LH", "HL", "LL"] | None = None
+
+
+class PriceActionZone(DomainModel):
+    """An ATR-scaled cluster of confirmed swing points."""
+
+    kind: Literal["support", "resistance", "flip"]
+    lower: float = Field(gt=0)
+    midpoint: float = Field(gt=0)
+    upper: float = Field(gt=0)
+    touch_count: int = Field(ge=2, le=64)
+    last_touched_at: datetime
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> Self:
+        if not self.lower <= self.midpoint <= self.upper:
+            raise ValueError("zone bounds must contain midpoint")
+        return self
+
+
+class PriceActionStructurePresentation(DomainModel):
+    """Bounded, renderer-neutral daily structure and price-zone output."""
+
+    template: Literal["price-action-structure-v1"] = "price-action-structure-v1"
+    timeframe: Literal["1d"] = "1d"
+    structure: Literal["uptrend", "downtrend", "mixed", "unavailable"]
+    atr_14: float = Field(ge=0)
+    price_bars: tuple[PriceActionBar, ...] = Field(default=(), max_length=180)
+    pivots: tuple[PriceActionPivot, ...] = Field(default=(), max_length=64)
+    zones: tuple[PriceActionZone, ...] = Field(default=(), max_length=8)
+
+
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
@@ -593,6 +815,8 @@ class AnalystResult(DomainModel):
         | CorrelationPresentation
         | AssetAllocationPresentation
         | BacktestPresentation
+        | SignalEvaluationPresentation
+        | PriceActionStructurePresentation
         | None
     ) = None
 

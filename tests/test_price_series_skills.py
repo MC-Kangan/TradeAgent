@@ -64,6 +64,7 @@ def test_default_registry_exposes_new_price_series_skills() -> None:
     assert "technical-basic" in names
     assert "risk-analysis" in names
     assert "volatility-regime" in names
+    assert "price-action-structure" in names
 
 
 def test_inline_crypto_series_accepts_coinbase_provenance() -> None:
@@ -86,7 +87,12 @@ def test_application_declares_equity_and_crypto_support(tmp_path: Path) -> None:
     engine = ResearchEngine.from_settings()
     app = ResearchApplication(engine, ReportStore(tmp_path / "reports"))
     catalog = {item["name"]: item for item in app.list_skills()}
-    for name in ("technical-basic", "risk-analysis", "volatility-regime"):
+    for name in (
+        "technical-basic",
+        "risk-analysis",
+        "volatility-regime",
+        "price-action-structure",
+    ):
         assert catalog[name]["supported_asset_types"] == ["equity", "crypto"]
     assert catalog["fundamental"]["description"].startswith("SEC-backed")
     assert catalog["filings"]["description"].startswith("SEC filing")

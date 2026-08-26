@@ -46,6 +46,7 @@ Key packages under `src/trade_research/`:
 | `skills/core.py` | `FundamentalSkill`, `TechnicalSkill`, `FilingsSkill`, `SkillRegistry` |
 | `skills/price_series.py` | Cross-asset technical confirmation, historical risk, and volatility-regime skills |
 | `skills/backtesting.py` | Bounded daily long-only tranche simulation |
+| `skills/signal_evaluation.py` | Source-independent historical signal outcome evaluation |
 | `providers/` | Protocol contracts, local/remote data fetchers, registry |
 | `engine.py` | Async concurrent skill execution, partial-result handling |
 | `application.py` | Transport-neutral use cases |
@@ -178,6 +179,58 @@ Protective levels are anchored to the actual next-open fill price. It does not e
 optimization, plotting, brokers, or order APIs. Backtests and inline series are
 immediate-only (`run_skill`, `/analyze`, or MCP equivalents), because the safe
 job queue intentionally does not persist price bars or external signals.
+
+### `signal-evaluation`
+
+Evaluates ordered timestamped `long` and `short` instructions with both a fixed
+horizon and a triple barrier. It standardizes win rate, an overlap-adjusted
+non-overlapping sample count, Wilson 95% win-rate lower bound, average win/loss,
+reward/risk, the explicit `win rate × reward/risk` opportunity score, expected
+change, expectancy in R, and profit factor. Signals may be
+created from any causal combination of price, RSI, moving averages, IV, or other
+sources; the evaluator receives only their timestamps and directions.
+
+The analyst consumes a typed normalized `OUTCOMES` provider. Existing bounded daily
+`PRICES` providers are automatically adapted to it. Historical SPY options,
+Bloomberg, or internal adapters can supply fixed-strike or floating-call-delta IV
+series with explicit tenor, units, provenance, and observed-value versus high/low
+barrier semantics without changing scoring code. The workflow is immediate-only so
+raw input series and external instructions do not enter the durable queue.
+
+A minimal SPX smoke test fetches one year of Yahoo daily bars, creates causal
+5/20-day SMA crossover instructions, enters on the next bar, and prints both
+evaluation views:
+
+```bash
+.venv/bin/python examples/ma_signal_evaluation.py
+```
+
+Change the signal without changing the evaluator by replacing
+`moving_average_crossover(prices, ...)` with another function that returns ordered
+`SignalInstruction` values. For example, alter the windows or outcome assumptions:
+
+```bash
+.venv/bin/python examples/ma_signal_evaluation.py \
+  --fast 10 --slow 30 --horizon 10 --profit-target 0.03 --stop-loss 0.02
+```
+
+This is a pipeline smoke test, not evidence that the MA rule has a durable edge:
+Yahoo supplies only one year here, overlapping events are not independent, and the
+index result excludes trading costs and instrument tracking differences.
+
+The complete ten-strategy SPX research study uses bounded 10-year daily and 60-day
+30-minute Yahoo windows. It evaluates the article-defined signal proxies under common
+daily and intraday outcome rules and marks Martingale as a sizing overlay rather than
+a directional signal:
+
+```bash
+.venv/bin/python examples/classic_strategy_study.py
+```
+
+The accompanying cited research artifact is
+`reports/spx_classic_strategy_evaluation.html`. The strategy generators are fixed,
+deterministic code in `skills/classic_strategy_signals.py`; they do not place orders
+or load runtime strategy code.
 
 > **Detailed specifications:** See `skills/*/SKILL.md` for full algorithm descriptions,
 > input schemas, edge cases, and examples.
@@ -474,9 +527,11 @@ Claude has access to 9 bounded tools:
 | Compact cross-asset confirmation | `technical-basic` | `PRICES` (inline, Yahoo, CCXT, local) |
 | Historical tail and drawdown profile | `risk-analysis` | `PRICES` (daily closes) |
 | Realized-volatility state | `volatility-regime` | `PRICES` (daily closes) |
+| Confirmed price-action structure and ATR-scaled zones | `price-action-structure` | `PRICES` (daily OHLC; volume optional) |
+| Historical signal win rate and reward/risk | `signal-evaluation` | `OUTCOMES`, with automatic `PRICES` adaptation |
 | SEC filing review (recency, 8-K activity) | `filings` | `FILINGS` (SEC EDGAR, auto CIK) |
 | Combined research note | all | multiple |
-| Crypto price-series analysis | `technical`, `technical-basic`, `markov-method`, `risk-analysis`, `volatility-regime` | `PRICES` via inline Coinbase data or CCXT |
+| Crypto price-series analysis | `technical`, `technical-basic`, `markov-method`, `risk-analysis`, `volatility-regime`, `price-action-structure` | `PRICES` via inline Coinbase data or CCXT |
 | LLM-driven analysis via Claude | any | any |
 
 ---

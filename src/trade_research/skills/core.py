@@ -12,6 +12,8 @@ from datetime import UTC, date, datetime
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
+from pydantic import BaseModel
+
 from trade_research.domain import (
     AnalystResult,
     Evidence,
@@ -886,6 +888,11 @@ def _is_deeply_immutable(value: object) -> bool:
         return True
     if isinstance(value, tuple | frozenset):
         return all(_is_deeply_immutable(item) for item in value)
+    if isinstance(value, BaseModel) and value.model_config.get("frozen") is True:
+        return all(
+            _is_deeply_immutable(getattr(value, name))
+            for name in type(value).model_fields
+        )
     parameters = getattr(type(value), "__dataclass_params__", None)
     if parameters is not None and parameters.frozen:
         return all(

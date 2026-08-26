@@ -14,11 +14,13 @@ skills. The runtime cannot load Markdown as code.
 |---|---|---|
 | [fundamental-analysis/](fundamental-analysis/SKILL.md) | `fundamental` | `FUNDAMENTALS` |
 | [technical-analysis/](technical-analysis/SKILL.md) | `technical` | `PRICES` |
+| [price-action-structure/](price-action-structure/SKILL.md) | `price-action-structure` | `PRICES` |
 | [filings-analysis/](filings-analysis/SKILL.md) | `filings` | `FILINGS` |
 | [worth-buy-stocks/](worth-buy-stocks/SKILL.md) | `worth-buy-stocks` | `PRICES` |
 | [markov-method/](markov-method/SKILL.md) | `markov-method` | `PRICES` |
 | [correlation-analysis/](correlation-analysis/SKILL.md) | `correlation-analysis` | `PRICES` |
 | [asset-allocation/](asset-allocation/SKILL.md) | `asset-allocation` | `PRICES` |
+| [signal-evaluation/](signal-evaluation/SKILL.md) | `signal-evaluation` | `OUTCOMES` (with automatic `PRICES` adaptation) |
 | [review/](review/SKILL.md) | built-in reviewer | (none — post-processing) |
 
 For plain-English report narration, see

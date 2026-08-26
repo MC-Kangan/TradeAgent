@@ -142,14 +142,32 @@ class YahooPriceProvider:
     low, and volume are **unadjusted** as reported by the exchange.
     """
 
-    def __init__(self, http_get: HttpGet = _http_get) -> None:
+    _CHART_WINDOWS = frozenset(
+        {
+            ("1y", "1d"),
+            ("10y", "1d"),
+            ("60d", "30m"),
+        }
+    )
+
+    def __init__(
+        self,
+        http_get: HttpGet = _http_get,
+        *,
+        range_: str = "1y",
+        interval: str = "1d",
+    ) -> None:
+        if (range_, interval) not in self._CHART_WINDOWS:
+            raise ValueError("unsupported Yahoo chart window")
         self._http_get = http_get
+        self._range = range_
+        self._interval = interval
 
     def price_history(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
         symbol = resolve_provider_symbol("yahoo", instrument)
         url = (
             f"https://query1.finance.yahoo.com/v8/finance/chart/"
-            f"{quote(symbol, safe='')}?range=1y&interval=1d"
+            f"{quote(symbol, safe='')}?range={self._range}&interval={self._interval}"
         )
         payload_text = _bounded_payload(self._http_get(url, {"Accept": "application/json"}))
         try:

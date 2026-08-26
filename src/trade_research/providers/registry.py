@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Mapping
 from datetime import date, datetime
@@ -9,7 +11,12 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal, overload
 
-from trade_research.domain import Evidence, InstrumentId, Observation
+from trade_research.domain import (
+    Evidence,
+    InstrumentId,
+    Observation,
+    OutcomeSeriesSpec,
+)
 from trade_research.domain.provenance import (
     normalize_provider_kind,
     sanitize_provenance,
@@ -18,9 +25,13 @@ from trade_research.domain.provenance import (
 from trade_research.providers.contracts import (
     MAX_FILING_ROWS,
     MAX_FUNDAMENTAL_ROWS,
+    MAX_OUTCOME_POINTS,
     MAX_PRICE_POINTS,
     FilingProvider,
     FundamentalProvider,
+    OutcomePoint,
+    OutcomeSeries,
+    OutcomeSeriesProvider,
     PortfolioProvider,
     PricePoint,
     PriceProvider,
@@ -31,12 +42,19 @@ from trade_research.providers.contracts import (
 
 class CapabilityName(StrEnum):
     PRICES = "prices"
+    OUTCOMES = "outcomes"
     FUNDAMENTALS = "fundamentals"
     FILINGS = "filings"
     PORTFOLIO = "portfolio"
 
 
-type CapabilityProvider = PriceProvider | FundamentalProvider | FilingProvider | PortfolioProvider
+type CapabilityProvider = (
+    PriceProvider
+    | OutcomeSeriesProvider
+    | FundamentalProvider
+    | FilingProvider
+    | PortfolioProvider
+)
 
 
 class ProviderRegistry:
@@ -54,12 +72,14 @@ class ProviderRegistry:
 
             protocol = {
                 CapabilityName.PRICES: PriceProvider,
+                CapabilityName.OUTCOMES: OutcomeSeriesProvider,
                 CapabilityName.FUNDAMENTALS: FundamentalProvider,
                 CapabilityName.FILINGS: FilingProvider,
                 CapabilityName.PORTFOLIO: PortfolioProvider,
             }[name]
             method_name = {
                 CapabilityName.PRICES: "price_history",
+                CapabilityName.OUTCOMES: "outcome_history",
                 CapabilityName.FUNDAMENTALS: "fundamentals",
                 CapabilityName.FILINGS: "filings",
                 CapabilityName.PORTFOLIO: "positions",
@@ -80,10 +100,15 @@ class ProviderRegistry:
             capability = CapabilityName(name)
         except ValueError:
             return False
+        if capability is CapabilityName.OUTCOMES:
+            return (
+                CapabilityName.OUTCOMES in self._providers
+                or CapabilityName.PRICES in self._providers
+            )
         return capability in self._providers
 
     def ensure_capabilities(self, names: tuple[CapabilityName, ...]) -> None:
-        missing = tuple(name for name in names if name not in self._providers)
+        missing = tuple(name for name in names if not self.has(name))
         if missing:
             raise ProviderConfigurationError(
                 f"selected analyst capability is not configured: {', '.join(missing)}"
@@ -91,6 +116,9 @@ class ProviderRegistry:
 
     @overload
     def require(self, name: Literal["prices"]) -> PriceProvider: ...
+
+    @overload
+    def require(self, name: Literal["outcomes"]) -> OutcomeSeriesProvider: ...
 
     @overload
     def require(self, name: Literal["fundamentals"]) -> FundamentalProvider: ...
@@ -143,6 +171,117 @@ class ProviderRegistry:
             normalized.append(point)
         return tuple(normalized)
 
+    def outcomes(
+        self, instrument: InstrumentId, spec: OutcomeSeriesSpec
+    ) -> OutcomeSeries:
+        if CapabilityName.OUTCOMES in self._providers:
+            provider = self.require("outcomes")
+            series = provider.outcome_history(instrument, spec)
+        else:
+            series = self._price_outcome_series(instrument, spec)
+        if not isinstance(series, OutcomeSeries):
+            raise ProviderContractError("outcome provider returned a malformed series")
+        if series.instrument != instrument or series.spec != spec:
+            raise ProviderContractError("outcome provider returned the wrong series")
+        if len(series.points) > MAX_OUTCOME_POINTS:
+            raise ProviderContractError("outcome provider exceeded the point limit")
+        if not isinstance(series.points, tuple) or any(
+            not isinstance(point, OutcomePoint) for point in series.points
+        ):
+            raise ProviderContractError("outcome provider returned malformed points")
+        if series.barrier_basis not in {"observed_value", "high_low"}:
+            raise ProviderContractError("outcome provider returned an invalid barrier basis")
+        series_source = normalize_provider_kind(series.source)
+        if series.provenance.get("provider_kind") != series_source.value:
+            raise ProviderContractError(
+                "outcome provider provenance does not match its source"
+            )
+        _require_auditable_reference(series.provenance, "reference", "outcome")
+        timestamps = [point.observed_at for point in series.points]
+        if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
+            raise ProviderContractError(
+                "outcome provider must return ordered unique timestamps"
+            )
+        complete = [
+            point.high is not None and point.low is not None for point in series.points
+        ]
+        partial = [
+            (point.high is None) != (point.low is None) for point in series.points
+        ]
+        if any(partial):
+            raise ProviderContractError("outcome high and low must be supplied together")
+        if series.barrier_basis == "high_low" and not all(complete):
+            raise ProviderContractError(
+                "high_low outcome series requires high and low for every point"
+            )
+        if series.barrier_basis == "observed_value" and any(complete):
+            raise ProviderContractError(
+                "observed_value outcome series cannot contain high or low"
+            )
+        return series
+
+    def _price_outcome_series(
+        self, instrument: InstrumentId, spec: OutcomeSeriesSpec
+    ) -> OutcomeSeries:
+        if spec.kind != "price" or spec.name != "close":
+            raise ProviderConfigurationError(
+                "a configured outcome provider is required for this target series"
+            )
+        prices = tuple(sorted(self.prices(instrument), key=lambda point: point.observed_at))
+        timestamps = [point.observed_at for point in prices]
+        if len(set(timestamps)) != len(timestamps):
+            raise ProviderContractError("price outcome series has duplicate timestamps")
+        complete = [point.high is not None and point.low is not None for point in prices]
+        partial = [(point.high is None) != (point.low is None) for point in prices]
+        if any(partial) or (any(complete) and not all(complete)):
+            raise ProviderContractError("price outcome series has mixed high/low coverage")
+        barrier_basis: Literal["observed_value", "high_low"] = (
+            "high_low" if prices and all(complete) else "observed_value"
+        )
+        sources = {point.source for point in prices}
+        if len(sources) > 1:
+            raise ProviderContractError("price outcome series has mixed provider sources")
+        source = normalize_provider_kind(
+            next(iter(sources), normalize_provider_kind("derived"))
+        )
+        rows = [
+            {
+                "observed_at": point.observed_at.isoformat(),
+                "value": point.close,
+                "high": point.high if barrier_basis == "high_low" else None,
+                "low": point.low if barrier_basis == "high_low" else None,
+                "reference": point.provenance.get("reference"),
+            }
+            for point in prices
+        ]
+        reference = _sha256(
+            {
+                "spec": spec.model_dump(mode="json"),
+                "barrier_basis": barrier_basis,
+                "points": rows,
+            }
+        )
+        return OutcomeSeries(
+            instrument=instrument,
+            spec=spec,
+            points=tuple(
+                OutcomePoint(
+                    observed_at=point.observed_at,
+                    value=point.close,
+                    high=point.high if barrier_basis == "high_low" else None,
+                    low=point.low if barrier_basis == "high_low" else None,
+                )
+                for point in prices
+            ),
+            source=source,
+            barrier_basis=barrier_basis,
+            provenance={
+                "provider_kind": source.value,
+                "reference": reference,
+                "series_ref": reference,
+            },
+        )
+
     def fundamentals(self, instrument: InstrumentId) -> tuple[Observation, ...]:
         observations = self.require("fundamentals").fundamentals(instrument)
         if not isinstance(observations, tuple):
@@ -185,6 +324,11 @@ def _is_finite(value: int | float) -> bool:
         return math.isfinite(value)
     except OverflowError:
         return False
+
+
+def _sha256(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 _STATEMENT_METRICS = frozenset(

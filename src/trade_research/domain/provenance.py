@@ -144,6 +144,19 @@ class MetricKind(StrEnum):
     BACKTEST_TRADE_COUNT = "backtest_trade_count"
     BACKTEST_WIN_RATE = "backtest_win_rate"
     BACKTEST_SHARPE_RATIO = "backtest_sharpe_ratio"
+    SIGNAL_EVENT_COUNT = "signal_event_count"
+    SIGNAL_NON_OVERLAPPING_EVENT_COUNT = "signal_non_overlapping_event_count"
+    SIGNAL_WIN_RATE = "signal_win_rate"
+    SIGNAL_NON_OVERLAPPING_WIN_RATE_LOWER_95 = (
+        "signal_non_overlapping_win_rate_lower_95"
+    )
+    SIGNAL_REWARD_RISK_RATIO = "signal_reward_risk_ratio"
+    SIGNAL_OPPORTUNITY_SCORE = "signal_opportunity_score"
+    SIGNAL_EXPECTED_CHANGE = "signal_expected_change"
+    SIGNAL_EXPECTANCY_R = "signal_expectancy_r"
+    SIGNAL_PROFIT_FACTOR = "signal_profit_factor"
+    PRICE_ACTION_STRUCTURE = "price_action_structure"
+    PRICE_ACTION_ZONE_COUNT = "price_action_zone_count"
 
 
 class VendorField(StrEnum):
@@ -223,12 +236,22 @@ class DerivedAlgorithm(StrEnum):
     CORRELATION_MATRIX = "correlation_matrix"
     ASSET_ALLOCATION = "asset_allocation"
     BACKTESTING_PY_SIMULATION = "backtesting_py_simulation"
+    SIGNAL_OUTCOME_EVALUATION = "signal_outcome_evaluation"
+    PRICE_ACTION_STRUCTURE_CLASSIFICATION = "price_action_structure_classification"
+    PRICE_ACTION_ATR_ZONE_CLUSTERING = "price_action_atr_zone_clustering"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 _CURRENCY_PATTERN = re.compile(r"[A-Z]{3}")
 _REFERENCE_KEYS = frozenset(
-    {"reference", "period_ref", "prior_period_ref", "snapshot_ref", "series_ref"}
+    {
+        "reference",
+        "period_ref",
+        "prior_period_ref",
+        "snapshot_ref",
+        "series_ref",
+        "configuration_ref",
+    }
 )
 _TIMESTAMP_KEYS = frozenset({"observed_at", "timestamp", "valuation_as_of", "start_at", "end_at"})
 _CLOSED_SCALAR_KEYS = frozenset(

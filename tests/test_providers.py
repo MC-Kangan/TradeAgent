@@ -172,6 +172,36 @@ def test_remote_price_adapters_parse_ohlcv_and_resolved_symbols() -> None:
     assert "VOD.L" in requested[0]
 
 
+def test_yahoo_price_adapter_supports_bounded_chart_windows() -> None:
+    requested: list[str] = []
+
+    def yahoo_get(url: str, headers: object) -> str:
+        requested.append(url)
+        return (
+            '{"chart":{"result":[{"timestamp":[1767225600],"indicators":{"quote":[{'
+            '"open":[99],"high":[102],"low":[98],"close":[101],"volume":[1000]}]}}]}}'
+        )
+
+    YahooPriceProvider(
+        http_get=yahoo_get,
+        range_="10y",
+        interval="1d",
+    ).price_history(InstrumentId(symbol="^GSPC", market="INDEX"))
+    YahooPriceProvider(
+        http_get=yahoo_get,
+        range_="60d",
+        interval="30m",
+    ).price_history(InstrumentId(symbol="^GSPC", market="INDEX"))
+
+    assert "range=10y&interval=1d" in requested[0]
+    assert "range=60d&interval=30m" in requested[1]
+
+
+def test_yahoo_price_adapter_rejects_unbounded_chart_parameters() -> None:
+    with pytest.raises(ValueError, match="unsupported Yahoo chart window"):
+        YahooPriceProvider(range_="max", interval="1m")
+
+
 def test_sec_company_facts_derives_only_registry_valid_free_cash_flow(tmp_path: Path) -> None:
     instrument = InstrumentId(symbol="ACME", market="US")
     payload = {

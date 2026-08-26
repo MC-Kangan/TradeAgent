@@ -9,9 +9,10 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from trade_research.domain import InstrumentId
+from trade_research.domain import InstrumentId, OutcomeSeriesSpec
 from trade_research.skills.backtesting import SignalEvent, StrategyConfiguration
 from trade_research.skills.core import ResearchSkill
+from trade_research.skills.signal_evaluation import SignalInstruction
 
 PORTFOLIO_SKILLS = frozenset({"correlation-analysis", "asset-allocation"})
 
@@ -198,6 +199,63 @@ class BacktestingSkillParameters(_BacktestParameters):
         )
 
 
+class SignalInstructionParameters(_BacktestParameters):
+    observed_at: datetime
+    direction: Literal["long", "short"]
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("observed_at must include a timezone")
+        return value
+
+
+class SignalEvaluationSkillParameters(_BacktestParameters):
+    signal_name: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+    )
+    instructions: tuple[SignalInstructionParameters, ...] = Field(
+        min_length=1, max_length=520
+    )
+    target_series: OutcomeSeriesSpec = Field(
+        default_factory=lambda: OutcomeSeriesSpec(
+            name="close",
+            kind="price",
+            unit="price",
+        )
+    )
+    change_kind: Literal["relative", "absolute"] = "relative"
+    fixed_horizon_bars: int = Field(default=21, ge=1, le=520)
+    profit_target: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    max_holding_bars: int = Field(default=63, ge=1, le=520)
+    entry_lag_bars: int = Field(default=1, ge=1, le=520)
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(
+        cls, instructions: tuple[SignalInstructionParameters, ...]
+    ) -> tuple[SignalInstructionParameters, ...]:
+        timestamps = [instruction.observed_at for instruction in instructions]
+        if timestamps != sorted(timestamps):
+            raise ValueError("instructions must be ordered by observed_at")
+        if len(set(timestamps)) != len(timestamps):
+            raise ValueError("instruction timestamps must be unique")
+        return instructions
+
+    def signal_instructions(self) -> tuple[SignalInstruction, ...]:
+        return tuple(
+            SignalInstruction(
+                observed_at=instruction.observed_at.astimezone(UTC),
+                direction=instruction.direction,
+            )
+            for instruction in self.instructions
+        )
+
+
 def configure_skill(
     skill: ResearchSkill,
     params: Mapping[str, object],
@@ -271,6 +329,21 @@ def configure_skill(
             take_profit_pct=backtest_params.take_profit_pct,
         )
 
+    if skill.name == "signal-evaluation":
+        signal_params = SignalEvaluationSkillParameters.model_validate(params)
+        return replace(  # type: ignore[type-var]
+            skill,
+            signal_name=signal_params.signal_name,
+            instructions=signal_params.signal_instructions(),
+            target_series=signal_params.target_series,
+            change_kind=signal_params.change_kind,
+            fixed_horizon_bars=signal_params.fixed_horizon_bars,
+            profit_target=signal_params.profit_target,
+            stop_loss=signal_params.stop_loss,
+            max_holding_bars=signal_params.max_holding_bars,
+            entry_lag_bars=signal_params.entry_lag_bars,
+        )
+
     if params:
         raise ValueError(f"Skill '{skill.name}' does not accept parameters")
     return skill
@@ -283,4 +356,5 @@ SKILL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     "correlation-analysis": PortfolioSkillParameters.model_json_schema(),
     "asset-allocation": AssetAllocationParameters.model_json_schema(),
     "backtesting": BacktestingSkillParameters.model_json_schema(),
+    "signal-evaluation": SignalEvaluationSkillParameters.model_json_schema(),
 }
