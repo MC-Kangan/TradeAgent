@@ -204,6 +204,11 @@ class PriceActionStructureSkill:
         pivots = _pivots(complete)
         structure = _structure(pivots)
         zones = _zones(pivots, atr_14, complete[-1].close)
+        presentation_prices = complete[-_PRESENTATION_BARS:]
+        first_presentation_index = len(complete) - len(presentation_prices)
+        presentation_pivots = tuple(
+            pivot for pivot in pivots if pivot.index >= first_presentation_index
+        )[-_PRESENTATION_PIVOTS:]
         presentation = PriceActionStructurePresentation(
             structure=structure,
             atr_14=atr_14,
@@ -215,14 +220,14 @@ class PriceActionStructureSkill:
                     low=cast(float, point.low),
                     close=point.close, volume=point.volume,
                 )
-                for point in complete[-_PRESENTATION_BARS:]
+                for point in presentation_prices
             ),
             pivots=tuple(
                 PriceActionPivot(
                     observed_at=pivot.observed_at, price=pivot.price,
                     kind=pivot.kind, label=pivot.label,
                 )
-                for pivot in pivots[-_PRESENTATION_PIVOTS:]
+                for pivot in presentation_pivots
             ),
             zones=zones,
         )

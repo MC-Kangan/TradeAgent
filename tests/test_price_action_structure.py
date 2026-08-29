@@ -92,6 +92,21 @@ def test_skill_builds_atr_zones_and_caps_output() -> None:
     )
 
 
+def test_presentation_only_returns_pivots_visible_in_its_price_bars() -> None:
+    values = [
+        (100, 110 if index % 7 == 3 else 105, 90 if index % 7 == 3 else 95, 100)
+        for index in range(252)
+    ]
+    result = PriceActionStructureSkill().analyze(INSTRUMENT, _providers(_points(values)))
+
+    assert result.presentation is not None
+    first_visible_at = result.presentation.price_bars[0].observed_at
+    assert result.presentation.pivots
+    assert all(
+        pivot.observed_at >= first_visible_at for pivot in result.presentation.pivots
+    )
+
+
 def test_skill_returns_partial_without_thirty_complete_bars() -> None:
     result = PriceActionStructureSkill().analyze(
         INSTRUMENT, _providers(_points(_fixture()[:20]))

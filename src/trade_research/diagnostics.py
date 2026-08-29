@@ -90,6 +90,9 @@ def run_doctor(environment: Mapping[str, str] | None = None) -> JsonObject:
             "markov_method_analysis": (
                 "ready" if prices_available else "unavailable — price provider not configured"
             ),
+            "price_action_structure_analysis": (
+                "ready" if prices_available else "unavailable — price provider not configured"
+            ),
             "correlation_analysis": (
                 "ready" if prices_available else "unavailable — price provider not configured"
             ),

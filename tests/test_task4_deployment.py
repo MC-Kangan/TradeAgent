@@ -205,6 +205,10 @@ def test_doctor_reports_capabilities_without_echoing_secret_values(tmp_path: Pat
     assert payload["storage"]["sqlite_wal"] is True
     assert payload["configuration"]["api_token_configured"] is True
     assert payload["providers"]["configured"] is True
+    assert (
+        payload["skills"]["price_action_structure_analysis"]
+        == payload["skills"]["technical_analysis"]
+    )
     assert payload["llm"]["configured"] is True
     assert payload["discord"]["configured"] is True
     assert str(tmp_path) not in serialized
