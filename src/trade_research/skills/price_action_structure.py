@@ -5,7 +5,7 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import cast
+from typing import Literal, cast
 
 from trade_research.domain import (
     AnalysisMethod,
@@ -14,6 +14,7 @@ from trade_research.domain import (
     LimitationKind,
     Observation,
     PriceActionBar,
+    PriceActionCandleEvent,
     PriceActionPivot,
     PriceActionStructurePresentation,
     PriceActionZone,
@@ -37,6 +38,7 @@ _CALCULATION_BARS = 252
 _PRESENTATION_BARS = 180
 _PRESENTATION_PIVOTS = 64
 _MAX_ZONES = 8
+_MAX_EVENTS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,141 @@ class _Pivot:
     price: float
     kind: str
     label: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CandleEvent:
+    index: int
+    kind: Literal[
+        "bullish_rejection",
+        "bearish_rejection",
+        "inside_bar",
+        "bullish_engulfing",
+        "bearish_engulfing",
+    ]
+    direction: Literal["bullish", "bearish", "neutral"]
+    started_at: datetime
+    observed_at: datetime
+    price: float
+
+
+def _causal_atr(
+    prices: tuple[PricePoint, ...],
+    consecutive: tuple[bool, ...] | None = None,
+) -> tuple[float | None, ...]:
+    """Return stable trailing ATR(14) values using data available at each bar."""
+    true_range_window: list[float] = []
+    values: list[float | None] = []
+    for index, point in enumerate(prices):
+        high = cast(float, point.high)
+        low = cast(float, point.low)
+        follows_previous = index > 0 and (
+            consecutive is None or consecutive[index]
+        )
+        if not follows_previous:
+            true_range_window.clear()
+        previous_close = prices[index - 1].close if follows_previous else point.close
+        true_range = max(high - low, abs(high - previous_close), abs(low - previous_close))
+        true_range_window.append(true_range)
+        if len(true_range_window) > _ATR_PERIOD:
+            true_range_window.pop(0)
+        values.append(
+            statistics.fmean(true_range_window)
+            if len(true_range_window) == _ATR_PERIOD
+            else None
+        )
+    return tuple(values)
+
+
+def _candle_events(
+    prices: tuple[PricePoint, ...],
+    consecutive: tuple[bool, ...] | None = None,
+) -> tuple[_CandleEvent, ...]:
+    """Detect completed candle events without using future bars."""
+    atr_values = _causal_atr(prices, consecutive)
+    result: list[_CandleEvent] = []
+    for index, current in enumerate(prices):
+        open_ = cast(float, current.open)
+        high = cast(float, current.high)
+        low = cast(float, current.low)
+        candle_range = high - low
+        if candle_range <= 0:
+            continue
+        body = abs(current.close - open_)
+        upper_wick = high - max(open_, current.close)
+        lower_wick = min(open_, current.close) - low
+        atr_at_event = atr_values[index]
+
+        if atr_at_event is not None and candle_range >= 0.4 * atr_at_event:
+            if (
+                lower_wick / candle_range >= 0.6
+                and upper_wick / candle_range < 0.15
+                and body / candle_range < 0.3
+            ):
+                result.append(
+                    _CandleEvent(
+                        index, "bullish_rejection", "bullish",
+                        current.observed_at, current.observed_at, low,
+                    )
+                )
+            elif (
+                upper_wick / candle_range >= 0.6
+                and lower_wick / candle_range < 0.15
+                and body / candle_range < 0.3
+            ):
+                result.append(
+                    _CandleEvent(
+                        index, "bearish_rejection", "bearish",
+                        current.observed_at, current.observed_at, high,
+                    )
+                )
+
+        follows_previous = index > 0 and (
+            consecutive is None or consecutive[index]
+        )
+        previous = prices[index - 1] if follows_previous else None
+        if previous is not None:
+            previous_high = cast(float, previous.high)
+            previous_low = cast(float, previous.low)
+            if high < previous_high and low > previous_low:
+                result.append(
+                    _CandleEvent(
+                        index, "inside_bar", "neutral",
+                        previous.observed_at, current.observed_at, current.close,
+                    )
+                )
+            if atr_at_event is not None and candle_range >= 0.3 * atr_at_event:
+                previous_open = cast(float, previous.open)
+                previous_body = abs(previous.close - previous_open)
+                bullish = (
+                    previous.close < previous_open
+                    and current.close > open_
+                    and body > previous_body
+                    and open_ <= previous.close
+                    and current.close >= previous_open
+                )
+                bearish = (
+                    previous.close > previous_open
+                    and current.close < open_
+                    and body > previous_body
+                    and open_ >= previous.close
+                    and current.close <= previous_open
+                )
+                if bullish:
+                    result.append(
+                        _CandleEvent(
+                            index, "bullish_engulfing", "bullish",
+                            previous.observed_at, current.observed_at, low,
+                        )
+                    )
+                elif bearish:
+                    result.append(
+                        _CandleEvent(
+                            index, "bearish_engulfing", "bearish",
+                            previous.observed_at, current.observed_at, high,
+                        )
+                    )
+    return tuple(result)
 
 
 def _pivots(prices: tuple[PricePoint, ...]) -> tuple[_Pivot, ...]:
@@ -177,11 +314,17 @@ class PriceActionStructureSkill:
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
         clean, discarded, _ = validated_prices(providers.prices(instrument))
-        complete = tuple(
-            point for point in clean
+        complete_rows = tuple(
+            (index, point) for index, point in enumerate(clean)
             if point.open is not None and point.high is not None and point.low is not None
-        )[-_CALCULATION_BARS:]
-        incomplete = len(complete) != len(clean)
+        )
+        incomplete = len(complete_rows) != len(clean)
+        complete_rows = complete_rows[-_CALCULATION_BARS:]
+        complete = tuple(point for _, point in complete_rows)
+        consecutive = tuple(
+            index > 0 and source_index == complete_rows[index - 1][0] + 1
+            for index, (source_index, _) in enumerate(complete_rows)
+        )
         limitations: list[LimitationKind] = []
         if discarded:
             limitations.append(LimitationKind.INVALID_ROWS_DISCARDED)
@@ -202,6 +345,7 @@ class PriceActionStructureSkill:
 
         atr_14 = atr(complete, _ATR_PERIOD)
         pivots = _pivots(complete)
+        events = _candle_events(complete, consecutive)
         structure = _structure(pivots)
         zones = _zones(pivots, atr_14, complete[-1].close)
         presentation_prices = complete[-_PRESENTATION_BARS:]
@@ -209,6 +353,12 @@ class PriceActionStructureSkill:
         presentation_pivots = tuple(
             pivot for pivot in pivots if pivot.index >= first_presentation_index
         )[-_PRESENTATION_PIVOTS:]
+        visible_events = tuple(
+            event
+            for event in events
+            if event.started_at >= presentation_prices[0].observed_at
+        )
+        presentation_events = tuple(reversed(visible_events[-_MAX_EVENTS:]))
         presentation = PriceActionStructurePresentation(
             structure=structure,
             atr_14=atr_14,
@@ -230,6 +380,16 @@ class PriceActionStructureSkill:
                 for pivot in presentation_pivots
             ),
             zones=zones,
+            events=tuple(
+                PriceActionCandleEvent(
+                    kind=event.kind,
+                    direction=event.direction,
+                    started_at=event.started_at,
+                    observed_at=event.observed_at,
+                    price=event.price,
+                )
+                for event in presentation_events
+            ),
         )
         observations = (
             _observation(
@@ -263,6 +423,10 @@ class PriceActionStructureSkill:
                 AnalysisMethod(
                     algorithm=DerivedAlgorithm.PRICE_ACTION_ATR_ZONE_CLUSTERING,
                     window="atr14_cluster_0_5_latest_252_daily_bars",
+                ),
+                AnalysisMethod(
+                    algorithm=DerivedAlgorithm.PRICE_ACTION_CANDLE_EVENT_DETECTION,
+                    window="trailing_atr14_latest_252_daily_bars",
                 ),
             ),
             signal=SignalKind.NOT_ASSESSED,

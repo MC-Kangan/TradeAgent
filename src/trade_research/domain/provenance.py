@@ -239,6 +239,7 @@ class DerivedAlgorithm(StrEnum):
     SIGNAL_OUTCOME_EVALUATION = "signal_outcome_evaluation"
     PRICE_ACTION_STRUCTURE_CLASSIFICATION = "price_action_structure_classification"
     PRICE_ACTION_ATR_ZONE_CLUSTERING = "price_action_atr_zone_clustering"
+    PRICE_ACTION_CANDLE_EVENT_DETECTION = "price_action_candle_event_detection"
 
 
 _REFERENCE_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")

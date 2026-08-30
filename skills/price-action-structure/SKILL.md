@@ -16,13 +16,20 @@ crypto. It describes observed market structure; it does not issue trade instruct
 3. Classify structure as `uptrend`, `downtrend`, `mixed`, or `unavailable`.
 4. Cluster confirmed pivot prices within 0.5 ATR(14). Clusters with at least two
    touches become support, resistance, or flip zones.
-5. Return at most eight zones and 180 chart bars.
+5. Detect completed rejection, inside-bar, and engulfing candle events. Rejection
+   candles require a dominant wick of at least 60%, an opposite wick below 15%, a
+   body below 30%, and a range of at least 0.4 trailing causal ATR(14). Engulfing candles
+   require opposite colours, strict body growth and full prior-body coverage, with
+   a range of at least 0.3 causal ATR(14). Inside bars use strict high/low containment.
+6. Ignore zero-range candles and return at most eight zones, ten candle events in
+   newest-first order, and 180 chart bars.
 
 The skill never returns provisional pivots. Results with fewer than 30 valid bars are
 partial, and fewer than 15 bars cannot produce the structured presentation.
 
 ## Output
 
-The `price-action-structure-v1` presentation contains daily bars, confirmed pivots,
-the ATR(14) value, structure classification, and bounded zones. The signal is always
-`not_assessed`; consumers should present this as research context rather than advice.
+The `price-action-structure-v2` presentation contains daily bars, confirmed pivots,
+the ATR(14) value, structure classification, bounded zones, and completed candle
+events. Event direction describes candle geometry only; it is not a forecast or an
+investment action. The signal is always `not_assessed`.

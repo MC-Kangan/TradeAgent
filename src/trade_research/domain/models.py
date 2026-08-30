@@ -781,16 +781,50 @@ class PriceActionZone(DomainModel):
         return self
 
 
+class PriceActionCandleEvent(DomainModel):
+    """One completed daily candle-pattern event."""
+
+    kind: Literal[
+        "bullish_rejection",
+        "bearish_rejection",
+        "inside_bar",
+        "bullish_engulfing",
+        "bearish_engulfing",
+    ]
+    direction: Literal["bullish", "bearish", "neutral"]
+    started_at: datetime
+    observed_at: datetime
+    price: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_event(self) -> Self:
+        if self.started_at.tzinfo is None or self.observed_at.tzinfo is None:
+            raise ValueError("candle event timestamps must include a timezone")
+        if self.observed_at < self.started_at:
+            raise ValueError("candle event completion must not precede its start")
+        expected_direction = (
+            "neutral"
+            if self.kind == "inside_bar"
+            else "bullish"
+            if self.kind.startswith("bullish_")
+            else "bearish"
+        )
+        if self.direction != expected_direction:
+            raise ValueError("candle event direction must match its pattern kind")
+        return self
+
+
 class PriceActionStructurePresentation(DomainModel):
     """Bounded, renderer-neutral daily structure and price-zone output."""
 
-    template: Literal["price-action-structure-v1"] = "price-action-structure-v1"
+    template: Literal["price-action-structure-v2"] = "price-action-structure-v2"
     timeframe: Literal["1d"] = "1d"
     structure: Literal["uptrend", "downtrend", "mixed", "unavailable"]
     atr_14: float = Field(ge=0)
     price_bars: tuple[PriceActionBar, ...] = Field(default=(), max_length=180)
     pivots: tuple[PriceActionPivot, ...] = Field(default=(), max_length=64)
     zones: tuple[PriceActionZone, ...] = Field(default=(), max_length=8)
+    events: tuple[PriceActionCandleEvent, ...] = Field(default=(), max_length=10)
 
 
 class AnalystResult(DomainModel):
