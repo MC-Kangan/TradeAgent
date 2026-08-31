@@ -9,10 +9,13 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from trade_research.domain import InstrumentId, OutcomeSeriesSpec
-from trade_research.skills.backtesting import SignalEvent, StrategyConfiguration
+from trade_research.domain import InstrumentId, OutcomeSeriesSpec, SignalEvent
+from trade_research.skills.backtesting import StrategyConfiguration
 from trade_research.skills.core import ResearchSkill
-from trade_research.skills.signal_evaluation import SignalInstruction
+from trade_research.skills.signal_evaluation import (
+    EvaluationPeriod,
+    ExperimentDefinition,
+)
 
 PORTFOLIO_SKILLS = frozenset({"correlation-analysis", "asset-allocation"})
 
@@ -150,19 +153,22 @@ class BacktestingSkillParameters(_BacktestParameters):
     strategy: BacktestStrategyParameters = Field(default_factory=SmaCrossoverParameters)
     start_date: date | None = None
     minimum_holding_bars: int = Field(default=1, ge=1, le=520)
-    cash: float = Field(default=10_000, gt=0, le=1_000_000_000)
+    position_budget: float = Field(default=1_000, gt=0, le=1_000_000_000)
     commission: float = Field(default=0.001, ge=0, le=0.1)
     spread: float = Field(default=0, ge=0, le=0.1)
-    capital_per_add: float = Field(default=0.2, gt=0, le=1)
-    max_allocation: float = Field(default=0.6, gt=0, le=1)
+    tranche_fraction: float = Field(default=0.2, gt=0, le=1)
+    deployment_cap_fraction: float = Field(default=0.8, gt=0, le=1)
     minimum_addition_bars: int = Field(default=1, ge=1, le=520)
+    signal_horizon_bars: int = Field(default=21, ge=1, le=520)
     stop_loss_pct: float | None = Field(default=None, gt=0, lt=1)
     take_profit_pct: float | None = Field(default=None, gt=0, le=10)
 
     @model_validator(mode="after")
     def validate_position_sizing(self) -> Self:
-        if self.capital_per_add > self.max_allocation:
-            raise ValueError("capital_per_add must not exceed max_allocation")
+        if self.tranche_fraction > self.deployment_cap_fraction:
+            raise ValueError(
+                "tranche_fraction must not exceed deployment_cap_fraction"
+            )
         return self
 
     def strategy_configuration(self) -> StrategyConfiguration:
@@ -193,15 +199,16 @@ class BacktestingSkillParameters(_BacktestParameters):
             kind=strategy.kind,
             name=strategy.name,
             events=tuple(
-                SignalEvent(event.observed_at.astimezone(UTC).isoformat(), event.action)
+                SignalEvent(event.observed_at.astimezone(UTC), event.action)
                 for event in strategy.events
             ),
         )
 
 
-class SignalInstructionParameters(_BacktestParameters):
+class SignalEventParameters(_BacktestParameters):
     observed_at: datetime
     direction: Literal["long", "short"]
+    initial_risk: float | None = Field(default=None, gt=0)
 
     @field_validator("observed_at")
     @classmethod
@@ -211,13 +218,59 @@ class SignalInstructionParameters(_BacktestParameters):
         return value
 
 
+class EvaluationPeriodParameters(_BacktestParameters):
+    name: Literal["development", "validation", "holdout"]
+    start_at: datetime
+    end_at: datetime
+
+    @model_validator(mode="after")
+    def validate_period(self) -> Self:
+        if self.start_at.tzinfo is None or self.end_at.tzinfo is None:
+            raise ValueError("evaluation period timestamps must include a timezone")
+        if self.end_at <= self.start_at:
+            raise ValueError("evaluation period end must follow its start")
+        return self
+
+
+class ExperimentDefinitionParameters(_BacktestParameters):
+    experiment_id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+    )
+    strategy_version: str = Field(
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    strategy_frozen_at: datetime
+    evaluation_data_end: datetime
+    variant_count: int = Field(default=1, ge=1, le=1_000_000)
+    parameters_reference: str | None = Field(
+        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
+
+    @field_validator("strategy_frozen_at", "evaluation_data_end")
+    @classmethod
+    def require_experiment_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("experiment timestamps must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_experiment_window(self) -> Self:
+        if self.evaluation_data_end < self.strategy_frozen_at:
+            raise ValueError("evaluation_data_end must not precede strategy_frozen_at")
+        return self
+
+
 class SignalEvaluationSkillParameters(_BacktestParameters):
     signal_name: str = Field(
         min_length=1,
         max_length=64,
         pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
     )
-    instructions: tuple[SignalInstructionParameters, ...] = Field(
+    instructions: tuple[SignalEventParameters, ...] = Field(
         min_length=1, max_length=520
     )
     target_series: OutcomeSeriesSpec = Field(
@@ -233,12 +286,20 @@ class SignalEvaluationSkillParameters(_BacktestParameters):
     stop_loss: float = Field(gt=0)
     max_holding_bars: int = Field(default=63, ge=1, le=520)
     entry_lag_bars: int = Field(default=1, ge=1, le=520)
+    bootstrap_samples: int = Field(default=1000, ge=100, le=5000)
+    bootstrap_seed: int = Field(default=0, ge=0, le=2**32 - 1)
+    bootstrap_block_length: int | None = Field(default=None, ge=1, le=520)
+    baseline_trials: int = Field(default=100, ge=0, le=5000)
+    baseline_seed: int = Field(default=0, ge=0, le=2**32 - 1)
+    baseline_eligible_times: tuple[datetime, ...] = Field(default=(), max_length=8192)
+    periods: tuple[EvaluationPeriodParameters, ...] = Field(default=(), max_length=3)
+    experiment: ExperimentDefinitionParameters | None = None
 
     @field_validator("instructions")
     @classmethod
     def validate_instructions(
-        cls, instructions: tuple[SignalInstructionParameters, ...]
-    ) -> tuple[SignalInstructionParameters, ...]:
+        cls, instructions: tuple[SignalEventParameters, ...]
+    ) -> tuple[SignalEventParameters, ...]:
         timestamps = [instruction.observed_at for instruction in instructions]
         if timestamps != sorted(timestamps):
             raise ValueError("instructions must be ordered by observed_at")
@@ -246,13 +307,51 @@ class SignalEvaluationSkillParameters(_BacktestParameters):
             raise ValueError("instruction timestamps must be unique")
         return instructions
 
-    def signal_instructions(self) -> tuple[SignalInstruction, ...]:
+    @field_validator("baseline_eligible_times")
+    @classmethod
+    def validate_baseline_eligible_times(
+        cls, timestamps: tuple[datetime, ...]
+    ) -> tuple[datetime, ...]:
+        if any(timestamp.tzinfo is None for timestamp in timestamps):
+            raise ValueError("baseline eligible timestamps must include a timezone")
+        if list(timestamps) != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
+            raise ValueError("baseline eligible timestamps must be ordered and unique")
+        return timestamps
+
+    def signal_instructions(self) -> tuple[SignalEvent, ...]:
         return tuple(
-            SignalInstruction(
+            SignalEvent(
                 observed_at=instruction.observed_at.astimezone(UTC),
-                direction=instruction.direction,
+                action=(
+                    "add_long"
+                    if instruction.direction == "long"
+                    else "add_short"
+                ),
+                initial_risk=instruction.initial_risk,
             )
             for instruction in self.instructions
+        )
+
+    def evaluation_periods(self) -> tuple[EvaluationPeriod, ...]:
+        return tuple(
+            EvaluationPeriod(
+                name=period.name,
+                start_at=period.start_at.astimezone(UTC),
+                end_at=period.end_at.astimezone(UTC),
+            )
+            for period in self.periods
+        )
+
+    def experiment_definition(self) -> ExperimentDefinition | None:
+        if self.experiment is None:
+            return None
+        return ExperimentDefinition(
+            experiment_id=self.experiment.experiment_id,
+            strategy_version=self.experiment.strategy_version,
+            strategy_frozen_at=self.experiment.strategy_frozen_at.astimezone(UTC),
+            evaluation_data_end=self.experiment.evaluation_data_end.astimezone(UTC),
+            variant_count=self.experiment.variant_count,
+            parameters_reference=self.experiment.parameters_reference,
         )
 
 
@@ -319,12 +418,13 @@ def configure_skill(
             strategy=backtest_params.strategy_configuration(),
             start_date=backtest_params.start_date,
             minimum_holding_bars=backtest_params.minimum_holding_bars,
-            cash=backtest_params.cash,
+            position_budget=backtest_params.position_budget,
             commission=backtest_params.commission,
             spread=backtest_params.spread,
-            capital_per_add=backtest_params.capital_per_add,
-            max_allocation=backtest_params.max_allocation,
+            tranche_fraction=backtest_params.tranche_fraction,
+            deployment_cap_fraction=backtest_params.deployment_cap_fraction,
             minimum_addition_bars=backtest_params.minimum_addition_bars,
+            signal_horizon_bars=backtest_params.signal_horizon_bars,
             stop_loss_pct=backtest_params.stop_loss_pct,
             take_profit_pct=backtest_params.take_profit_pct,
         )
@@ -342,6 +442,17 @@ def configure_skill(
             stop_loss=signal_params.stop_loss,
             max_holding_bars=signal_params.max_holding_bars,
             entry_lag_bars=signal_params.entry_lag_bars,
+            bootstrap_samples=signal_params.bootstrap_samples,
+            bootstrap_seed=signal_params.bootstrap_seed,
+            bootstrap_block_length=signal_params.bootstrap_block_length,
+            baseline_trials=signal_params.baseline_trials,
+            baseline_seed=signal_params.baseline_seed,
+            baseline_eligible_times=tuple(
+                timestamp.astimezone(UTC)
+                for timestamp in signal_params.baseline_eligible_times
+            ),
+            periods=signal_params.evaluation_periods(),
+            experiment=signal_params.experiment_definition(),
         )
 
     if params:

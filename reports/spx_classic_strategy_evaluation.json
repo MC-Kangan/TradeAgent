@@ -1,0 +1,411 @@
+{
+  "data": {
+    "daily": {
+      "bars": 2512,
+      "end": "2026-08-25T13:30:00+00:00",
+      "interval": "1d",
+      "provider": "yahoo",
+      "start": "2016-08-26T13:30:00+00:00"
+    },
+    "intraday": {
+      "bars": 781,
+      "end": "2026-08-25T20:00:00+00:00",
+      "interval": "30m",
+      "provider": "yahoo",
+      "start": "2026-06-01T13:30:00+00:00"
+    }
+  },
+  "instrument": {
+    "market": "INDEX",
+    "symbol": "^GSPC"
+  },
+  "methodology": {
+    "comparison_scope": "common entry-signal outcome test; strategy-native sizing and exits are not simulated",
+    "daily": {
+      "barrier_basis": "high_low",
+      "baseline_trials": 200,
+      "bootstrap_block_length": null,
+      "bootstrap_samples": 1000,
+      "change_kind": "relative",
+      "entry_lag_bars": 1,
+      "fixed_horizon_bars": 10,
+      "max_holding_bars": 20,
+      "periods": [
+        {
+          "end": "2024-08-21T13:30:00+00:00",
+          "name": "development",
+          "start": "2016-08-26T13:30:00+00:00"
+        },
+        {
+          "end": "2026-08-25T13:30:00+00:00",
+          "name": "holdout",
+          "start": "2024-08-22T13:30:00+00:00"
+        }
+      ],
+      "profit_target": 0.03,
+      "stop_loss": 0.02
+    },
+    "intraday": {
+      "barrier_basis": "high_low",
+      "baseline_trials": 200,
+      "bootstrap_block_length": null,
+      "bootstrap_samples": 1000,
+      "change_kind": "relative",
+      "entry_lag_bars": 1,
+      "fixed_horizon_bars": 2,
+      "max_holding_bars": 4,
+      "periods": [
+        {
+          "end": "2026-08-07T19:30:00+00:00",
+          "name": "development",
+          "start": "2026-06-01T13:30:00+00:00"
+        },
+        {
+          "end": "2026-08-25T20:00:00+00:00",
+          "name": "holdout",
+          "start": "2026-08-10T13:30:00+00:00"
+        }
+      ],
+      "profit_target": 0.005,
+      "stop_loss": 0.0035
+    },
+    "intraday_filter": "requires the complete entry lag and maximum outcome horizon to remain inside the same America/New_York session",
+    "ranking_scope": "expected R uses the declared ex-ante stop as one risk unit; holdout and matched-timestamp baseline evidence are reported separately",
+    "signal_timing": "bar-close observation; entry on next observation"
+  },
+  "schema": "spx-classic-strategy-evaluation-v2",
+  "strategies": [
+    {
+      "baseline_eligible_timestamp_count": 2471,
+      "full_history": {
+        "baseline_expected_r": 0.05149759080504354,
+        "bootstrap_block_length": 8,
+        "bootstrap_positive_fraction": 0.934,
+        "event_count": 79,
+        "excess_expected_r": 0.12385166662841382,
+        "expected_r": 0.2098705045787603,
+        "non_overlapping_event_count": 58,
+        "non_overlapping_expected_r": 0.17534925743345736,
+        "non_overlapping_expected_r_lower_95": -0.04464086182066852,
+        "non_overlapping_expected_r_upper_95": 0.40161863173806145,
+        "profit_factor": 1.4459877201242888,
+        "reward_risk_ratio": 1.4098380271211817,
+        "win_rate": 0.5063291139240507
+      },
+      "holdout": {
+        "baseline_expected_r": -0.0013701996035632373,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.695,
+        "event_count": 15,
+        "excess_expected_r": 0.09919236582880205,
+        "expected_r": 0.06521477748349254,
+        "non_overlapping_event_count": 10,
+        "non_overlapping_expected_r": 0.0978221662252388,
+        "non_overlapping_expected_r_lower_95": -0.3065269932033362,
+        "non_overlapping_expected_r_upper_95": 0.5021713256538138,
+        "profit_factor": 1.1222777077815485,
+        "reward_risk_ratio": 1.282603094607484,
+        "win_rate": 0.4666666666666667
+      },
+      "name": "Turtle Trading",
+      "number": 1,
+      "timeframe": "daily"
+    },
+    {
+      "baseline_eligible_timestamp_count": 2477,
+      "full_history": {
+        "baseline_expected_r": 0.02370415354394191,
+        "bootstrap_block_length": 7,
+        "bootstrap_positive_fraction": 0.666,
+        "event_count": 102,
+        "excess_expected_r": 0.051972605249280976,
+        "expected_r": -0.005231075780730356,
+        "non_overlapping_event_count": 54,
+        "non_overlapping_expected_r": 0.07567675879322289,
+        "non_overlapping_expected_r_lower_95": -0.23096954358672922,
+        "non_overlapping_expected_r_upper_95": 0.4037776498700313,
+        "profit_factor": 0.9904625333571526,
+        "reward_risk_ratio": 1.4736149886533245,
+        "win_rate": 0.4019607843137255
+      },
+      "holdout": {
+        "baseline_expected_r": -0.050603911184622055,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.587,
+        "event_count": 27,
+        "excess_expected_r": 0.1100618159674927,
+        "expected_r": 0.027422484819689754,
+        "non_overlapping_event_count": 12,
+        "non_overlapping_expected_r": 0.05945790478287064,
+        "non_overlapping_expected_r_lower_95": -0.5655420952171294,
+        "non_overlapping_expected_r_upper_95": 0.6083591004220498,
+        "profit_factor": 1.051961726259871,
+        "reward_risk_ratio": 1.530126147287085,
+        "win_rate": 0.4074074074074074
+      },
+      "name": "Gap Trading",
+      "number": 2,
+      "timeframe": "daily"
+    },
+    {
+      "baseline_eligible_timestamp_count": 467,
+      "full_history": {
+        "baseline_expected_r": -0.008890347189579867,
+        "bootstrap_block_length": 8,
+        "bootstrap_positive_fraction": 0.787,
+        "event_count": 85,
+        "excess_expected_r": 0.07609391558625593,
+        "expected_r": 0.06800442240653357,
+        "non_overlapping_event_count": 61,
+        "non_overlapping_expected_r": 0.06720356839667606,
+        "non_overlapping_expected_r_lower_95": -0.09196967084954512,
+        "non_overlapping_expected_r_upper_95": 0.24231309290328543,
+        "profit_factor": 1.2501722253871566,
+        "reward_risk_ratio": 0.9636744237359333,
+        "win_rate": 0.5647058823529412
+      },
+      "holdout": {
+        "baseline_expected_r": 0.03806970463101134,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.178,
+        "event_count": 15,
+        "excess_expected_r": -0.12550922571524523,
+        "expected_r": 0.022845461621308873,
+        "non_overlapping_event_count": 12,
+        "non_overlapping_expected_r": -0.08743952108423388,
+        "non_overlapping_expected_r_lower_95": -0.2510135966858264,
+        "non_overlapping_expected_r_upper_95": 0.12843556226980735,
+        "profit_factor": 1.111838111455785,
+        "reward_risk_ratio": 0.7412254076371899,
+        "win_rate": 0.6
+      },
+      "name": "Dolphin Trading",
+      "number": 3,
+      "timeframe": "intraday"
+    },
+    {
+      "name": "Martingale",
+      "number": 4,
+      "reason": "Martingale changes position size after a loss but does not define an independent long/short entry signal; win-rate times reward/risk would conceal its path-dependent ruin risk.",
+      "slug": "martingale",
+      "status": "not-signal-evaluable",
+      "timeframe": "not-applicable"
+    },
+    {
+      "baseline_eligible_timestamp_count": 473,
+      "full_history": {
+        "baseline_expected_r": -0.041905363437639565,
+        "bootstrap_block_length": 7,
+        "bootstrap_positive_fraction": 0.168,
+        "event_count": 43,
+        "excess_expected_r": -0.029388521899647288,
+        "expected_r": -0.07129388533728685,
+        "non_overlapping_event_count": 43,
+        "non_overlapping_expected_r": -0.07129388533728685,
+        "non_overlapping_expected_r_lower_95": -0.2130133604312605,
+        "non_overlapping_expected_r_upper_95": 0.06348718894319351,
+        "profit_factor": 0.8102792545235463,
+        "reward_risk_ratio": 0.9318211427020782,
+        "win_rate": 0.46511627906976744
+      },
+      "holdout": {
+        "baseline_expected_r": 0.031104888190602583,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.48,
+        "event_count": 7,
+        "excess_expected_r": -0.03759352634948157,
+        "expected_r": -0.006488638158878984,
+        "non_overlapping_event_count": 7,
+        "non_overlapping_expected_r": -0.006488638158878984,
+        "non_overlapping_expected_r_lower_95": -0.25782402700262524,
+        "non_overlapping_expected_r_upper_95": 0.2991660180534627,
+        "profit_factor": 0.959483696254803,
+        "reward_risk_ratio": 1.279311595006404,
+        "win_rate": 0.42857142857142855
+      },
+      "name": "R-Breaker",
+      "number": 5,
+      "timeframe": "intraday"
+    },
+    {
+      "baseline_eligible_timestamp_count": 465,
+      "full_history": {
+        "baseline_expected_r": 0.00012788914999863608,
+        "bootstrap_block_length": 5,
+        "bootstrap_positive_fraction": 0.879,
+        "event_count": 27,
+        "excess_expected_r": 0.16440629089799338,
+        "expected_r": 0.16453418004799203,
+        "non_overlapping_event_count": 27,
+        "non_overlapping_expected_r": 0.16453418004799203,
+        "non_overlapping_expected_r_lower_95": -0.11286737320805483,
+        "non_overlapping_expected_r_upper_95": 0.47040875845960006,
+        "profit_factor": 1.4938855466942873,
+        "reward_risk_ratio": 1.0270463133523227,
+        "win_rate": 0.5925925925925926
+      },
+      "holdout": {
+        "baseline_expected_r": 0.0443973634550452,
+        "bootstrap_block_length": 2,
+        "bootstrap_positive_fraction": 0.535,
+        "event_count": 6,
+        "excess_expected_r": 0.0029047333327791233,
+        "expected_r": 0.04730209678782432,
+        "non_overlapping_event_count": 6,
+        "non_overlapping_expected_r": 0.04730209678782432,
+        "non_overlapping_expected_r_lower_95": -0.40760027559805456,
+        "non_overlapping_expected_r_upper_95": 0.586070455574514,
+        "profit_factor": 1.165958617098737,
+        "reward_risk_ratio": 1.1659586170987373,
+        "win_rate": 0.5
+      },
+      "name": "Dual Thrust",
+      "number": 6,
+      "timeframe": "intraday"
+    },
+    {
+      "baseline_eligible_timestamp_count": 473,
+      "full_history": {
+        "baseline_expected_r": -0.00046277955653691233,
+        "bootstrap_block_length": 6,
+        "bootstrap_positive_fraction": 0.665,
+        "event_count": 41,
+        "excess_expected_r": 0.041239102717078875,
+        "expected_r": 0.040776323160541965,
+        "non_overlapping_event_count": 41,
+        "non_overlapping_expected_r": 0.040776323160541965,
+        "non_overlapping_expected_r_lower_95": -0.15665374648605895,
+        "non_overlapping_expected_r_upper_95": 0.2333690696466938,
+        "profit_factor": 1.1149160381191274,
+        "reward_risk_ratio": 0.9628820329210647,
+        "win_rate": 0.5365853658536586
+      },
+      "holdout": {
+        "baseline_expected_r": 0.006513677667665259,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.287,
+        "event_count": 9,
+        "excess_expected_r": -0.05928803904830103,
+        "expected_r": -0.05277436138063577,
+        "non_overlapping_event_count": 9,
+        "non_overlapping_expected_r": -0.05277436138063577,
+        "non_overlapping_expected_r_lower_95": -0.24169133809313337,
+        "non_overlapping_expected_r_upper_95": 0.1816154280680916,
+        "profit_factor": 0.7546868308003479,
+        "reward_risk_ratio": 0.377343415400174,
+        "win_rate": 0.6666666666666666
+      },
+      "name": "Fairy Four Price",
+      "number": 7,
+      "timeframe": "intraday"
+    },
+    {
+      "baseline_eligible_timestamp_count": 2471,
+      "full_history": {
+        "baseline_expected_r": 0.004609483363056332,
+        "bootstrap_block_length": 8,
+        "bootstrap_positive_fraction": 0.218,
+        "event_count": 124,
+        "excess_expected_r": -0.09952126719941426,
+        "expected_r": -0.011745518304567345,
+        "non_overlapping_event_count": 58,
+        "non_overlapping_expected_r": -0.09491178383635793,
+        "non_overlapping_expected_r_lower_95": -0.33448542418159133,
+        "non_overlapping_expected_r_upper_95": 0.15502294743444903,
+        "profit_factor": 0.9788877084471251,
+        "reward_risk_ratio": 1.3553829809267885,
+        "win_rate": 0.41935483870967744
+      },
+      "holdout": {
+        "baseline_expected_r": -0.06674859674914152,
+        "bootstrap_block_length": 4,
+        "bootstrap_positive_fraction": 0.083,
+        "event_count": 29,
+        "excess_expected_r": -0.2717248342148814,
+        "expected_r": -0.25552057155354224,
+        "non_overlapping_event_count": 13,
+        "non_overlapping_expected_r": -0.33847343096402294,
+        "non_overlapping_expected_r_lower_95": -0.8076923076923077,
+        "non_overlapping_expected_r_upper_95": 0.15384615384615385,
+        "profit_factor": 0.5987084075412833,
+        "reward_risk_ratio": 1.1375459743284384,
+        "win_rate": 0.3448275862068966
+      },
+      "name": "Oliver-Kell EMA",
+      "number": 8,
+      "timeframe": "daily"
+    },
+    {
+      "baseline_eligible_timestamp_count": 2471,
+      "full_history": {
+        "baseline_expected_r": 0.017043102761106144,
+        "bootstrap_block_length": 7,
+        "bootstrap_positive_fraction": 0.692,
+        "event_count": 73,
+        "excess_expected_r": 0.04842459075958612,
+        "expected_r": 0.17531105601513422,
+        "non_overlapping_event_count": 54,
+        "non_overlapping_expected_r": 0.06546769352069226,
+        "non_overlapping_expected_r_lower_95": -0.17979617002182133,
+        "non_overlapping_expected_r_upper_95": 0.3118326233605762,
+        "profit_factor": 1.3638255355817064,
+        "reward_risk_ratio": 1.401709578236754,
+        "win_rate": 0.4931506849315068
+      },
+      "holdout": {
+        "baseline_expected_r": -0.0035889237835102805,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.911,
+        "event_count": 13,
+        "excess_expected_r": 0.3514110900087491,
+        "expected_r": 0.22909397401941448,
+        "non_overlapping_event_count": 10,
+        "non_overlapping_expected_r": 0.3478221662252388,
+        "non_overlapping_expected_r_lower_95": -0.095650840571425,
+        "non_overlapping_expected_r_upper_95": 0.8478221662252388,
+        "profit_factor": 1.4963702770420646,
+        "reward_risk_ratio": 1.282603094607484,
+        "win_rate": 0.5384615384615384
+      },
+      "name": "Escalator",
+      "number": 9,
+      "timeframe": "daily"
+    },
+    {
+      "baseline_eligible_timestamp_count": 2432,
+      "full_history": {
+        "baseline_expected_r": 0.019445468047876294,
+        "bootstrap_block_length": 3,
+        "bootstrap_positive_fraction": 0.0,
+        "event_count": 11,
+        "excess_expected_r": -0.4638899124923207,
+        "expected_r": -0.3181818181818182,
+        "non_overlapping_event_count": 9,
+        "non_overlapping_expected_r": -0.4444444444444444,
+        "non_overlapping_expected_r_lower_95": -1.0,
+        "non_overlapping_expected_r_upper_95": -0.16666666666666666,
+        "profit_factor": 0.5625,
+        "reward_risk_ratio": 1.5,
+        "win_rate": 0.2727272727272727
+      },
+      "holdout": {
+        "baseline_expected_r": 0.027150825963495315,
+        "bootstrap_block_length": 2,
+        "bootstrap_positive_fraction": 0.321,
+        "event_count": 5,
+        "excess_expected_r": -0.027150825963495315,
+        "expected_r": 0.0,
+        "non_overlapping_event_count": 5,
+        "non_overlapping_expected_r": 0.0,
+        "non_overlapping_expected_r_lower_95": -1.0,
+        "non_overlapping_expected_r_upper_95": 1.0,
+        "profit_factor": 1.0,
+        "reward_risk_ratio": 1.5,
+        "win_rate": 0.4
+      },
+      "name": "Checkmate",
+      "number": 10,
+      "timeframe": "daily"
+    }
+  ]
+}

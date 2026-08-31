@@ -10,7 +10,11 @@ from typing import Any
 from trade_research.domain import InstrumentId
 from trade_research.providers import OutcomePoint, PricePoint, YahooPriceProvider
 from trade_research.signals import moving_average_crossover
-from trade_research.skills.signal_evaluation import OutcomeSpecification, evaluate_signals
+from trade_research.skills.signal_evaluation import (
+    EvaluationPeriod,
+    OutcomeSpecification,
+    evaluate_signals,
+)
 
 
 def main() -> None:
@@ -32,6 +36,7 @@ def main() -> None:
         fast_window=args.fast,
         slow_window=args.slow,
     )
+    split_index = max(1, int(len(prices) * 0.7))
     study = evaluate_signals(
         _outcomes(prices),
         instructions,
@@ -43,6 +48,19 @@ def main() -> None:
             max_holding_bars=args.max_holding,
             entry_lag_bars=1,
             barrier_basis="high_low",
+            baseline_trials=200,
+            periods=(
+                EvaluationPeriod(
+                    name="development",
+                    start_at=prices[0].observed_at,
+                    end_at=prices[split_index - 1].observed_at,
+                ),
+                EvaluationPeriod(
+                    name="holdout",
+                    start_at=prices[split_index].observed_at,
+                    end_at=prices[-1].observed_at,
+                ),
+            ),
         ),
     )
     payload = {
@@ -57,9 +75,20 @@ def main() -> None:
             "name": f"sma-{args.fast}-{args.slow}-crossover",
             "count": len(instructions),
             "entry_lag_bars": 1,
+            "evaluation_purpose": "outcome_expectancy",
         },
         "fixed_horizon": _summary(study.fixed_horizon),
         "triple_barrier": _summary(study.triple_barrier),
+        "periods": [
+            {
+                "name": period.name,
+                "start": period.start_at.isoformat(),
+                "end": period.end_at.isoformat(),
+                "fixed_horizon": _summary(period.fixed_horizon),
+                "triple_barrier": _summary(period.triple_barrier),
+            }
+            for period in study.periods
+        ],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 
@@ -69,6 +98,7 @@ def _outcomes(prices: Sequence[PricePoint]) -> tuple[OutcomePoint, ...]:
         OutcomePoint(
             observed_at=point.observed_at,
             value=point.close,
+            entry_value=point.open,
             high=point.high,
             low=point.low,
         )
@@ -84,9 +114,22 @@ def _summary(summary: Any) -> dict[str, int | float | None]:
         "win_rate": summary.win_rate,
         "win_rate_lower_95": summary.non_overlapping_win_rate_lower_95,
         "reward_risk_ratio": summary.reward_risk_ratio,
-        "opportunity_score": summary.opportunity_score,
-        "expected_change": summary.expected_change,
-        "expectancy_r": summary.expectancy_r,
+        "win_payoff_product": summary.win_payoff_product,
+        "break_even_win_rate": summary.break_even_win_rate,
+        "edge_over_break_even": summary.edge_over_break_even,
+        "expected_value": summary.expected_value,
+        "expected_r": summary.expected_r,
+        "non_overlapping_expected_r": summary.non_overlapping_expected_r,
+        "non_overlapping_expected_r_lower_95": (
+            summary.non_overlapping_expected_r_lower_95
+        ),
+        "non_overlapping_expected_r_upper_95": (
+            summary.non_overlapping_expected_r_upper_95
+        ),
+        "bootstrap_positive_fraction": summary.bootstrap_positive_fraction,
+        "bootstrap_block_length": summary.bootstrap_block_length,
+        "baseline_expected_r": summary.baseline_expected_r,
+        "excess_expected_r": summary.excess_expected_r,
         "profit_factor": summary.profit_factor,
     }
 

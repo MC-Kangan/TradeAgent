@@ -15,8 +15,8 @@ from datetime import date
 from typing import Literal, cast
 from zoneinfo import ZoneInfo
 
+from trade_research.domain import SignalAction, SignalDirection, SignalEvent
 from trade_research.providers import PricePoint
-from trade_research.skills.signal_evaluation import SignalInstruction
 
 StrategyCategory = Literal[
     "daily-trend",
@@ -69,14 +69,14 @@ def turtle_signals(
     *,
     entry_window: int = 20,
     exit_window: int = 10,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Article Turtle proxy: prior-channel entries with opposite-channel exits."""
 
     clean = _complete_prices(prices)
     if not 0 < exit_window < entry_window:
         raise ValueError("Turtle windows must satisfy 0 < exit_window < entry_window")
     position = 0
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for index in range(entry_window, len(clean)):
         point = clean[index]
         prior_entry = clean[index - entry_window : index]
@@ -99,14 +99,14 @@ def gap_signals(
     *,
     atr_period: int = 14,
     gap_atr: float = 0.5,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Contrarian opening-gap signals using only the prior session ATR."""
 
     clean = _complete_prices(prices)
     if atr_period < 1 or gap_atr <= 0:
         raise ValueError("gap parameters must be positive")
     atr_values = _atr_series(clean, atr_period)
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for index in range(1, len(clean)):
         prior_atr = atr_values[index - 1]
         if prior_atr is None:
@@ -126,7 +126,7 @@ def dolphin_signals(
     fast_window: int = 5,
     slow_window: int = 20,
     breakout_bars: int = 2,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Article Dolphin proxy: EMA trend plus a prior-bar momentum breakout."""
 
     clean = _complete_prices(prices)
@@ -135,7 +135,7 @@ def dolphin_signals(
     closes = [point.close for point in clean]
     fast = _ema_aligned(closes, fast_window)
     slow = _ema_aligned(closes, slow_window)
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     previous_long = False
     previous_short = False
     start = max(slow_window - 1, breakout_bars)
@@ -165,7 +165,7 @@ def r_breaker_signals(
     *,
     breakout_fraction: float = 0.35,
     session_timezone: str = "America/New_York",
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Transparent proxy for the article's simplified R-Breaker description.
 
     Breakouts use pivot +/- ``breakout_fraction`` times the previous session
@@ -176,7 +176,7 @@ def r_breaker_signals(
     if breakout_fraction <= 0:
         raise ValueError("R-Breaker breakout_fraction must be positive")
     sessions = _sessions(_complete_prices(prices), session_timezone)
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for session_index in range(1, len(sessions)):
         previous = sessions[session_index - 1][1]
         current = sessions[session_index][1]
@@ -220,13 +220,13 @@ def dual_thrust_signals(
     *,
     coefficient: float = 0.5,
     session_timezone: str = "America/New_York",
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Article Dual Thrust proxy using the maximum of two prior daily ranges."""
 
     if coefficient <= 0:
         raise ValueError("Dual Thrust coefficient must be positive")
     sessions = _sessions(_complete_prices(prices), session_timezone)
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for session_index in range(2, len(sessions)):
         first = sessions[session_index - 2][1]
         second = sessions[session_index - 1][1]
@@ -252,11 +252,11 @@ def fairy_four_price_signals(
     prices: Sequence[PricePoint],
     *,
     session_timezone: str = "America/New_York",
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """First intraday close beyond the previous session high or low."""
 
     sessions = _sessions(_complete_prices(prices), session_timezone)
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for session_index in range(1, len(sessions)):
         previous = sessions[session_index - 1][1]
         current = sessions[session_index][1]
@@ -277,7 +277,7 @@ def ema_momentum_signals(
     *,
     fast_window: int = 5,
     slow_window: int = 20,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """EMA crossover instructions matching the article's item eight."""
 
     clean = _complete_prices(prices)
@@ -289,7 +289,7 @@ def ema_momentum_signals(
     if len(clean) < slow_window:
         return ()
     previous = _relation(cast(float, fast[slow_window - 1]), cast(float, slow[slow_window - 1]))
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for index in range(slow_window, len(clean)):
         relation = _relation(cast(float, fast[index]), cast(float, slow[index]))
         if relation > 0 and previous <= 0:
@@ -306,7 +306,7 @@ def escalator_signals(
     breakout_window: int = 20,
     atr_period: int = 14,
     stop_multiplier: float = 3.0,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Article Escalator proxy with channel entries and a ratcheting ATR stop."""
 
     clean = _complete_prices(prices)
@@ -315,7 +315,7 @@ def escalator_signals(
     atr_values = _atr_series(clean, atr_period)
     position = 0
     extreme = 0.0
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for index in range(breakout_window, len(clean)):
         point = clean[index]
         atr_value = atr_values[index]
@@ -346,7 +346,7 @@ def checkmate_signals(
     fast_atr_period: int = 20,
     slow_atr_period: int = 60,
     expansion_ratio: float = 1.1,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Article Checkmate proxy: channel breakout gated by ATR expansion."""
 
     clean = _complete_prices(prices)
@@ -358,7 +358,7 @@ def checkmate_signals(
     slow_atr = _atr_series(clean, slow_atr_period)
     start = max(breakout_window, slow_atr_period - 1)
     position = 0
-    result: list[SignalInstruction] = []
+    result: list[SignalEvent] = []
     for index in range(start, len(clean)):
         fast = fast_atr[index]
         slow = slow_atr[index]
@@ -443,10 +443,11 @@ def _sessions(
     return tuple((session_date, tuple(points)) for session_date, points in grouped)
 
 
-def _instruction(
-    point: PricePoint, direction: Literal["long", "short"]
-) -> SignalInstruction:
-    return SignalInstruction(observed_at=point.observed_at, direction=direction)
+def _instruction(point: PricePoint, direction: SignalDirection) -> SignalEvent:
+    return SignalEvent(
+        observed_at=point.observed_at,
+        action=cast(SignalAction, f"add_{direction}"),
+    )
 
 
 def _open(point: PricePoint) -> float:

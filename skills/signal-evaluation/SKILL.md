@@ -3,7 +3,9 @@
 ## Inputs
 
 - One ordered, unique list of timezone-aware signal instructions. Each instruction
-  contains only an observation timestamp and `long` or `short` direction.
+  contains an observation timestamp, `long` or `short` direction, and an optional
+  ex-ante risk amount. It overrides that event's stop distance; when omitted, the
+  study-level stop distance is one R.
 - One ordered normalized outcome series aligned to the signal timestamps. Its typed
   identity records price, implied-volatility, or generic kind; units; source; and,
   for IV, tenor plus floating call-delta or fixed-strike coordinates.
@@ -11,6 +13,10 @@
   quantities such as implied volatility.
 - A next-observation entry lag, fixed horizon, profit target, stop loss, and maximum
   holding horizon, all expressed explicitly in bars or outcome-series units.
+- An optional versioned experiment identity with separate strategy-freeze and
+  evaluation-end timestamps, plus ordered development, validation, and holdout
+  periods. Completed outcomes crossing a period boundary are counted as purged and
+  excluded from that period.
 
 Signal construction is outside this analyst. A caller may combine price, RSI,
 moving averages, implied volatility, fundamentals, or any other causal data source
@@ -33,14 +39,23 @@ while an outcome-independent maximum-horizon embargo supplies a non-overlapping
 sample count and Wilson 95% lower bound for the win rate. A barrier hit observed
 near the end of a dataset remains completed; only events with no hit and an
 unfinished time horizon are right-censored and skipped.
+R-multiples divide each directional outcome by risk known at the signal timestamp,
+not by the losses observed after the fact. Deterministic circular moving-block
+bootstrap intervals use the chronological non-overlapping event sample; the positive
+fraction is a resampling-stability statistic, not a posterior probability. A matched
+random-timestamp baseline preserves completed event count, direction mix, risk
+declarations, outcome horizon, and any caller-declared causal candidate universe.
 
 ## Output
 
-- Event, non-overlapping-event, skipped, win, loss, and breakeven counts.
+- Event, non-overlapping-event, skipped, purged, win, loss, and breakeven counts.
 - Descriptive and non-overlapping win rates plus a Wilson 95% lower confidence bound.
-- Average win, average loss, reward/risk ratio, the explicit `win rate × reward/risk`
-  opportunity score, expected change, expectancy in R, and profit factor when each
-  statistic is defined.
+- Native and R-normalized average wins/losses, reward/risk, break-even win rate,
+  edge over break-even, native expected value, expected R, profit factor, and the
+  secondary `win rate × reward/risk` diagnostic.
+- Non-overlapping expected-R bootstrap bounds and positive-resample fraction,
+  matched-baseline and excess expected R, top-five-winner concentration, and
+  long/short splits.
 - At most 200 event details per view, with safe SHA-256 references to the signal
   instructions and normalized outcome series, plus a configuration hash covering
   every outcome rule.
@@ -53,7 +68,8 @@ The registered analyst consumes the bounded `OUTCOMES` provider protocol. Existi
 `PRICES` providers are automatically adapted to the normalized `close` price series,
 and authenticated callers may supply an immediate-only normalized series directly.
 A historical SPY options dataset can therefore be normalized into absolute IV
-points for research. Future Yahoo, Bloomberg, or internal `get_vol(ticker, delta,
+points for outcome research. This measures IV movement rather than option P&L. Future
+Yahoo, Bloomberg, or internal `get_vol(ticker, delta,
 tenor)` implementations provide the same typed series and perform only retrieval,
 field mapping, timestamping, and provenance; they do not change evaluation semantics.
 
@@ -63,6 +79,8 @@ be copied into fixtures, logs, reports, or commits.
 ## Limitations
 
 The analyst does not discover signals, optimize thresholds, model execution costs,
-infer missing timestamps, or correct selection and multiple-testing bias. A low
+infer missing timestamps, prove that an external producer was causal, or correct
+selection and multiple-testing bias. The experiment identity records how many variants
+were attempted so later selection-bias analysis remains possible. A low
 non-overlapping event count must be treated as weak evidence even when descriptive win
 rate or reward/risk is high.

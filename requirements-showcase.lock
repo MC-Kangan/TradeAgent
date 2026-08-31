@@ -1,0 +1,13 @@
+# Local Streamlit showcase lock; install after requirements.lock.
+altair==6.2.2
+blinker==1.9.0
+charset-normalizer==3.5.1
+httptools==0.8.0
+itsdangerous==2.2.0
+protobuf==7.36.0
+pydeck==0.9.3
+requests==2.34.2
+streamlit==1.62.0
+toml==0.10.2
+urllib3==2.7.0
+websockets==16.1.1

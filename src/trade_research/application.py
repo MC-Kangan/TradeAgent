@@ -63,8 +63,8 @@ class ResearchApplication:
                 "Daily fractional-tranche simulation for built-in or timestamped signals."
             ),
             "signal-evaluation": (
-                "Source-independent win-rate and reward/risk evaluation for "
-                "timestamped signals."
+                "Source-independent expected-value, ex-ante-R, uncertainty, and "
+                "baseline evaluation for timestamped signals."
             ),
         }
         supported_asset_types = {

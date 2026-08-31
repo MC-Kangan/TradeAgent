@@ -151,9 +151,17 @@ class MetricKind(StrEnum):
         "signal_non_overlapping_win_rate_lower_95"
     )
     SIGNAL_REWARD_RISK_RATIO = "signal_reward_risk_ratio"
-    SIGNAL_OPPORTUNITY_SCORE = "signal_opportunity_score"
-    SIGNAL_EXPECTED_CHANGE = "signal_expected_change"
-    SIGNAL_EXPECTANCY_R = "signal_expectancy_r"
+    SIGNAL_WIN_PAYOFF_PRODUCT = "signal_win_payoff_product"
+    SIGNAL_BREAK_EVEN_WIN_RATE = "signal_break_even_win_rate"
+    SIGNAL_EDGE_OVER_BREAK_EVEN = "signal_edge_over_break_even"
+    SIGNAL_EXPECTED_VALUE = "signal_expected_value"
+    SIGNAL_EXPECTED_R = "signal_expected_r"
+    SIGNAL_NON_OVERLAPPING_EXPECTED_R = "signal_non_overlapping_expected_r"
+    SIGNAL_NON_OVERLAPPING_EXPECTED_R_LOWER_95 = (
+        "signal_non_overlapping_expected_r_lower_95"
+    )
+    SIGNAL_BASELINE_EXPECTED_R = "signal_baseline_expected_r"
+    SIGNAL_EXCESS_EXPECTED_R = "signal_excess_expected_r"
     SIGNAL_PROFIT_FACTOR = "signal_profit_factor"
     PRICE_ACTION_STRUCTURE = "price_action_structure"
     PRICE_ACTION_ZONE_COUNT = "price_action_zone_count"
@@ -254,7 +262,17 @@ _REFERENCE_KEYS = frozenset(
         "configuration_ref",
     }
 )
-_TIMESTAMP_KEYS = frozenset({"observed_at", "timestamp", "valuation_as_of", "start_at", "end_at"})
+_TIMESTAMP_KEYS = frozenset(
+    {
+        "observed_at",
+        "timestamp",
+        "valuation_as_of",
+        "start_at",
+        "end_at",
+        "evaluation_start_at",
+        "evaluation_end_at",
+    }
+)
 _CLOSED_SCALAR_KEYS = frozenset(
     {
         "provider_kind",
@@ -269,6 +287,7 @@ _CLOSED_SCALAR_KEYS = frozenset(
         *_REFERENCE_KEYS,
         "algorithm",
         "window",
+        "evaluation_period",
         "point_count",
     }
 )
@@ -406,6 +425,12 @@ def _sanitize_scalar(key: str, value: object) -> JsonValue | None:
         return (
             cast(JsonValue, value)
             if isinstance(value, str) and re.fullmatch(r"[a-z0-9_]{1,64}", value)
+            else None
+        )
+    if key == "evaluation_period":
+        return (
+            cast(JsonValue, value)
+            if value in {"full_history", "development", "validation", "holdout"}
             else None
         )
     if key == "point_count":

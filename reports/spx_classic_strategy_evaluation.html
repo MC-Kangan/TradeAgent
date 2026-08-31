@@ -117,7 +117,7 @@
     <div class="hero-inner">
       <p class="eyebrow">TradeAgent research • SPX signal evaluation • 25 Aug 2026</p>
       <h1>Ten “classic” systems, one common outcome test</h1>
-      <p class="dek">Nine directional entry proxies were generated on the S&amp;P 500 index and passed through the same causal win-rate and reward/risk evaluator. Martingale was reviewed, but deliberately not forced into a signal score.</p>
+      <p class="dek">Nine directional entry proxies were generated on the S&amp;P 500 index and passed through the same causal signal-evaluation-v2 framework. Martingale was reviewed, but deliberately not forced into a signal score.</p>
       <p class="hero-note">Research screen only—not a recommendation or executable backtest. The study evaluates entry information, not each system’s native portfolio sizing, exits, costs, or capacity.</p>
     </div>
   </header>
@@ -130,56 +130,75 @@
 
     <section id="conclusion">
       <div class="tiles">
-        <div class="tile"><div class="label">Daily leader</div><div class="value">Turtle</div><div class="detail">0.714 score · +0.220R expectancy · 79 triple-barrier events</div></div>
-        <div class="tile"><div class="label">Intraday leader</div><div class="value">Dual Thrust</div><div class="detail">0.609 score · +0.201R expectancy · only 27 events</div></div>
-        <div class="tile"><div class="label">Best evidence posture</div><div class="value">Turtle</div><div class="detail">Most recognizable, documented and reproducible system in the list</div></div>
+        <div class="tile"><div class="label">Daily candidate</div><div class="value">Turtle</div><div class="detail">+0.210R full-history EV · +0.065R holdout EV · uncertainty still crosses zero</div></div>
+        <div class="tile"><div class="label">Intraday candidate</div><div class="value">Dual Thrust</div><div class="detail">+0.165R full-history EV · +0.047R holdout EV · only six holdout events</div></div>
+        <div class="tile"><div class="label">Evidence verdict</div><div class="value">No positive edge validated</div><div class="detail">No 95% expected-R interval is wholly positive; Checkmate is significantly negative</div></div>
         <div class="tile"><div class="label">Critical exclusion</div><div class="value">Martingale</div><div class="detail">Sizing path, not a directional signal; ordinary win rate hides ruin risk</div></div>
       </div>
       <div class="callout">
-        <strong>Research-priority conclusion.</strong> Turtle is the strongest candidate to promote into a fixed TradeAgent strategy skill: it combines the best daily triple-barrier result with the highest rule authenticity. Dual Thrust is the best intraday proxy in this short sample, but needs a longer licensed intraday history and a canonical formula choice before promotion. Escalator ranks second in the daily numbers, yet the article’s rules do not match the publicly documented Escalator system, so the result validates only a generic channel-breakout/ATR-trail proxy.
+        <strong>Research-priority conclusion.</strong> Turtle remains the strongest daily candidate because it combines positive full-history and holdout estimates with the highest rule authenticity, but its holdout contains only ten non-overlapping events and a wide interval. Dual Thrust is the strongest intraday candidate, but only six holdout events are available. Escalator has the largest holdout point estimate, yet its rule attribution is weak and its interval also crosses zero. These are promotion candidates for fuller native-strategy backtests, not validated edges.
       </div>
     </section>
 
     <section id="results">
       <h2>Comparable results, separated by horizon</h2>
-      <p class="subtle">Primary ranking uses the triple-barrier view. Opportunity score = descriptive win rate × average win/loss reward-risk. A higher score is not sufficient by itself: expectancy, profit factor, independent sample count, rule fidelity and data span matter.</p>
+      <p class="subtle">Primary comparison uses triple-barrier expected R, where the declared stop is one ex-ante risk unit. The old win-rate × payoff product remains a diagnostic but is no longer treated as expectancy. Statistical evidence comes from non-overlapping events, deterministic circular moving-block bootstrap intervals, an 80/20 chronological holdout, and 200 causal-candidate-matched random-timestamp baselines.</p>
       <div class="grid-2">
         <div class="panel">
           <h3>Daily cohort · 10-year Yahoo history</h3>
-          <div class="rank-row"><span>Turtle</span><div class="track"><div class="fill" style="width:71.4%"></div></div><span class="score">0.714</span></div>
-          <div class="rank-row"><span>Escalator proxy</span><div class="track"><div class="fill" style="width:69.1%"></div></div><span class="score">0.691</span></div>
-          <div class="rank-row"><span>Gap fade</span><div class="track"><div class="fill" style="width:59.2%"></div></div><span class="score">0.592</span></div>
-          <div class="rank-row"><span>5/20 EMA</span><div class="track"><div class="fill" style="width:56.8%"></div></div><span class="score">0.568</span></div>
-          <div class="rank-row"><span>Checkmate proxy</span><div class="track"><div class="fill" style="width:40.9%"></div></div><span class="score">0.409</span></div>
+          <div class="rank-row"><span>Turtle</span><div class="track"><div class="fill" style="width:70%"></div></div><span class="score">+0.210R</span></div>
+          <div class="rank-row"><span>Escalator proxy</span><div class="track"><div class="fill" style="width:58%"></div></div><span class="score">+0.175R</span></div>
+          <div class="rank-row"><span>Gap fade</span><div class="track"><div class="fill" style="width:2%"></div></div><span class="score">−0.005R</span></div>
+          <div class="rank-row"><span>5/20 EMA</span><div class="track"><div class="fill" style="width:2%"></div></div><span class="score">−0.012R</span></div>
+          <div class="rank-row"><span>Checkmate proxy</span><div class="track"><div class="fill" style="width:2%"></div></div><span class="score">−0.318R</span></div>
         </div>
         <div class="panel">
           <h3>Intraday cohort · 60-day, 30-minute Yahoo history</h3>
-          <div class="rank-row"><span>Dual Thrust proxy</span><div class="track"><div class="fill gold" style="width:60.9%"></div></div><span class="score">0.609</span></div>
-          <div class="rank-row"><span>Dolphin proxy</span><div class="track"><div class="fill gold" style="width:54.4%"></div></div><span class="score">0.544</span></div>
-          <div class="rank-row"><span>Fairy Four Price</span><div class="track"><div class="fill gold" style="width:51.7%"></div></div><span class="score">0.517</span></div>
-          <div class="rank-row"><span>R-Breaker proxy</span><div class="track"><div class="fill gold" style="width:43.3%"></div></div><span class="score">0.433</span></div>
+          <div class="rank-row"><span>Dual Thrust proxy</span><div class="track"><div class="fill gold" style="width:55%"></div></div><span class="score">+0.165R</span></div>
+          <div class="rank-row"><span>Dolphin proxy</span><div class="track"><div class="fill gold" style="width:23%"></div></div><span class="score">+0.068R</span></div>
+          <div class="rank-row"><span>Fairy Four Price</span><div class="track"><div class="fill gold" style="width:14%"></div></div><span class="score">+0.041R</span></div>
+          <div class="rank-row"><span>R-Breaker proxy</span><div class="track"><div class="fill gold" style="width:2%"></div></div><span class="score">−0.071R</span></div>
         </div>
       </div>
 
       <h3 style="margin-top:26px">Triple-barrier outcome table</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>#</th><th>Strategy proxy</th><th>Frame</th><th class="num">Events</th><th class="num">Non-overlap N</th><th class="num">Win rate</th><th class="num">95% lower</th><th class="num">Reward/risk</th><th class="num">Score</th><th class="num">Expectancy R</th><th class="num">Profit factor</th></tr></thead>
+          <thead><tr><th>#</th><th>Strategy proxy</th><th>Frame</th><th class="num">Events</th><th class="num">Independent N</th><th class="num">Win rate</th><th class="num">Reward/risk</th><th class="num">EV R</th><th class="num">Independent EV R</th><th class="num">95% EV interval</th><th class="num">Bootstrap &gt; 0</th><th class="num">Excess vs baseline</th><th class="num">PF</th></tr></thead>
           <tbody>
-            <tr><td>1</td><td><strong>Turtle</strong></td><td>Daily</td><td class="num">79</td><td class="num">58</td><td class="num">50.6%</td><td class="num">37.5%</td><td class="num">1.410</td><td class="num positive">0.714</td><td class="num positive">+0.220</td><td class="num positive">1.446</td></tr>
-            <tr><td>2</td><td>Gap fade</td><td>Daily</td><td class="num">102</td><td class="num">54</td><td class="num">40.2%</td><td class="num">32.0%</td><td class="num">1.474</td><td class="num">0.592</td><td class="num negative">−0.006</td><td class="num negative">0.990</td></tr>
-            <tr><td>3</td><td>Dolphin proxy</td><td>30m</td><td class="num">85</td><td class="num">61</td><td class="num">56.5%</td><td class="num">46.5%</td><td class="num">0.964</td><td class="num">0.544</td><td class="num positive">+0.109</td><td class="num positive">1.250</td></tr>
-            <tr><td>4</td><td>Martingale</td><td>N/A</td><td class="num" colspan="8"><span class="tag na">Not signal-evaluable</span></td></tr>
-            <tr><td>5</td><td>R-Breaker proxy</td><td>30m</td><td class="num">43</td><td class="num">43</td><td class="num">46.5%</td><td class="num">32.5%</td><td class="num">0.932</td><td class="num">0.433</td><td class="num negative">−0.101</td><td class="num negative">0.810</td></tr>
-            <tr><td>6</td><td><strong>Dual Thrust proxy</strong></td><td>30m</td><td class="num">27</td><td class="num">27</td><td class="num">59.3%</td><td class="num">40.7%</td><td class="num">1.027</td><td class="num positive">0.609</td><td class="num positive">+0.201</td><td class="num positive">1.494</td></tr>
-            <tr><td>7</td><td>Fairy Four Price</td><td>30m</td><td class="num">41</td><td class="num">41</td><td class="num">53.7%</td><td class="num">38.7%</td><td class="num">0.963</td><td class="num">0.517</td><td class="num positive">+0.053</td><td class="num positive">1.115</td></tr>
-            <tr><td>8</td><td>5/20 EMA cross</td><td>Daily</td><td class="num">124</td><td class="num">58</td><td class="num">41.9%</td><td class="num">26.6%</td><td class="num">1.355</td><td class="num">0.568</td><td class="num negative">−0.012</td><td class="num negative">0.979</td></tr>
-            <tr><td>9</td><td><strong>Escalator proxy</strong></td><td>Daily</td><td class="num">73</td><td class="num">54</td><td class="num">49.3%</td><td class="num">33.7%</td><td class="num">1.402</td><td class="num positive">0.691</td><td class="num positive">+0.184</td><td class="num positive">1.364</td></tr>
-            <tr><td>10</td><td>Checkmate proxy</td><td>Daily</td><td class="num">11</td><td class="num">9</td><td class="num">27.3%</td><td class="num">6.3%</td><td class="num">1.500</td><td class="num">0.409</td><td class="num negative">−0.318</td><td class="num negative">0.563</td></tr>
+            <tr><td>1</td><td><strong>Turtle</strong></td><td>Daily</td><td class="num">79</td><td class="num">58</td><td class="num">50.6%</td><td class="num">1.410</td><td class="num positive">+0.210</td><td class="num positive">+0.175</td><td class="num">−0.045 to +0.402</td><td class="num">93.4%</td><td class="num positive">+0.124</td><td class="num positive">1.446</td></tr>
+            <tr><td>2</td><td>Gap fade</td><td>Daily</td><td class="num">102</td><td class="num">54</td><td class="num">40.2%</td><td class="num">1.474</td><td class="num negative">−0.005</td><td class="num positive">+0.076</td><td class="num">−0.231 to +0.404</td><td class="num">66.6%</td><td class="num positive">+0.052</td><td class="num negative">0.990</td></tr>
+            <tr><td>3</td><td>Dolphin proxy</td><td>30m</td><td class="num">85</td><td class="num">61</td><td class="num">56.5%</td><td class="num">0.964</td><td class="num positive">+0.068</td><td class="num positive">+0.067</td><td class="num">−0.092 to +0.242</td><td class="num">78.7%</td><td class="num positive">+0.076</td><td class="num positive">1.250</td></tr>
+            <tr><td>4</td><td>Martingale</td><td>N/A</td><td class="num" colspan="10"><span class="tag na">Not signal-evaluable</span></td></tr>
+            <tr><td>5</td><td>R-Breaker proxy</td><td>30m</td><td class="num">43</td><td class="num">43</td><td class="num">46.5%</td><td class="num">0.932</td><td class="num negative">−0.071</td><td class="num negative">−0.071</td><td class="num">−0.213 to +0.063</td><td class="num">16.8%</td><td class="num negative">−0.029</td><td class="num negative">0.810</td></tr>
+            <tr><td>6</td><td><strong>Dual Thrust proxy</strong></td><td>30m</td><td class="num">27</td><td class="num">27</td><td class="num">59.3%</td><td class="num">1.027</td><td class="num positive">+0.165</td><td class="num positive">+0.165</td><td class="num">−0.113 to +0.470</td><td class="num">87.9%</td><td class="num positive">+0.164</td><td class="num positive">1.494</td></tr>
+            <tr><td>7</td><td>Fairy Four Price</td><td>30m</td><td class="num">41</td><td class="num">41</td><td class="num">53.7%</td><td class="num">0.963</td><td class="num positive">+0.041</td><td class="num positive">+0.041</td><td class="num">−0.157 to +0.233</td><td class="num">66.5%</td><td class="num positive">+0.041</td><td class="num positive">1.115</td></tr>
+            <tr><td>8</td><td>5/20 EMA cross</td><td>Daily</td><td class="num">124</td><td class="num">58</td><td class="num">41.9%</td><td class="num">1.355</td><td class="num negative">−0.012</td><td class="num negative">−0.095</td><td class="num">−0.334 to +0.155</td><td class="num">21.8%</td><td class="num negative">−0.100</td><td class="num negative">0.979</td></tr>
+            <tr><td>9</td><td><strong>Escalator proxy</strong></td><td>Daily</td><td class="num">73</td><td class="num">54</td><td class="num">49.3%</td><td class="num">1.402</td><td class="num positive">+0.175</td><td class="num positive">+0.065</td><td class="num">−0.180 to +0.312</td><td class="num">69.2%</td><td class="num positive">+0.048</td><td class="num positive">1.364</td></tr>
+            <tr><td>10</td><td>Checkmate proxy</td><td>Daily</td><td class="num">11</td><td class="num">9</td><td class="num">27.3%</td><td class="num">1.500</td><td class="num negative">−0.318</td><td class="num negative">−0.444</td><td class="num">−1.000 to −0.167</td><td class="num">0.0%</td><td class="num negative">−0.464</td><td class="num negative">0.563</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="subtle">Fixed-horizon cross-check: Escalator led daily at 0.775 score and +0.329R; Turtle followed at 0.660 and +0.260R. Fairy Four Price led the intraday fixed view at 0.611 and +0.172R, followed by Dual Thrust at 0.540 and +0.059R. The disagreement is a useful reminder that rankings depend on the outcome definition.</p>
+      <p class="subtle">No positive full-history 95% expected-R interval excludes zero. Checkmate is the only proxy whose interval excludes zero, and it does so on the negative side. Positive point estimates are useful for prioritizing further work, not for declaring a durable edge.</p>
+
+      <h3 style="margin-top:26px">Chronological 20% holdout</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Strategy proxy</th><th class="num">Events</th><th class="num">Independent N</th><th class="num">EV R</th><th class="num">Independent EV R</th><th class="num">95% EV interval</th><th class="num">Bootstrap &gt; 0</th><th class="num">Excess vs baseline</th></tr></thead>
+          <tbody>
+            <tr><td>Turtle</td><td class="num">15</td><td class="num">10</td><td class="num positive">+0.065</td><td class="num positive">+0.098</td><td class="num">−0.307 to +0.502</td><td class="num">69.5%</td><td class="num positive">+0.099</td></tr>
+            <tr><td>Gap fade</td><td class="num">27</td><td class="num">12</td><td class="num positive">+0.027</td><td class="num positive">+0.059</td><td class="num">−0.566 to +0.608</td><td class="num">58.7%</td><td class="num positive">+0.110</td></tr>
+            <tr><td>Dolphin proxy</td><td class="num">15</td><td class="num">12</td><td class="num positive">+0.023</td><td class="num negative">−0.087</td><td class="num">−0.251 to +0.128</td><td class="num">17.8%</td><td class="num negative">−0.126</td></tr>
+            <tr><td>R-Breaker proxy</td><td class="num">7</td><td class="num">7</td><td class="num negative">−0.006</td><td class="num negative">−0.006</td><td class="num">−0.258 to +0.299</td><td class="num">48.0%</td><td class="num negative">−0.038</td></tr>
+            <tr><td>Dual Thrust proxy</td><td class="num">6</td><td class="num">6</td><td class="num positive">+0.047</td><td class="num positive">+0.047</td><td class="num">−0.408 to +0.586</td><td class="num">53.5%</td><td class="num positive">+0.003</td></tr>
+            <tr><td>Fairy Four Price</td><td class="num">9</td><td class="num">9</td><td class="num negative">−0.053</td><td class="num negative">−0.053</td><td class="num">−0.242 to +0.182</td><td class="num">28.7%</td><td class="num negative">−0.059</td></tr>
+            <tr><td>5/20 EMA cross</td><td class="num">29</td><td class="num">13</td><td class="num negative">−0.256</td><td class="num negative">−0.338</td><td class="num">−0.808 to +0.154</td><td class="num">8.3%</td><td class="num negative">−0.272</td></tr>
+            <tr><td>Escalator proxy</td><td class="num">13</td><td class="num">10</td><td class="num positive">+0.229</td><td class="num positive">+0.348</td><td class="num">−0.096 to +0.848</td><td class="num">91.1%</td><td class="num positive">+0.351</td></tr>
+            <tr><td>Checkmate proxy</td><td class="num">5</td><td class="num">5</td><td class="num">0.000</td><td class="num">0.000</td><td class="num">−1.000 to +1.000</td><td class="num">32.1%</td><td class="num negative">−0.027</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="subtle">The final 20% of each cohort was not used as a parameter-selection period in this fixed-proxy rerun. Events crossing the split were purged. The intraday holdout is especially weak because it covers only the final portion of a 60-day window.</p>
 
       <h3 style="margin-top:26px">Latest generated raw signal from each proxy</h3>
       <div class="table-wrap">
@@ -207,15 +226,16 @@
       <div class="grid-2">
         <div class="panel">
           <h3>Daily outcome definition</h3>
-          <ul><li>2,512 SPX daily OHLC bars, 26 Aug 2016–25 Aug 2026.</li><li>Signal observed at close; entry at next observation.</li><li>Fixed horizon: 10 bars.</li><li>Triple barrier: +3% target, −2% stop, 20-bar maximum.</li><li>High/low touches determine barriers; a same-bar target/stop ambiguity is conservatively a loss.</li></ul>
+          <ul><li>2,512 SPX daily OHLC bars, 26 Aug 2016–25 Aug 2026.</li><li>Signal observed at close; entry at next observation.</li><li>Fixed horizon: 10 bars.</li><li>Triple barrier: +3% target, −2% stop, 20-bar maximum; the 2% ex-ante stop is one R.</li><li>Development ends 21 Aug 2024; the holdout begins 22 Aug 2024. Crossing outcomes are purged.</li><li>High/low touches determine barriers; a same-bar target/stop ambiguity is conservatively a loss.</li></ul>
         </div>
         <div class="panel">
           <h3>Intraday outcome definition</h3>
-          <ul><li>781 SPX 30-minute OHLC bars, 1 Jun–25 Aug 2026.</li><li>Signal observed at bar close; entry one bar later.</li><li>Fixed horizon: 2 bars (one hour).</li><li>Triple barrier: +0.50% target, −0.35% stop, 4-bar maximum.</li><li>Only signals with the complete forward horizon inside the same New York session were evaluated.</li></ul>
+          <ul><li>781 SPX 30-minute OHLC bars, 1 Jun–25 Aug 2026.</li><li>Signal observed at bar close; entry one bar later.</li><li>Fixed horizon: 2 bars (one hour).</li><li>Triple barrier: +0.50% target, −0.35% stop, 4-bar maximum; the 0.35% ex-ante stop is one R.</li><li>Development ends 7 Aug 2026; the holdout begins 10 Aug 2026. Crossing outcomes are purged.</li><li>Only signals with the complete forward horizon inside the same New York session were evaluated.</li></ul>
         </div>
       </div>
       <div class="callout warning"><strong>Not a native-strategy backtest.</strong> The common evaluator deliberately ignores Turtle unit sizing/pyramiding, gap-fill exits, end-of-day liquidation, ATR-native stops and Martingale doubling. This isolates entry signal quality, but it cannot answer which full trading system would produce the best portfolio return. SPX is an index, not a directly executable instrument; commissions, slippage, futures basis, ETF tracking, borrow and taxes are absent.</div>
-      <p class="subtle">Yahoo data were fetched through the bounded provider adapter and raw payloads were not committed. Daily and intraday cohorts must not be compared as though they share the same sample length, volatility scale or effective number of independent observations.</p>
+      <p class="subtle">Each summary uses 1,000 deterministic circular moving-block resamples of the non-overlapping event sequence and 200 matched random-timestamp baselines preserving completed event count, direction mix, risk declarations and causal timestamp eligibility. Intraday controls obey the same complete-forward-horizon, same-session rule as actual signals. “Bootstrap &gt; 0” is the fraction of resampled means above zero, not a posterior probability. Yahoo data were fetched through the bounded provider adapter and raw payloads were not committed. Daily and intraday cohorts must not be compared as though they share the same sample length, volatility scale or effective number of independent observations.</p>
+      <p class="subtle">Canonical machine-readable evidence: <a href="spx_classic_strategy_evaluation.json">spx_classic_strategy_evaluation.json</a> · SHA-256 <code>b81f1831abfae87a43f0c0d4023ba1079b493e8dd98f06937c100ec76febb7a9</code>.</p>
     </section>
 
     <section id="audit">
@@ -225,21 +245,21 @@
           <div class="strategy-head"><div><h3>Turtle Trading</h3><span class="tag high">High rule fidelity</span></div><div class="strategy-number">01</div></div>
           <p><strong>Implemented:</strong> close above/below the prior 20-day high/low while flat; position state resets through the opposite 10-day channel. Signals exclude the current bar from the channel.</p>
           <p><strong>Source audit:</strong> the core 20/10 rules match published Turtle System 1, although the full system also includes the prior-winning-breakout filter, 55-day failsafe, 2N stop, ½N pyramiding and volatility-normalized units. See the <a href="https://www.theturtletrader.com/turtle-trading-rules/">published rule summary</a> and an <a href="https://github.com/AtomMe/Quant.Strategy/blob/master/CTA/Turtle-Trading-Strategy/README.md">open-source implementation</a>.</p>
-          <p class="mini"><b>SPX read:</b> strongest daily proxy; positive in both outcome views. <b>Decision:</b> advance to a dedicated, fully specified skill.</p>
+          <p class="mini"><b>SPX read:</b> +0.210R full-history and +0.065R holdout EV; both intervals include zero. <b>Decision:</b> advance to a dedicated native-system prototype, not a validated strategy.</p>
         </article>
 
         <article class="strategy medium-border">
           <div class="strategy-head"><div><h3>Gap Trading</h3><span class="tag medium">Generic rule</span></div><div class="strategy-number">02</div></div>
           <p><strong>Implemented:</strong> contrarian long when today’s open is below the prior low by 0.5× prior ATR14; symmetric short above the prior high.</p>
           <p><strong>Source audit:</strong> “gap trading” is a family rather than one canonical branded system. The thread says opening gap but writes Low/High; the implementation uses the open to avoid lookahead. CME documents that index openings can exhibit material gaps, but that does not establish a universal fill edge (<a href="https://www.cmegroup.com/education/articles-and-reports/understanding-the-special-opening-quotation-soq">SOQ discussion</a>).</p>
-          <p class="mini"><b>SPX read:</b> near-zero expectancy and profit factor 0.99. <b>Decision:</b> keep as a configurable research template, not a promoted edge.</p>
+          <p class="mini"><b>SPX read:</b> −0.005R full-history and +0.027R holdout EV; evidence remains inconclusive. <b>Decision:</b> keep as a configurable research template, not a promoted edge.</p>
         </article>
 
         <article class="strategy low-border">
           <div class="strategy-head"><div><h3>Dolphin Trading</h3><span class="tag low">Article proxy</span></div><div class="strategy-number">03</div></div>
           <p><strong>Implemented:</strong> 30-minute EMA5 &gt; EMA20 plus close above the prior two bars’ highs; symmetric short version added for comparison.</p>
           <p><strong>Source audit:</strong> public “Dolphin” descriptions use multi-timeframe alignment, KD/MACD and materially different moving averages—not this EMA5/20 rule. A Chinese description, for example, lists MA26/52/104/360 and multi-timeframe KD/MACD (<a href="https://blog.eastmoney.com/hewei_0802/blog_215155356.html">source</a>). The brand attribution is therefore weak.</p>
-          <p class="mini"><b>SPX read:</b> +0.109R and PF 1.25 across 85 eligible events. <b>Decision:</b> retain as “EMA momentum breakout,” not as authenticated Dolphin.</p>
+          <p class="mini"><b>SPX read:</b> +0.068R full-history but negative independent holdout EV. <b>Decision:</b> retain as “EMA momentum breakout,” not as authenticated Dolphin.</p>
         </article>
 
         <article class="strategy low-border">
@@ -253,21 +273,21 @@
           <div class="strategy-head"><div><h3>R-Breaker</h3><span class="tag medium">Simplified proxy</span></div><div class="strategy-number">05</div></div>
           <p><strong>Implemented:</strong> prior-session pivot ±0.35×range breakouts, plus a reversal after an excursion through pivot ±one range and recovery through the nearer line.</p>
           <p><strong>Source audit:</strong> commonly published R-Breaker rules derive six setup, entry and breakout levels with several parameters, not only the thread’s two-line shorthand. Compare the <a href="https://www.panewslab.com/zh-hant/articles/N2625055">six-level formulas</a> and <a href="https://blog.mathquant.com/2020/06/02/commodity-futures-r-breaker-strategy.html">pivot-grid implementation</a>.</p>
-          <p class="mini"><b>SPX read:</b> −0.101R, PF 0.81 on 43 events. <b>Decision:</b> re-specify canonical six-level behavior before any skill promotion.</p>
+          <p class="mini"><b>SPX read:</b> −0.071R full-history EV, PF 0.81 on 43 events. <b>Decision:</b> re-specify canonical six-level behavior before any skill promotion.</p>
         </article>
 
         <article class="strategy medium-border">
           <div class="strategy-head"><div><h3>Dual Thrust</h3><span class="tag medium">Article variant</span></div><div class="strategy-number">06</div></div>
           <p><strong>Implemented:</strong> current session open ±0.5×maximum of the prior two daily high-low ranges; first qualifying intraday close generates the direction.</p>
           <p><strong>Source audit:</strong> the more widely published Michael Chalek formula is Range = max(HH−LC, HC−LL) over N days, so the thread’s two-range calculation is a variant (<a href="https://www.quantinfo.com/Article/View/1155.html">formula discussion</a>; <a href="https://github.com/fmzquant/strategies/blob/master/Dual-Thrust-Trading-Algorithm-ps4.md">open-source example</a>).</p>
-          <p class="mini"><b>SPX read:</b> best intraday proxy, +0.201R and PF 1.49, but only 27 events. <b>Decision:</b> prototype after selecting and versioning one formula.</p>
+          <p class="mini"><b>SPX read:</b> strongest intraday point estimate, +0.165R full-history and +0.047R holdout EV, but only six holdout events. <b>Decision:</b> prototype after selecting and versioning one formula.</p>
         </article>
 
         <article class="strategy medium-border">
           <div class="strategy-head"><div><h3>Fairy Four Price</h3><span class="tag medium">Framework corroborated</span></div><div class="strategy-number">07</div></div>
           <p><strong>Implemented:</strong> first intraday close above the previous session high or below the previous session low.</p>
           <p><strong>Source audit:</strong> public Chinese strategy material corroborates yesterday high/low/close plus today open and prior-extreme breakout, while also warning the named framework was summarized by later users rather than stated directly by the trader (<a href="https://www.fmz.com/bbs-topic/540">FMZ</a>; <a href="https://wtdocs.readthedocs.io/zh/latest/docs/strategies/ctadaytradestra.html">WonderTrader documentation</a>).</p>
-          <p class="mini"><b>SPX read:</b> modest +0.053R, PF 1.11 on 41 events. <b>Decision:</b> watchlist; requires longer intraday history and exact exit treatment.</p>
+          <p class="mini"><b>SPX read:</b> modest +0.041R full-history but −0.053R holdout EV. <b>Decision:</b> watchlist; requires longer intraday history and exact exit treatment.</p>
         </article>
 
         <article class="strategy low-border">
@@ -281,7 +301,7 @@
           <div class="strategy-head"><div><h3>Escalator</h3><span class="tag low">Name conflict</span></div><div class="strategy-number">09</div></div>
           <p><strong>Implemented:</strong> 20-day prior-channel breakout with a stateful 3×ATR14 ratcheting stop; short side mirrored.</p>
           <p><strong>Source audit:</strong> the thread leaves N and multiplier unspecified. Worse, a catalog based on the Omega Research System Trading &amp; Development Club describes classic Escalator as a two-bar reversal price pattern, not this channel system (<a href="https://tacuda.com/experiments.html">TaCuda catalog</a>). This result is best read as a generic Donchian/ATR proxy.</p>
-          <p class="mini"><b>SPX read:</b> second daily, +0.184R and PF 1.36. <b>Decision:</b> advance the generic channel/ATR concept, reject the unsupported brand label.</p>
+          <p class="mini"><b>SPX read:</b> +0.175R full-history and +0.229R holdout EV, but only ten independent holdout events and a wide interval. <b>Decision:</b> advance the generic channel/ATR concept, reject the unsupported brand label.</p>
         </article>
 
         <article class="strategy low-border">
@@ -302,7 +322,7 @@
     <section id="skills">
       <h2>TradeAgent skill roadmap</h2>
       <div class="decision-board">
-        <div class="decision advance"><h3>Advance</h3><ul><li><strong>Turtle signal skill:</strong> versioned System 1, then add System 2, prior-winner filter and explicit N metadata.</li><li><strong>Generic channel + ATR skill:</strong> preserve the strong Escalator-proxy behavior without the unsupported name.</li><li><strong>Generic EMA crossover:</strong> useful baseline/control, not branded as Oliver Kell.</li></ul></div>
+        <div class="decision advance"><h3>Advance to native prototype</h3><ul><li><strong>Turtle signal skill:</strong> versioned System 1, then add System 2, prior-winner filter and explicit N metadata.</li><li><strong>Generic channel + ATR skill:</strong> test the Escalator-proxy behavior without the unsupported name.</li><li><strong>Generic EMA crossover:</strong> useful negative baseline/control, not branded as Oliver Kell.</li></ul></div>
         <div class="decision prototype"><h3>Prototype after more data</h3><ul><li><strong>Dual Thrust:</strong> canonical-vs-article formula switch fixed at development time, then multi-year intraday data.</li><li><strong>Fairy Four Price:</strong> explicit session close and ATR stop.</li><li><strong>Dolphin proxy:</strong> rename EMA momentum breakout; compare 5m, 15m and 30m histories.</li><li><strong>R-Breaker:</strong> implement the full six-level state machine.</li></ul></div>
         <div class="decision defer"><h3>Defer or reject</h3><ul><li><strong>Martingale:</strong> no directional-signal skill; only a separate capped ruin simulator if explicitly requested.</li><li><strong>Checkmate:</strong> do not borrow a proprietary system name for an unauthenticated formula.</li><li><strong>Gap:</strong> retain as a parameterized experiment until execution-aware fill tests establish a stable edge.</li></ul></div>
       </div>
@@ -328,8 +348,8 @@
     </section>
 
     <footer>
-      <p><strong>Risk disclosure.</strong> Educational research only. Historical outcomes do not imply future performance. Small samples, overlapping observations, parameter choice, selection bias, data quality and omitted execution costs can materially reverse every ranking shown here.</p>
-      <p>Generated from fixed TradeAgent signal proxies and the standardized signal evaluator. Raw licensed/vendor payloads are not embedded.</p>
+      <p><strong>Risk disclosure.</strong> Educational research only. Historical outcomes do not imply future performance. No strategy shown has a 95% expected-R interval wholly above zero. Small samples, parameter choice, selection bias, data quality and omitted execution costs can materially reverse every ranking shown here.</p>
+      <p>Generated from fixed TradeAgent signal proxies and signal-evaluation-v2. Raw licensed/vendor payloads are not embedded.</p>
     </footer>
   </main>
 </body>

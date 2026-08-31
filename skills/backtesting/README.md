@@ -24,17 +24,17 @@ An external Vibe Research idea looks like:
       {"observed_at": "2026-02-02T00:00:00Z", "action": "exit_long"}
     ]
   },
-  "cash": 10000,
+  "position_budget": 1000,
   "commission": 0.001,
-  "capital_per_add": 0.2,
-  "max_allocation": 0.6,
+  "tranche_fraction": 0.2,
+  "deployment_cap_fraction": 0.8,
   "minimum_addition_bars": 1
 }
 ```
 
 Events must be timezone-aware, ordered, unique, aligned exactly to supplied
 bars after normalization to UTC. `add_long` creates one fixed-notional
-fractional lot when the cooldown, cash, and maximum-allocation checks pass.
+fractional lot when the cooldown, cash, and position-budget deployment checks pass.
 `reduce_long` closes the oldest eligible lot, while `exit_long` closes every
 eligible lot. A minimum holding period can defer either sell action. Final exits
 may be omitted, in which case remaining lots are marked to the final close.
@@ -48,9 +48,10 @@ entry and exit threshold series for charting.
 The output is research, not execution advice. Signals fill on the next bar's
 open. Stops and targets are calculated from that actual fill and become active
 for subsequent bars. All markets use the same fractional-share execution model,
-so an asset price above starting cash does not by itself prevent a fill.
+so an asset price above the position budget does not by itself prevent a fill.
 Positions still open at the end are marked to the final close and reported
 separately from closed-trade statistics.
 Every result retains its bounded strategy and cost assumptions plus a canonical
-configuration hash. No optimizer, short selling, portfolio simulation, arbitrary Python, or
-interactive plot is exposed.
+configuration hash. Signal quality, execution audit, and position performance
+are reported separately from the same canonical event stream. No optimizer,
+short selling, portfolio simulation, arbitrary Python, or interactive plot is exposed.

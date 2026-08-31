@@ -649,22 +649,61 @@ class BacktestAssumptions(DomainModel):
     execution: Literal["signal_close_next_open"] = "signal_close_next_open"
     start_date: date | None = None
     minimum_holding_bars: int = Field(default=1, ge=1, le=520)
-    cash: float = Field(gt=0)
+    position_budget: float = Field(gt=0)
     commission: float = Field(ge=0)
     spread: float = Field(ge=0)
-    capital_per_add: float = Field(gt=0, le=1)
-    max_allocation: float = Field(gt=0, le=1)
+    tranche_fraction: float = Field(gt=0, le=1)
+    deployment_cap_fraction: float = Field(gt=0, le=1)
     minimum_addition_bars: int = Field(default=1, ge=1, le=520)
+    signal_horizon_bars: int = Field(default=21, ge=1, le=520)
     stop_loss_pct: float | None = Field(default=None, gt=0, lt=1)
     take_profit_pct: float | None = Field(default=None, gt=0)
     strategy_parameters: tuple[BacktestStrategyParameter, ...] = Field(max_length=11)
     configuration_reference: OpaqueReference
 
 
+class BacktestSignalQuality(DomainModel):
+    """Entry-signal outcomes before position sizing and execution filters."""
+
+    status: Literal["complete", "partial", "insufficient_history", "no_signals"]
+    entry_lag_bars: Literal[1] = 1
+    horizon_bars: int = Field(ge=1, le=520)
+    source_add_signal_count: int = Field(ge=0, le=520)
+    evaluated_signal_count: int = Field(ge=0, le=520)
+    skipped_signal_count: int = Field(ge=0, le=520)
+    win_rate: float | None = Field(default=None, ge=0, le=1)
+    expected_change: float | None = None
+    average_favorable_change: float | None = Field(default=None, ge=0)
+    average_adverse_change: float | None = Field(default=None, le=0)
+
+
+class BacktestExecutionAudit(DomainModel):
+    """Aggregate bridge from canonical strategy events to simulated lots."""
+
+    add_signal_count: int = Field(ge=0, le=520)
+    reduce_signal_count: int = Field(ge=0, le=520)
+    exit_signal_count: int = Field(ge=0, le=520)
+    executed_addition_count: int = Field(ge=0, le=520)
+    unexecuted_addition_count: int = Field(ge=0, le=520)
+
+
+class BacktestPositionPerformance(DomainModel):
+    """Net result of applying the execution policy to the signal stream."""
+
+    final_equity: float = Field(ge=0)
+    total_return: float
+    buy_hold_return: float
+    max_drawdown: float = Field(ge=0, le=1)
+    closed_lot_count: int = Field(ge=0, le=520)
+    open_lot_count: int = Field(ge=0, le=520)
+    win_rate: float | None = Field(default=None, ge=0, le=1)
+    sharpe_ratio: float | None = None
+
+
 class BacktestPresentation(DomainModel):
     """Bounded, renderer-neutral output for a reproducible backtest."""
 
-    template: Literal["backtesting-v1"] = "backtesting-v1"
+    template: Literal["backtesting-v2"] = "backtesting-v2"
     engine: Literal["backtesting.py"] = "backtesting.py"
     engine_version: Annotated[str, Field(min_length=1, max_length=16)]
     strategy_kind: Literal[
@@ -674,6 +713,9 @@ class BacktestPresentation(DomainModel):
     strategy_name: AnalystName
     signal_reference: OpaqueReference
     assumptions: BacktestAssumptions
+    signal_quality: BacktestSignalQuality
+    execution_audit: BacktestExecutionAudit
+    position_performance: BacktestPositionPerformance
     price_bars: tuple[ReportPriceBar, ...] = Field(default=(), max_length=520)
     indicator_series: tuple[BacktestIndicatorSeries, ...] = Field(default=(), max_length=4)
     curve: tuple[BacktestCurvePoint, ...] = Field(default=(), max_length=520)
@@ -692,9 +734,24 @@ class ReportSignalOutcome(DomainModel):
     entry_value: float
     exit_value: float
     change: float
+    initial_risk: float = Field(gt=0)
+    r_multiple: float
+    maximum_favorable_change: float = Field(ge=0)
+    maximum_adverse_change: float = Field(le=0)
+    maximum_favorable_r: float = Field(ge=0)
+    maximum_adverse_r: float = Field(le=0)
     duration_bars: int = Field(ge=1, le=4096)
     exit_reason: Literal["fixed_horizon", "profit_target", "stop_loss", "time_limit"]
     same_bar_ambiguous: bool = False
+
+
+class SignalDirectionSummary(DomainModel):
+    """Compact performance split for one signal direction."""
+
+    direction: Literal["long", "short"]
+    event_count: int = Field(ge=0, le=520)
+    win_rate: float | None = Field(default=None, ge=0, le=1)
+    expected_r: float | None = None
 
 
 class SignalEvaluationSummary(DomainModel):
@@ -703,6 +760,7 @@ class SignalEvaluationSummary(DomainModel):
     event_count: int = Field(ge=0, le=520)
     non_overlapping_event_count: int = Field(ge=0, le=520)
     skipped_event_count: int = Field(ge=0, le=520)
+    purged_event_count: int = Field(default=0, ge=0, le=520)
     win_count: int = Field(ge=0, le=520)
     loss_count: int = Field(ge=0, le=520)
     breakeven_count: int = Field(ge=0, le=520)
@@ -713,20 +771,84 @@ class SignalEvaluationSummary(DomainModel):
     )
     average_win: float | None = Field(default=None, gt=0)
     average_loss: float | None = Field(default=None, gt=0)
+    average_win_r: float | None = Field(default=None, gt=0)
+    average_loss_r: float | None = Field(default=None, gt=0)
     reward_risk_ratio: float | None = Field(default=None, gt=0)
-    opportunity_score: float | None = Field(default=None, ge=0)
-    expected_change: float | None = None
-    expectancy_r: float | None = None
+    win_payoff_product: float | None = Field(default=None, ge=0)
+    break_even_win_rate: float | None = Field(default=None, ge=0, le=1)
+    edge_over_break_even: float | None = Field(default=None, ge=-1, le=1)
+    expected_value: float | None = None
+    expected_r: float | None = None
+    non_overlapping_expected_r: float | None = None
+    non_overlapping_expected_r_lower_95: float | None = None
+    non_overlapping_expected_r_median: float | None = None
+    non_overlapping_expected_r_upper_95: float | None = None
+    bootstrap_positive_fraction: float | None = Field(default=None, ge=0, le=1)
+    bootstrap_block_length: int | None = Field(default=None, ge=1, le=520)
     profit_factor: float | None = Field(default=None, gt=0)
+    top_five_win_contribution: float | None = Field(default=None, ge=0, le=1)
+    baseline_trial_count: int = Field(default=0, ge=0, le=5000)
+    baseline_expected_r: float | None = None
+    baseline_expected_r_lower_95: float | None = None
+    baseline_expected_r_upper_95: float | None = None
+    excess_expected_r: float | None = None
+    directions: tuple[SignalDirectionSummary, ...] = Field(default=(), max_length=2)
     events: tuple[ReportSignalOutcome, ...] = Field(default=(), max_length=200)
     presentation_reduced: bool = False
+
+
+class SignalExperimentDefinition(DomainModel):
+    """Safe identity for a reproducible signal experiment."""
+
+    experiment_id: AnalystName
+    strategy_version: Annotated[
+        str, Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    ]
+    strategy_frozen_at: datetime
+    evaluation_data_end: datetime
+    variant_count: int = Field(default=1, ge=1, le=1_000_000)
+    parameters_reference: OpaqueReference | None = None
+    holdout_is_post_freeze: bool | None = None
+
+    @field_validator("strategy_frozen_at", "evaluation_data_end")
+    @classmethod
+    def require_aware_experiment_timestamp(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("experiment timestamps must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_experiment_window(self) -> Self:
+        if self.evaluation_data_end < self.strategy_frozen_at:
+            raise ValueError("evaluation_data_end must not precede strategy_frozen_at")
+        return self
+
+
+class SignalEvaluationPeriodPresentation(DomainModel):
+    """One chronology-preserving evaluation slice."""
+
+    name: Literal["development", "validation", "holdout"]
+    start_at: datetime
+    end_at: datetime
+    fixed_horizon: SignalEvaluationSummary
+    triple_barrier: SignalEvaluationSummary
+
+    @model_validator(mode="after")
+    def validate_period(self) -> Self:
+        if self.start_at.tzinfo is None or self.end_at.tzinfo is None:
+            raise ValueError("evaluation period timestamps must include a timezone")
+        if self.end_at <= self.start_at:
+            raise ValueError("evaluation period end must follow its start")
+        return self
 
 
 class SignalEvaluationPresentation(DomainModel):
     """Renderer-neutral fixed-horizon and triple-barrier signal study."""
 
-    template: Literal["signal-evaluation-v1"] = "signal-evaluation-v1"
+    template: Literal["signal-evaluation-v2"] = "signal-evaluation-v2"
+    evaluation_purpose: Literal["outcome_expectancy"] = "outcome_expectancy"
     signal_name: AnalystName
+    experiment: SignalExperimentDefinition
     target_series: OutcomeSeriesSpec
     change_kind: Literal["relative", "absolute"]
     barrier_basis: Literal["observed_value", "high_low"]
@@ -741,6 +863,9 @@ class SignalEvaluationPresentation(DomainModel):
     configuration_reference: OpaqueReference
     fixed_horizon: SignalEvaluationSummary
     triple_barrier: SignalEvaluationSummary
+    periods: tuple[SignalEvaluationPeriodPresentation, ...] = Field(
+        default=(), max_length=3
+    )
 
 
 class PriceActionBar(DomainModel):

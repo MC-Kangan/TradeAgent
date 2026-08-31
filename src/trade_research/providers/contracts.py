@@ -108,6 +108,7 @@ class OutcomePoint:
 
     observed_at: datetime
     value: float
+    entry_value: float | None = None
     high: float | None = None
     low: float | None = None
 
@@ -115,7 +116,9 @@ class OutcomePoint:
         if self.observed_at.tzinfo is None:
             raise ValueError("outcome timestamps must include a timezone")
         values = tuple(
-            value for value in (self.value, self.high, self.low) if value is not None
+            value
+            for value in (self.value, self.entry_value, self.high, self.low)
+            if value is not None
         )
         if any(not math.isfinite(value) for value in values):
             raise ValueError("outcome values must be finite")
@@ -127,6 +130,12 @@ class OutcomePoint:
     @property
     def upper(self) -> float:
         return self.value if self.high is None else self.high
+
+    @property
+    def execution_value(self) -> float:
+        """Execution-aligned value, falling back to the observed scalar series."""
+
+        return self.value if self.entry_value is None else self.entry_value
 
     @property
     def lower(self) -> float:

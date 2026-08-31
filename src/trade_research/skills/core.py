@@ -884,7 +884,7 @@ def _metadata_text(value: object) -> str | None:
 
 
 def _is_deeply_immutable(value: object) -> bool:
-    if value is None or isinstance(value, str | bytes | int | float | bool):
+    if value is None or isinstance(value, str | bytes | int | float | bool | date | datetime):
         return True
     if isinstance(value, tuple | frozenset):
         return all(_is_deeply_immutable(item) for item in value)

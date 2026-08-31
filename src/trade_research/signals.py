@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+from trade_research.domain import SignalEvent
 from trade_research.providers import PricePoint
-from trade_research.skills.signal_evaluation import SignalInstruction
 
 
 def moving_average_crossover(
@@ -14,7 +14,7 @@ def moving_average_crossover(
     *,
     fast_window: int = 20,
     slow_window: int = 50,
-) -> tuple[SignalInstruction, ...]:
+) -> tuple[SignalEvent, ...]:
     """Return long/short instructions when the close SMA relationship changes.
 
     Each instruction is timestamped at the close that confirms the crossover.
@@ -36,7 +36,7 @@ def moving_average_crossover(
     fast_sum = math.fsum(closes[slow_window - fast_window : slow_window])
     slow_sum = math.fsum(closes[:slow_window])
     previous_relation = _relation(fast_sum / fast_window, slow_sum / slow_window)
-    instructions: list[SignalInstruction] = []
+    instructions: list[SignalEvent] = []
 
     for index in range(slow_window, len(prices)):
         fast_sum += closes[index] - closes[index - fast_window]
@@ -44,11 +44,11 @@ def moving_average_crossover(
         relation = _relation(fast_sum / fast_window, slow_sum / slow_window)
         if relation > 0 and previous_relation <= 0:
             instructions.append(
-                SignalInstruction(observed_at=prices[index].observed_at, direction="long")
+                SignalEvent(observed_at=prices[index].observed_at, action="add_long")
             )
         elif relation < 0 and previous_relation >= 0:
             instructions.append(
-                SignalInstruction(observed_at=prices[index].observed_at, direction="short")
+                SignalEvent(observed_at=prices[index].observed_at, action="add_short")
             )
         previous_relation = relation
 

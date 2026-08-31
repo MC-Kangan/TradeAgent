@@ -16,6 +16,7 @@ from trade_research.domain import (
     InlinePriceSeries,
     InstrumentId,
     ReportStatus,
+    SignalEvent,
     SignalKind,
 )
 from trade_research.engine import ResearchEngine
@@ -66,14 +67,18 @@ def test_backtesting_parameters_publish_discriminated_strategy_schema() -> None:
     schema = BacktestingSkillParameters.model_json_schema()
     assert "strategy" in schema["properties"]
     assert BacktestingSkillParameters().strategy.kind == "sma_crossover"
-    assert BacktestingSkillParameters().capital_per_add == 0.2
-    assert BacktestingSkillParameters().max_allocation == 0.6
+    assert BacktestingSkillParameters().position_budget == 1_000
+    assert BacktestingSkillParameters().tranche_fraction == 0.2
+    assert BacktestingSkillParameters().deployment_cap_fraction == 0.8
     assert BacktestingSkillParameters().minimum_addition_bars == 1
 
-    with pytest.raises(ValueError, match="capital_per_add"):
+    with pytest.raises(ValueError, match="tranche_fraction"):
         BacktestingSkillParameters.model_validate(
-            {"capital_per_add": 0.5, "max_allocation": 0.4}
+            {"tranche_fraction": 0.5, "deployment_cap_fraction": 0.4}
         )
+
+    with pytest.raises(ValueError):
+        BacktestingSkillParameters.model_validate({"cash": 1_000})
 
 
 def test_external_events_allow_repeated_buy_and_sell_signals() -> None:
@@ -105,9 +110,9 @@ def test_external_signal_fills_at_next_bar_open() -> None:
     points = _prices([100.0, 110.0, 120.0, 130.0, 125.0, 140.0])
     parameters = BacktestingSkillParameters.model_validate(
         {
-            "cash": 10_000,
+            "position_budget": 10_000,
             "commission": 0,
-            "capital_per_add": 0.5,
+            "tranche_fraction": 0.5,
             "strategy": {
                 "kind": "external_signals",
                 "name": "vibe-test",
@@ -123,15 +128,137 @@ def test_external_signal_fills_at_next_bar_open() -> None:
     configured = configure_skill(BacktestingSkill(), parameters.model_dump(mode="json"))
     result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.signal is SignalKind.NOT_ASSESSED
     assert result.presentation is not None
-    assert result.presentation.template == "backtesting-v1"
+    assert result.presentation.template == "backtesting-v2"
     assert len(result.presentation.trades) == 1
     assert result.presentation.trades[0].entry_at == points[2].observed_at
     assert result.presentation.trades[0].entry_price == pytest.approx(points[2].open)
     assert result.presentation.trades[0].exit_at == points[4].observed_at
     assert result.presentation.trades[0].exit_price == pytest.approx(points[4].open)
+
+
+def test_signal_quality_uses_the_same_next_open_as_execution() -> None:
+    original = _prices([100.0, 100.0, 120.0, 100.0, 100.0])
+    points = (
+        *original[:2],
+        replace(original[2], open=80.0, high=121.0, low=79.0),
+        *original[3:],
+    )
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "commission": 0,
+            "signal_horizon_bars": 1,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "gap-quality-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.presentation is not None
+    assert result.presentation.open_positions[0].entry_price == 80.0
+    assert result.presentation.signal_quality.expected_change == pytest.approx(0.25)
+    assert result.presentation.signal_quality.status == "complete"
+
+
+def test_backtest_and_signal_evaluator_share_the_domain_signal_event() -> None:
+    points = _prices([100.0, 101.0, 102.0, 103.0])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "signal_horizon_bars": 1,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "canonical-event-test",
+                "events": [
+                    {"observed_at": points[0].observed_at.isoformat(), "action": "add_long"}
+                ],
+            },
+        },
+    )
+
+    assert isinstance(configured.strategy.events[0], SignalEvent)
+    assert configured.strategy.events[0].direction == "long"
+
+
+def test_unevaluable_signal_quality_marks_the_integrated_report_partial() -> None:
+    points = _prices([100.0, 101.0, 102.0, 103.0])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "signal_horizon_bars": 2,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "insufficient-forward-history",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.PARTIAL
+    assert result.presentation is not None
+    assert result.presentation.signal_quality.status == "insufficient_history"
+    assert result.presentation.signal_quality.evaluated_signal_count == 0
+    assert result.presentation.signal_quality.skipped_signal_count == 1
+    assert "insufficient_history" in {item.value for item in result.limitations}
+
+
+def test_one_signal_stream_drives_quality_execution_and_position_sections() -> None:
+    points = _prices([100.0 + index for index in range(40)])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 0.8,
+            "signal_horizon_bars": 5,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "integrated-signal-test",
+                "events": [
+                    {"observed_at": points[2].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[8].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[12].observed_at.isoformat(), "action": "reduce_long"},
+                    {"observed_at": points[20].observed_at.isoformat(), "action": "exit_long"},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.presentation is not None
+    presentation = result.presentation
+    assert presentation.signal_quality.source_add_signal_count == 2
+    assert presentation.signal_quality.evaluated_signal_count == 2
+    assert presentation.signal_quality.win_rate == 1
+    assert presentation.signal_quality.expected_change is not None
+    assert presentation.signal_quality.expected_change > 0
+    assert presentation.execution_audit.add_signal_count == 2
+    assert presentation.execution_audit.reduce_signal_count == 1
+    assert presentation.execution_audit.exit_signal_count == 1
+    assert presentation.execution_audit.executed_addition_count == 2
+    assert presentation.position_performance.closed_lot_count == 2
+    assert presentation.position_performance.final_equity > 1_000
 
 
 def test_start_date_uses_prior_bars_only_for_warmup() -> None:
@@ -202,7 +329,7 @@ def test_persistent_rsi_condition_adds_only_on_threshold_transition() -> None:
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
+            "position_budget": 1_000,
             "commission": 0,
             "strategy": {
                 "kind": "rsi_mean_reversion",
@@ -217,7 +344,7 @@ def test_persistent_rsi_condition_adds_only_on_threshold_transition() -> None:
         InstrumentId(symbol="TEST", market="US"), _providers(points)
     )
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.open_positions) == 1
 
@@ -276,9 +403,9 @@ def test_every_market_uses_fractional_units_at_prices_above_starting_cash(
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
-            "capital_per_add": 0.2,
-            "max_allocation": 1,
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 1,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
@@ -295,7 +422,7 @@ def test_every_market_uses_fractional_units_at_prices_above_starting_cash(
         _providers(points),
     )
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.open_positions) == 1
     assert 0 < result.presentation.open_positions[0].size < 1
@@ -310,11 +437,11 @@ def test_report_preserves_reproducibility_assumptions() -> None:
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 25_000,
+            "position_budget": 25_000,
             "commission": 0.002,
             "spread": 0.001,
-            "capital_per_add": 0.25,
-            "max_allocation": 0.75,
+            "tranche_fraction": 0.25,
+            "deployment_cap_fraction": 0.75,
             "minimum_addition_bars": 4,
             "stop_loss_pct": 0.08,
             "take_profit_pct": 0.2,
@@ -326,11 +453,11 @@ def test_report_preserves_reproducibility_assumptions() -> None:
 
     assert result.presentation is not None
     assumptions = result.presentation.assumptions
-    assert assumptions.cash == 25_000
+    assert assumptions.position_budget == 25_000
     assert assumptions.commission == 0.002
     assert assumptions.spread == 0.001
-    assert assumptions.capital_per_add == 0.25
-    assert assumptions.max_allocation == 0.75
+    assert assumptions.tranche_fraction == 0.25
+    assert assumptions.deployment_cap_fraction == 0.75
     assert assumptions.minimum_addition_bars == 4
     assert assumptions.stop_loss_pct == 0.08
     assert assumptions.take_profit_pct == 0.2
@@ -411,8 +538,8 @@ def test_repeated_signals_add_and_remove_fixed_notional_tranches() -> None:
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
-            "capital_per_add": 0.2,
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
@@ -431,7 +558,7 @@ def test_repeated_signals_add_and_remove_fixed_notional_tranches() -> None:
         InstrumentId(symbol="TEST", market="US"), _providers(points)
     )
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.trades) == 2
     assert [trade.entry_at for trade in result.presentation.trades] == [
@@ -449,9 +576,9 @@ def test_entry_is_skipped_when_a_full_tranche_is_not_available() -> None:
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
-            "capital_per_add": 0.2,
-            "max_allocation": 1,
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 1,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
@@ -485,9 +612,9 @@ def test_maximum_allocation_caps_additions() -> None:
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
-            "capital_per_add": 0.2,
-            "max_allocation": 0.6,
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 0.6,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
@@ -512,14 +639,45 @@ def test_maximum_allocation_caps_additions() -> None:
     assert len(result.presentation.open_positions) == 3
 
 
+def test_deployment_cap_uses_open_lot_entry_cost_not_market_value() -> None:
+    points = _prices([100.0, 100.0, 100.0, 200.0, 200.0, 200.0, 200.0])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 0.4,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "entry-cost-cap-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[3].observed_at.isoformat(), "action": "add_long"},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.presentation is not None
+    assert len(result.presentation.open_positions) == 2
+    assert sum(
+        item.size * item.entry_price for item in result.presentation.open_positions
+    ) == pytest.approx(400, abs=0.01)
+
+
 def test_exit_long_closes_all_open_tranches() -> None:
     points = _prices([100.0] * 9)
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
-            "capital_per_add": 0.2,
-            "max_allocation": 0.8,
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 0.8,
             "commission": 0,
             "strategy": {
                 "kind": "external_signals",
@@ -538,7 +696,7 @@ def test_exit_long_closes_all_open_tranches() -> None:
         InstrumentId(symbol="TEST", market="US"), _providers(points)
     )
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.trades) == 3
     assert {trade.exit_at for trade in result.presentation.trades} == {
@@ -552,9 +710,9 @@ def test_addition_cooldown_skips_near_duplicate_signals() -> None:
     configured = configure_skill(
         BacktestingSkill(),
         {
-            "cash": 1_000,
-            "capital_per_add": 0.2,
-            "max_allocation": 0.8,
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "deployment_cap_fraction": 0.8,
             "minimum_addition_bars": 3,
             "commission": 0,
             "strategy": {
@@ -600,7 +758,7 @@ def test_external_event_matches_same_instant_with_different_offset() -> None:
 
     result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert result.presentation.open_positions
 
@@ -616,7 +774,7 @@ def test_sma_backtest_produces_bounded_report_data() -> None:
     configured = configure_skill(BacktestingSkill(), parameters)
     result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
-    assert result.status is ReportStatus.COMPLETE
+    assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.curve) == len(points)
     assert 1 <= len(result.presentation.trades) <= 200
@@ -747,10 +905,10 @@ async def test_vibe_request_uses_existing_run_skill_and_inline_price_flow(
     payload = await app.run_skill("backtesting", request)
 
     presentation = payload["results"][0]["presentation"]
-    assert presentation["template"] == "backtesting-v1"
+    assert presentation["template"] == "backtesting-v2"
     assert presentation["trades"] == []
     assert presentation["open_positions"][0]["entry_at"] == "2025-01-03T00:00:00Z"
-    assert presentation["assumptions"]["cash"] == 10_000
+    assert presentation["assumptions"]["position_budget"] == 1_000
     assert presentation["assumptions"]["strategy_parameters"] == [
         {"key": "event_count", "value": 1}
     ]
