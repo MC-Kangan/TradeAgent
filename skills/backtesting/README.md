@@ -53,8 +53,29 @@ Positions still open at the end are marked to the final close and reported
 separately from closed-trade statistics.
 Every result retains its bounded strategy and cost assumptions plus a canonical
 configuration hash. Signal quality, execution audit, and position performance
-are reported separately from the same canonical event stream. No optimizer,
-short selling, portfolio simulation, arbitrary Python, or interactive plot is exposed.
+are reported separately from the same canonical event stream.
+
+Signal quality reports fixed-horizon expectancy, win rate, winner/loser payoff,
+MFE, MAE, and a conservative count of non-overlapping outcomes. It also reports
+the same descriptive metrics for signals originating in the final 20% of the
+chronological test window. This holdout slice is useful as a stability check; it
+is not an untouched out-of-sample test if the strategy was designed using the
+same history.
+
+The execution audit reports accepted additions, submitted and executed
+reductions and exits, delayed signals, rejected additions by reason, separate
+addition/reduction/exit boundary counts, actual average entry price, explicit
+commissions, and average/maximum cost-basis deployment. Spread remains reflected
+in simulated fill prices rather than being counted a second time as an explicit fee.
+
+Position performance reports net realized and open unrealized P/L that reconcile
+to total P/L, return on average deployed capital, gross two-sided turnover,
+closed-lot expectancy and payoff,
+profit factor, and both full-investment and exposure-adjusted buy-and-hold
+comparisons. The exposure-adjusted comparison is the full buy-and-hold return
+multiplied by average cost-basis exposure; it is a capital-use reference, not a
+timing-matched alternative strategy. No optimizer, short selling, portfolio
+simulation, arbitrary Python, or interactive plot is exposed.
 
 Calculation history and browser payload size are independent. A run may use up
 to 4,096 daily bars, including pre-start indicator warm-up, while price,

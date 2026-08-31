@@ -27,10 +27,21 @@ indicator or regime transitions and exit fully when their thesis reverses.
 
 - Separate fixed-horizon entry-signal quality, signal-to-execution audit, and
   net position-performance sections derived from one canonical event stream.
+- Signal count, non-overlapping outcome count, expectancy, win rate,
+  winner/loser payoff, MFE, MAE, and a descriptive chronological holdout view
+  beginning at the final 20% of the performance window.
+- Addition, reduction, and exit audit counts; delayed and ignored actions;
+  rejected additions by reason; separate unfilled addition/reduction/exit
+  boundary counts; average entry fill; explicit commissions; and average/maximum
+  cost-basis deployment and exposure.
 - Calculation coverage, warm-up size, discarded-row count, quote currency,
   price-adjustment convention, and daily-boundary convention.
-- Final equity, strategy and buy/hold returns, maximum drawdown, trade count,
-  win rate, and Sharpe ratio when the engine can calculate them.
+- Final equity, reconcilable net realized/open unrealized/total P/L, strategy
+  return, return on average deployed capital, gross two-sided turnover, maximum
+  drawdown, trade count, win rate, payoff, expectancy, profit factor, and Sharpe
+  ratio when calculable.
+- Full-investment buy-and-hold plus a capital-use comparison equal to buy-and-hold
+  return multiplied by average cost-basis exposure.
 - Full-history calculations with extrema-aware equity sampling, at most 520
   chart points, 200 displayed closed trades, and 100 displayed open-lot snapshots.
 - Full open-position aggregates even when individual snapshots are reduced.
@@ -47,3 +58,5 @@ copied into reports or the durable queue. Misaligned signals and incomplete
 OHLC input produce a typed partial result.
 Protective levels are derived from the actual fill and become active on the
 following bar. Entry signals that cannot obtain a fill produce a partial result.
+The final-20% holdout is descriptive and must not be described as untouched
+out-of-sample evidence when the strategy was developed on the same history.

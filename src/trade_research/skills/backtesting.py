@@ -56,7 +56,10 @@ from trade_research.skills.indicators import (
 from trade_research.skills.signal_evaluation import evaluate_fixed_horizon_signals
 
 StrategyKind = Literal[
-    "sma_crossover", "macd_crossover", "rsi_mean_reversion", "markov_regime",
+    "sma_crossover",
+    "macd_crossover",
+    "rsi_mean_reversion",
+    "markov_regime",
     "external_signals",
 ]
 BacktestParameterKey = Literal[
@@ -103,6 +106,18 @@ class IndicatorDefinition:
 class StrategyEvaluation:
     events: tuple[SignalEvent, ...]
     indicators: tuple[IndicatorDefinition, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalMetrics:
+    """Full-history capital use derived from all simulated lots."""
+
+    average_deployed_capital: float
+    maximum_deployed_capital: float
+    average_exposure_fraction: float
+    maximum_exposure_fraction: float
+    gross_turnover_ratio: float
+    average_entry_fill_price: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,8 +168,7 @@ class BacktestingSkill:
         try:
             start_index = _start_index(prices, self.start_date)
             if start_index is None or (
-                self.start_date is not None
-                and start_index < _minimum_points(self.strategy) - 1
+                self.start_date is not None and start_index < _minimum_points(self.strategy) - 1
             ):
                 return _partial(instrument, (LimitationKind.INSUFFICIENT_HISTORY,))
             evaluation = generate_strategy_signals(self.strategy, prices, start_index)
@@ -167,9 +181,7 @@ class BacktestingSkill:
             for event in evaluation.events
             if event.observed_at >= simulation_prices[0].observed_at
         )
-        additions, reductions, exits = _event_flags(
-            simulation_events, simulation_prices
-        )
+        additions, reductions, exits = _event_flags(simulation_events, simulation_prices)
         data = _data_frame(simulation_prices, additions, reductions, exits)
         fractional_unit = 1e-8
         simulation = FractionalBacktest(
@@ -196,7 +208,10 @@ class BacktestingSkill:
                 take_profit_pct=self.take_profit_pct,
             )
         presentation = _presentation(
-            stats, simulation_prices, self, simulation_events,
+            stats,
+            simulation_prices,
+            self,
+            simulation_events,
             _slice_indicators(evaluation.indicators, start_index),
             source_bar_count=len(supplied_prices),
             valid_bar_count=len(prices),
@@ -251,16 +266,49 @@ class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
     def init(self) -> None:
         self.pending_reductions = 0
         self.pending_exit_all = False
+        self.pending_reduction_audits: list[int] = []
+        self.pending_exit_targets: tuple[int, ...] = ()
+        self.exit_submitted = False
         self.last_addition_bar: int | None = None
+        self.audit_counts = {
+            "submitted_addition": 0,
+            "submitted_reduction": 0,
+            "submitted_exit": 0,
+            "executed_reduction": 0,
+            "executed_exit": 0,
+            "delayed_reduction": 0,
+            "delayed_exit": 0,
+            "rejected_allocation_cap": 0,
+            "rejected_insufficient_cash": 0,
+            "rejected_cooldown": 0,
+            "rejected_exit_pending": 0,
+            "ignored_no_position": 0,
+        }
+
+    def _record(self, key: str) -> None:
+        self.audit_counts[key] += 1
 
     def next(self) -> None:
+        closed_entry_bars = {int(trade.entry_bar) for trade in self.closed_trades}
+        unresolved_reductions: list[int] = []
+        for entry_bar in self.pending_reduction_audits:
+            if entry_bar in closed_entry_bars:
+                self._record("executed_reduction")
+            else:
+                unresolved_reductions.append(entry_bar)
+        self.pending_reduction_audits = unresolved_reductions
+        if self.pending_exit_targets and all(
+            entry_bar in closed_entry_bars for entry_bar in self.pending_exit_targets
+        ):
+            self._record("executed_exit")
+            self.pending_exit_targets = ()
+            self.exit_submitted = False
+
         current_bar = len(self.data) - 1
         self.pending_reductions = min(self.pending_reductions, len(self.trades))
         eligible = []
         for trade in self.trades:
-            minimum_holding_met = (
-                current_bar - trade.entry_bar + 1 >= self.minimum_holding_bars
-            )
+            minimum_holding_met = current_bar - trade.entry_bar + 1 >= self.minimum_holding_bars
             if not minimum_holding_met:
                 continue
             eligible.append(trade)
@@ -269,17 +317,34 @@ class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
             if self.take_profit_pct and trade.tp is None:
                 trade.tp = trade.entry_price * (1 + self.take_profit_pct)
 
-        if bool(self.data.ExitAll[-1]) and self.trades:
-            self.pending_exit_all = True
-            self.pending_reductions = 0
-        elif bool(self.data.Reduce[-1]) and self.trades:
-            self.pending_reductions = min(
-                self.pending_reductions + 1,
-                len(self.trades),
-            )
+        if bool(self.data.ExitAll[-1]):
+            if not self.trades:
+                self._record("ignored_no_position")
+            else:
+                if len(eligible) < len(self.trades):
+                    self._record("delayed_exit")
+                self.pending_exit_all = True
+                self.pending_exit_targets = tuple(
+                    int(trade.entry_bar) for trade in self.trades
+                )
+                self.exit_submitted = False
+                self.pending_reductions = 0
+        elif bool(self.data.Reduce[-1]):
+            if not self.trades:
+                self._record("ignored_no_position")
+            else:
+                if not eligible:
+                    self._record("delayed_reduction")
+                self.pending_reductions = min(
+                    self.pending_reductions + 1,
+                    len(self.trades),
+                )
 
         eligible.sort(key=lambda item: item.entry_bar)
         if self.pending_exit_all:
+            if eligible and not self.exit_submitted:
+                self._record("submitted_exit")
+                self.exit_submitted = True
             for trade in eligible:
                 trade.close()
         else:
@@ -287,6 +352,8 @@ class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
                 if self.pending_reductions <= 0:
                     break
                 trade.close()
+                self.pending_reduction_audits.append(int(trade.entry_bar))
+                self._record("submitted_reduction")
                 self.pending_reductions -= 1
 
         if not self.trades:
@@ -297,27 +364,34 @@ class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
             self.last_addition_bar is None
             or current_bar - self.last_addition_bar >= self.minimum_addition_bars
         )
-        if bool(self.data.Add[-1]) and not self.pending_exit_all and cooldown_met:
-            deployed_entry_notional = sum(
-                abs(float(trade.size) * float(trade.entry_price))
-                for trade in self.trades
-            )
-            available_cash = max(
-                0.0,
-                self.equity - sum(trade.value for trade in self.trades),
-            )
-            tranche_cash = self.position_budget * self.tranche_fraction
-            deployment_headroom = (
-                self.position_budget * self.deployment_cap_fraction
-                - deployed_entry_notional
-            )
-            if (
-                tranche_cash > 0
-                and available_cash + 1e-9 >= tranche_cash
-                and deployment_headroom + 1e-9 >= tranche_cash
-            ):
-                self.buy(size=min(tranche_cash / available_cash, 0.999999))
-                self.last_addition_bar = current_bar
+        if not bool(self.data.Add[-1]):
+            return
+        if self.pending_exit_all:
+            self._record("rejected_exit_pending")
+            return
+        if not cooldown_met:
+            self._record("rejected_cooldown")
+            return
+        deployed_entry_notional = sum(
+            abs(float(trade.size) * float(trade.entry_price)) for trade in self.trades
+        )
+        available_cash = max(
+            0.0,
+            self.equity - sum(trade.value for trade in self.trades),
+        )
+        tranche_cash = self.position_budget * self.tranche_fraction
+        deployment_headroom = (
+            self.position_budget * self.deployment_cap_fraction - deployed_entry_notional
+        )
+        if deployment_headroom + 1e-9 < tranche_cash:
+            self._record("rejected_allocation_cap")
+            return
+        if available_cash + 1e-9 < tranche_cash:
+            self._record("rejected_insufficient_cash")
+            return
+        self.buy(size=min(tranche_cash / available_cash, 0.999999))
+        self.last_addition_bar = current_bar
+        self._record("submitted_addition")
 
 
 def _start_index(prices: tuple[PricePoint, ...], start_date: date | None) -> int | None:
@@ -457,9 +531,7 @@ def _events_from_flags(
 def _event_flags(
     events: tuple[SignalEvent, ...], prices: tuple[PricePoint, ...]
 ) -> tuple[list[bool], list[bool], list[bool]]:
-    indexes = {
-        point.observed_at.astimezone(UTC): index for index, point in enumerate(prices)
-    }
+    indexes = {point.observed_at.astimezone(UTC): index for index, point in enumerate(prices)}
     additions = [False] * len(prices)
     reductions = [False] * len(prices)
     exits = [False] * len(prices)
@@ -518,9 +590,7 @@ def _cross_signals(
         values = left[index - 1], right[index - 1], left[index], right[index]
         if all(value is not None for value in values):
             prior_left, prior_right, current_left, current_right = cast(tuple[float, ...], values)
-            additions[index] = (
-                prior_left <= prior_right and current_left > current_right
-            )
+            additions[index] = prior_left <= prior_right and current_left > current_right
             exits[index] = prior_left >= prior_right and current_left < current_right
     return additions, exits
 
@@ -534,12 +604,8 @@ def _threshold_cross_signals(
         if current is None:
             continue
         prior = values[index - 1] if index > 0 else None
-        additions[index] = current <= entry_threshold and (
-            prior is None or prior > entry_threshold
-        )
-        exits[index] = current >= exit_threshold and (
-            prior is None or prior < exit_threshold
-        )
+        additions[index] = current <= entry_threshold and (prior is None or prior > entry_threshold)
+        exits[index] = current >= exit_threshold and (prior is None or prior < exit_threshold)
     return additions, exits
 
 
@@ -587,9 +653,7 @@ def _markov_signals(
         IndicatorDefinition("markov_regime", "Regime", "regime", tuple(regimes)),
     )
     return StrategyEvaluation(
-        _events_from_flags(
-            prices, additions, _empty_signals(closes), exits, indicators
-        ),
+        _events_from_flags(prices, additions, _empty_signals(closes), exits, indicators),
         indicators,
     )
 
@@ -704,6 +768,7 @@ def _presentation(
             entry_price=float(row["EntryPrice"]),
             exit_price=float(row["ExitPrice"]),
             pnl=float(row["PnL"]),
+            commission=float(row["Commission"]),
             return_ratio=float(row["ReturnPct"]),
             duration_bars=max(0, int(row["ExitBar"]) - int(row["EntryBar"])),
         )
@@ -723,9 +788,7 @@ def _presentation(
     )
     open_positions = _bounded_endpoints(all_open_positions, 100)
     required_times = {
-        timestamp
-        for trade in trades
-        for timestamp in (trade.entry_at, trade.exit_at)
+        timestamp for trade in trades for timestamp in (trade.entry_at, trade.exit_at)
     } | {position.entry_at for position in open_positions}
     presentation_indexes = _presentation_indexes(prices, required_times, 520)
     price_bars = tuple(
@@ -742,7 +805,9 @@ def _presentation(
     )
     indicator_series = tuple(
         BacktestIndicatorSeries(
-            key=item.key, label=item.label, panel=item.panel,
+            key=item.key,
+            label=item.label,
+            panel=item.panel,
             points=tuple(
                 BacktestIndicatorPoint(observed_at=point.observed_at, value=float(value))
                 for index in presentation_indexes
@@ -769,9 +834,19 @@ def _presentation(
     assumptions = _assumptions(skill, signal_reference)
     signal_quality = _signal_quality(prices, events, skill.signal_horizon_bars)
     add_signal_count = sum(event.action == "add_long" for event in events)
-    executed_additions = len(cast(pd.DataFrame, stats["_trades"])) + len(
-        stats["_strategy"].trades
+    executed_additions = len(cast(pd.DataFrame, stats["_trades"])) + len(stats["_strategy"].trades)
+    capital = _capital_metrics(stats, prices, skill.position_budget, fractional_unit)
+    audit_counts = cast(dict[str, int], strategy.audit_counts)
+    rejected_additions = sum(
+        audit_counts[key]
+        for key in (
+            "rejected_allocation_cap",
+            "rejected_insufficient_cash",
+            "rejected_cooldown",
+            "rejected_exit_pending",
+        )
     )
+    submitted_additions = audit_counts["submitted_addition"]
     return BacktestPresentation(
         engine_version=backtesting.__version__,
         strategy_kind=config.kind,
@@ -779,9 +854,7 @@ def _presentation(
         signal_reference=signal_reference,
         assumptions=assumptions,
         data_quality=BacktestDataQuality(
-            source_bar_count=(
-                _provenance_int(prices[0], "source_point_count") or source_bar_count
-            ),
+            source_bar_count=(_provenance_int(prices[0], "source_point_count") or source_bar_count),
             valid_bar_count=valid_bar_count,
             discarded_bar_count=max(
                 0,
@@ -800,14 +873,43 @@ def _presentation(
         signal_quality=signal_quality,
         execution_audit=BacktestExecutionAudit(
             add_signal_count=add_signal_count,
-            reduce_signal_count=sum(
-                event.action == "reduce_long" for event in events
-            ),
+            reduce_signal_count=sum(event.action == "reduce_long" for event in events),
             exit_signal_count=sum(event.action == "exit_long" for event in events),
             executed_addition_count=executed_additions,
             unexecuted_addition_count=max(0, add_signal_count - executed_additions),
+            submitted_reduction_count=audit_counts["submitted_reduction"],
+            submitted_exit_count=audit_counts["submitted_exit"],
+            executed_reduction_count=audit_counts["executed_reduction"],
+            executed_exit_count=audit_counts["executed_exit"],
+            delayed_signal_count=(audit_counts["delayed_reduction"] + audit_counts["delayed_exit"]),
+            rejected_signal_count=rejected_additions,
+            rejected_allocation_cap_count=audit_counts["rejected_allocation_cap"],
+            rejected_insufficient_cash_count=audit_counts["rejected_insufficient_cash"],
+            rejected_cooldown_count=audit_counts["rejected_cooldown"],
+            rejected_exit_pending_count=audit_counts["rejected_exit_pending"],
+            ignored_no_position_count=audit_counts["ignored_no_position"],
+            unexecuted_addition_boundary_count=(
+                max(0, add_signal_count - submitted_additions - rejected_additions)
+                + max(0, submitted_additions - executed_additions)
+            ),
+            unexecuted_reduction_boundary_count=(
+                strategy.pending_reductions + len(strategy.pending_reduction_audits)
+            ),
+            unexecuted_exit_boundary_count=int(bool(strategy.pending_exit_targets)),
+            total_costs=_total_commissions(stats, fractional_unit, skill.commission),
+            average_entry_fill_price=capital.average_entry_fill_price,
+            average_deployed_capital=capital.average_deployed_capital,
+            maximum_deployed_capital=capital.maximum_deployed_capital,
+            average_exposure_fraction=capital.average_exposure_fraction,
+            maximum_exposure_fraction=capital.maximum_exposure_fraction,
         ),
-        position_performance=_position_performance(stats, fractional_unit),
+        position_performance=_position_performance(
+            stats,
+            fractional_unit,
+            skill.position_budget,
+            skill.commission,
+            capital,
+        ),
         price_bars=price_bars,
         indicator_series=indicator_series,
         curve=curve,
@@ -834,15 +936,15 @@ def _presentation_indexes(
     if len(required) >= limit:
         ordered = sorted(required)
         return tuple(
-            ordered[round(index * (len(ordered) - 1) / (limit - 1))]
-            for index in range(limit)
+            ordered[round(index * (len(ordered) - 1) / (limit - 1))] for index in range(limit)
         )
     candidates = [index for index in range(len(prices)) if index not in required]
     slots = limit - len(required)
-    sampled = {
-        candidates[round(index * (len(candidates) - 1) / (slots - 1))]
-        for index in range(slots)
-    } if slots > 1 else {candidates[len(candidates) // 2]}
+    sampled = (
+        {candidates[round(index * (len(candidates) - 1) / (slots - 1))] for index in range(slots)}
+        if slots > 1
+        else {candidates[len(candidates) // 2]}
+    )
     return tuple(sorted(required | sampled))
 
 
@@ -861,9 +963,7 @@ def _curve_presentation_indexes(
         end = 1 + (bucket + 1) * interior_count // bucket_count
         indexes = range(start, max(start + 1, end))
         selected.add(max(indexes, key=lambda index: float(curve_rows[index][1]["Equity"])))
-        selected.add(
-            max(indexes, key=lambda index: float(curve_rows[index][1]["DrawdownPct"]))
-        )
+        selected.add(max(indexes, key=lambda index: float(curve_rows[index][1]["DrawdownPct"])))
     return tuple(sorted(selected))
 
 
@@ -873,7 +973,7 @@ def _bounded_endpoints[T](items: tuple[T, ...], limit: int) -> tuple[T, ...]:
     if len(items) <= limit:
         return items
     head = limit // 2
-    return items[:head] + items[-(limit - head):]
+    return items[:head] + items[-(limit - head) :]
 
 
 def _provenance_text(point: PricePoint, key: str) -> str | None:
@@ -910,13 +1010,19 @@ def _signal_quality(
     horizon_bars: int,
 ) -> BacktestSignalQuality:
     additions = tuple(event for event in events if event.action == "add_long")
+    holdout_index = min(len(prices) - 1, max(1, int(len(prices) * 0.8)))
+    holdout_start_at = prices[holdout_index].observed_at
     if not additions:
         return BacktestSignalQuality(
             status="no_signals",
             horizon_bars=horizon_bars,
             source_add_signal_count=0,
             evaluated_signal_count=0,
+            independent_signal_count=0,
             skipped_signal_count=0,
+            holdout_start_at=holdout_start_at,
+            holdout_signal_count=0,
+            holdout_evaluated_signal_count=0,
         )
     points = tuple(
         OutcomePoint(
@@ -936,6 +1042,18 @@ def _signal_quality(
     changes = [event.change for event in study.outcomes]
     favorable = [event.maximum_favorable_change for event in study.outcomes]
     adverse = [event.maximum_adverse_change for event in study.outcomes]
+    win_rate, expected_change, payoff_ratio = _change_statistics(changes)
+    independent_count = 0
+    last_exit: datetime | None = None
+    for outcome in study.outcomes:
+        if last_exit is None or outcome.entry_at > last_exit:
+            independent_count += 1
+            last_exit = outcome.exit_at
+    holdout_outcomes = tuple(
+        outcome for outcome in study.outcomes if outcome.signal_at >= holdout_start_at
+    )
+    holdout_changes = [outcome.change for outcome in holdout_outcomes]
+    holdout_win_rate, holdout_expected, holdout_payoff = _change_statistics(holdout_changes)
     return BacktestSignalQuality(
         status=(
             "insufficient_history"
@@ -947,20 +1065,117 @@ def _signal_quality(
         horizon_bars=horizon_bars,
         source_add_signal_count=len(additions),
         evaluated_signal_count=len(study.outcomes),
+        independent_signal_count=independent_count,
         skipped_signal_count=study.skipped_event_count,
-        win_rate=(
-            sum(change > 0 for change in changes) / len(changes)
-            if changes
-            else None
-        ),
-        expected_change=statistics.fmean(changes) if changes else None,
+        win_rate=win_rate,
+        expected_change=expected_change,
+        payoff_ratio=payoff_ratio,
         average_favorable_change=(statistics.fmean(favorable) if favorable else None),
         average_adverse_change=(statistics.fmean(adverse) if adverse else None),
+        holdout_start_at=holdout_start_at,
+        holdout_signal_count=sum(event.observed_at >= holdout_start_at for event in additions),
+        holdout_evaluated_signal_count=len(holdout_outcomes),
+        holdout_win_rate=holdout_win_rate,
+        holdout_expected_change=holdout_expected,
+        holdout_payoff_ratio=holdout_payoff,
     )
 
 
+def _change_statistics(
+    changes: list[float],
+) -> tuple[float | None, float | None, float | None]:
+    if not changes:
+        return None, None, None
+    winners = [change for change in changes if change > 0]
+    losers = [change for change in changes if change < 0]
+    payoff = (
+        statistics.fmean(winners) / abs(statistics.fmean(losers)) if winners and losers else None
+    )
+    return (
+        len(winners) / len(changes),
+        statistics.fmean(changes),
+        payoff,
+    )
+
+
+def _capital_metrics(
+    stats: pd.Series,
+    prices: tuple[PricePoint, ...],
+    position_budget: float,
+    fractional_unit: float,
+) -> CapitalMetrics:
+    """Measure cost-basis deployment and traded notional over the full run."""
+
+    trade_frame = cast(pd.DataFrame, stats["_trades"])
+    strategy = stats["_strategy"]
+    changes = [0.0] * (len(prices) + 1)
+    entry_notional = 0.0
+    entry_size = 0.0
+    traded_notional = 0.0
+    for _, row in trade_frame.iterrows():
+        size = abs(float(row["Size"]))
+        notional = size * float(row["EntryPrice"])
+        entry_bar = int(row["EntryBar"])
+        exit_bar = int(row["ExitBar"])
+        changes[entry_bar] += notional
+        changes[exit_bar] -= notional
+        entry_notional += notional
+        entry_size += size
+        traded_notional += notional + size * float(row["ExitPrice"])
+    for trade in strategy.trades:
+        actual_size = abs(float(trade.size)) * fractional_unit
+        actual_price = float(trade.entry_price) / fractional_unit
+        notional = actual_size * actual_price
+        changes[int(trade.entry_bar)] += notional
+        changes[len(prices)] -= notional
+        entry_notional += notional
+        entry_size += actual_size
+        traded_notional += notional
+
+    deployed: list[float] = []
+    current = 0.0
+    for change in changes[:-1]:
+        current += change
+        deployed.append(max(0.0, current))
+    average = statistics.fmean(deployed) if deployed else 0.0
+    maximum = max(deployed, default=0.0)
+    return CapitalMetrics(
+        average_deployed_capital=average,
+        maximum_deployed_capital=maximum,
+        average_exposure_fraction=average / position_budget,
+        maximum_exposure_fraction=maximum / position_budget,
+        gross_turnover_ratio=traded_notional / position_budget,
+        average_entry_fill_price=(entry_notional / entry_size if entry_size > 0 else None),
+    )
+
+
+def _total_commissions(stats: pd.Series, fractional_unit: float, commission_rate: float) -> float:
+    """Include entry commissions already paid by positions still open."""
+
+    trade_frame = cast(pd.DataFrame, stats["_trades"])
+    closed = sum(max(0.0, float(value)) for value in trade_frame["Commission"])
+    return closed + _open_entry_commissions(stats, fractional_unit, commission_rate)
+
+
+def _open_entry_commissions(
+    stats: pd.Series, fractional_unit: float, commission_rate: float
+) -> float:
+    strategy = stats["_strategy"]
+    open_entry_notional = sum(
+        abs(float(trade.size))
+        * fractional_unit
+        * (float(trade.entry_price) / fractional_unit)
+        for trade in strategy.trades
+    )
+    return open_entry_notional * commission_rate
+
+
 def _position_performance(
-    stats: pd.Series, fractional_unit: float
+    stats: pd.Series,
+    fractional_unit: float,
+    position_budget: float,
+    commission_rate: float,
+    capital: CapitalMetrics,
 ) -> BacktestPositionPerformance:
     def ratio(key: str, divisor: float = 1.0) -> float | None:
         value = stats.get(key)
@@ -971,35 +1186,60 @@ def _position_performance(
 
     trade_frame = cast(pd.DataFrame, stats["_trades"])
     strategy = stats["_strategy"]
-    open_total_size = sum(
-        abs(float(trade.size)) * fractional_unit for trade in strategy.trades
-    )
+    open_total_size = sum(abs(float(trade.size)) * fractional_unit for trade in strategy.trades)
     open_entry_notional = sum(
-        abs(float(trade.size)) * float(trade.entry_price)
-        for trade in strategy.trades
+        abs(float(trade.size)) * float(trade.entry_price) for trade in strategy.trades
+    )
+    closed_pnl = [float(value) for value in trade_frame["PnL"]]
+    winners = [value for value in closed_pnl if value > 0]
+    losers = [value for value in closed_pnl if value < 0]
+    average_winner = statistics.fmean(winners) if winners else None
+    average_loser = abs(statistics.fmean(losers)) if losers else None
+    final_equity = ratio("Equity Final [$]") or 0.0
+    buy_hold_return = ratio("Buy & Hold Return [%]", 100.0) or 0.0
+    total_pnl = final_equity - position_budget
+    open_unrealized_pnl = sum(float(trade.pl) for trade in strategy.trades)
+    open_unrealized_pnl -= _open_entry_commissions(
+        stats,
+        fractional_unit,
+        commission_rate,
     )
     return BacktestPositionPerformance(
-        final_equity=ratio("Equity Final [$]") or 0.0,
+        final_equity=final_equity,
         total_return=ratio("Return [%]", 100.0) or 0.0,
-        buy_hold_return=ratio("Buy & Hold Return [%]", 100.0) or 0.0,
+        return_on_average_deployed_capital=(
+            total_pnl / capital.average_deployed_capital
+            if capital.average_deployed_capital > 0
+            else None
+        ),
+        buy_hold_return=buy_hold_return,
+        exposure_adjusted_buy_hold_return=(buy_hold_return * capital.average_exposure_fraction),
         max_drawdown=ratio("Max. Drawdown [%]", -100.0) or 0.0,
+        realized_pnl=sum(closed_pnl),
+        total_pnl=total_pnl,
+        gross_turnover_ratio=capital.gross_turnover_ratio,
         closed_lot_count=len(trade_frame),
         open_lot_count=len(strategy.trades),
         open_total_size=open_total_size,
         open_average_entry_price=(
-            open_entry_notional / open_total_size
-            if open_total_size > 0
+            open_entry_notional / open_total_size if open_total_size > 0 else None
+        ),
+        open_unrealized_pnl=open_unrealized_pnl,
+        win_rate=ratio("Win Rate [%]", 100.0),
+        average_winner=average_winner,
+        average_loser=average_loser,
+        payoff_ratio=(
+            average_winner / average_loser
+            if average_winner is not None and average_loser is not None
             else None
         ),
-        open_unrealized_pnl=sum(float(trade.pl) for trade in strategy.trades),
-        win_rate=ratio("Win Rate [%]", 100.0),
+        net_expectancy=(statistics.fmean(closed_pnl) if closed_pnl else None),
+        profit_factor=(sum(winners) / abs(sum(losers)) if winners and losers else None),
         sharpe_ratio=ratio("Sharpe Ratio"),
     )
 
 
-def _assumptions(
-    skill: BacktestingSkill, signal_reference: str
-) -> BacktestAssumptions:
+def _assumptions(skill: BacktestingSkill, signal_reference: str) -> BacktestAssumptions:
     parameters = _strategy_parameters(skill.strategy)
     canonical = json.dumps(
         {
@@ -1078,9 +1318,7 @@ def _as_datetime(value: object) -> datetime:
     raise TypeError("backtesting engine returned a non-datetime trade timestamp")
 
 
-def _partial(
-    instrument: InstrumentId, limitations: tuple[LimitationKind, ...]
-) -> AnalystResult:
+def _partial(instrument: InstrumentId, limitations: tuple[LimitationKind, ...]) -> AnalystResult:
     return AnalystResult(
         analyst="backtesting",
         instrument=instrument,

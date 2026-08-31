@@ -183,9 +183,7 @@ class OutcomeSeriesSpec(DomainModel):
         "not_applicable"
     )
     call_delta: float | None = Field(default=None, gt=0, lt=1)
-    tenor: str | None = Field(
-        default=None, pattern=r"^[1-9][0-9]{0,2}(?:d|w|m|y)$"
-    )
+    tenor: str | None = Field(default=None, pattern=r"^[1-9][0-9]{0,2}(?:d|w|m|y)$")
     strike: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
@@ -213,9 +211,7 @@ class OutcomeSeriesSpec(DomainModel):
                     )
             elif self.strike_convention == "fixed_strike":
                 if self.strike is None or self.call_delta is not None:
-                    raise ValueError(
-                        "fixed-strike volatility requires strike and no call_delta"
-                    )
+                    raise ValueError("fixed-strike volatility requires strike and no call_delta")
             else:
                 raise ValueError("implied volatility requires a strike convention")
         return self
@@ -231,9 +227,7 @@ class InlineOutcomePoint(DomainModel):
 
     @model_validator(mode="after")
     def validate_values(self) -> Self:
-        values = tuple(
-            value for value in (self.value, self.high, self.low) if value is not None
-        )
+        values = tuple(value for value in (self.value, self.high, self.low) if value is not None)
         if any(not math.isfinite(value) for value in values):
             raise ValueError("outcome values must be finite")
         upper = self.value if self.high is None else self.high
@@ -260,9 +254,7 @@ class InlineOutcomeSeries(DomainModel):
         if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
             raise ValueError("outcome points must have ordered unique timestamps")
         complete = [point.high is not None and point.low is not None for point in self.points]
-        partial = [
-            (point.high is None) != (point.low is None) for point in self.points
-        ]
+        partial = [(point.high is None) != (point.low is None) for point in self.points]
         if any(partial):
             raise ValueError("outcome high and low must be supplied together")
         if self.barrier_basis == "high_low" and not all(complete):
@@ -325,9 +317,7 @@ class AnalysisRequest(DomainModel):
             required = set(self.portfolio_instruments)
             if supplied != required:
                 raise ValueError("portfolio price series must exactly match portfolio instruments")
-        outcome_keys = tuple(
-            (item.instrument, item.spec.name) for item in self.outcome_series
-        )
+        outcome_keys = tuple((item.instrument, item.spec.name) for item in self.outcome_series)
         if len(set(outcome_keys)) != len(outcome_keys):
             raise ValueError("outcome series instrument/name pairs must be unique")
         if self.scope == "portfolio" and self.outcome_series:
@@ -612,6 +602,7 @@ class BacktestTrade(DomainModel):
     entry_price: float = Field(gt=0)
     exit_price: float = Field(gt=0)
     pnl: float
+    commission: float = Field(ge=0)
     return_ratio: float
     duration_bars: int = Field(ge=0)
 
@@ -674,11 +665,19 @@ class BacktestSignalQuality(DomainModel):
     horizon_bars: int = Field(ge=1, le=520)
     source_add_signal_count: int = Field(ge=0)
     evaluated_signal_count: int = Field(ge=0)
+    independent_signal_count: int = Field(ge=0)
     skipped_signal_count: int = Field(ge=0)
     win_rate: float | None = Field(default=None, ge=0, le=1)
     expected_change: float | None = None
+    payoff_ratio: float | None = Field(default=None, gt=0)
     average_favorable_change: float | None = Field(default=None, ge=0)
     average_adverse_change: float | None = Field(default=None, le=0)
+    holdout_start_at: datetime
+    holdout_signal_count: int = Field(ge=0)
+    holdout_evaluated_signal_count: int = Field(ge=0)
+    holdout_win_rate: float | None = Field(default=None, ge=0, le=1)
+    holdout_expected_change: float | None = None
+    holdout_payoff_ratio: float | None = Field(default=None, gt=0)
 
 
 class BacktestExecutionAudit(DomainModel):
@@ -689,6 +688,26 @@ class BacktestExecutionAudit(DomainModel):
     exit_signal_count: int = Field(ge=0)
     executed_addition_count: int = Field(ge=0)
     unexecuted_addition_count: int = Field(ge=0)
+    submitted_reduction_count: int = Field(ge=0)
+    submitted_exit_count: int = Field(ge=0)
+    executed_reduction_count: int = Field(ge=0)
+    executed_exit_count: int = Field(ge=0)
+    delayed_signal_count: int = Field(ge=0)
+    rejected_signal_count: int = Field(ge=0)
+    rejected_allocation_cap_count: int = Field(ge=0)
+    rejected_insufficient_cash_count: int = Field(ge=0)
+    rejected_cooldown_count: int = Field(ge=0)
+    rejected_exit_pending_count: int = Field(ge=0)
+    ignored_no_position_count: int = Field(ge=0)
+    unexecuted_addition_boundary_count: int = Field(ge=0)
+    unexecuted_reduction_boundary_count: int = Field(ge=0)
+    unexecuted_exit_boundary_count: int = Field(ge=0)
+    total_costs: float = Field(ge=0)
+    average_entry_fill_price: float | None = Field(default=None, gt=0)
+    average_deployed_capital: float = Field(ge=0)
+    maximum_deployed_capital: float = Field(ge=0)
+    average_exposure_fraction: float = Field(ge=0)
+    maximum_exposure_fraction: float = Field(ge=0)
 
 
 class BacktestDataQuality(DomainModel):
@@ -703,9 +722,7 @@ class BacktestDataQuality(DomainModel):
     calculation_start_at: datetime
     calculation_end_at: datetime
     quote_currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
-    price_adjustment: Literal[
-        "raw", "split_adjusted", "split_dividend_adjusted"
-    ] | None = None
+    price_adjustment: Literal["raw", "split_adjusted", "split_dividend_adjusted"] | None = None
     daily_boundary: Literal["utc", "exchange_local"] | None = None
 
 
@@ -714,14 +731,24 @@ class BacktestPositionPerformance(DomainModel):
 
     final_equity: float = Field(ge=0)
     total_return: float
+    return_on_average_deployed_capital: float | None = None
     buy_hold_return: float
+    exposure_adjusted_buy_hold_return: float
     max_drawdown: float = Field(ge=0, le=1)
+    realized_pnl: float
+    total_pnl: float
+    gross_turnover_ratio: float = Field(ge=0)
     closed_lot_count: int = Field(ge=0)
     open_lot_count: int = Field(ge=0)
     open_total_size: float = Field(ge=0)
     open_average_entry_price: float | None = Field(default=None, gt=0)
     open_unrealized_pnl: float
     win_rate: float | None = Field(default=None, ge=0, le=1)
+    average_winner: float | None = Field(default=None, gt=0)
+    average_loser: float | None = Field(default=None, gt=0)
+    payoff_ratio: float | None = Field(default=None, gt=0)
+    net_expectancy: float | None = None
+    profit_factor: float | None = Field(default=None, gt=0)
     sharpe_ratio: float | None = None
 
 
@@ -732,7 +759,10 @@ class BacktestPresentation(DomainModel):
     engine: Literal["backtesting.py"] = "backtesting.py"
     engine_version: Annotated[str, Field(min_length=1, max_length=16)]
     strategy_kind: Literal[
-        "sma_crossover", "macd_crossover", "rsi_mean_reversion", "markov_regime",
+        "sma_crossover",
+        "macd_crossover",
+        "rsi_mean_reversion",
+        "markov_regime",
         "external_signals",
     ]
     strategy_name: AnalystName
@@ -792,9 +822,7 @@ class SignalEvaluationSummary(DomainModel):
     breakeven_count: int = Field(ge=0)
     win_rate: float | None = Field(default=None, ge=0, le=1)
     non_overlapping_win_rate: float | None = Field(default=None, ge=0, le=1)
-    non_overlapping_win_rate_lower_95: float | None = Field(
-        default=None, ge=0, le=1
-    )
+    non_overlapping_win_rate_lower_95: float | None = Field(default=None, ge=0, le=1)
     average_win: float | None = Field(default=None, gt=0)
     average_loss: float | None = Field(default=None, gt=0)
     average_win_r: float | None = Field(default=None, gt=0)
@@ -889,9 +917,7 @@ class SignalEvaluationPresentation(DomainModel):
     configuration_reference: OpaqueReference
     fixed_horizon: SignalEvaluationSummary
     triple_barrier: SignalEvaluationSummary
-    periods: tuple[SignalEvaluationPeriodPresentation, ...] = Field(
-        default=(), max_length=3
-    )
+    periods: tuple[SignalEvaluationPeriodPresentation, ...] = Field(default=(), max_length=3)
 
 
 class PriceActionBar(DomainModel):

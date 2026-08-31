@@ -92,19 +92,28 @@ def test_external_events_allow_repeated_buy_and_sell_signals() -> None:
                 "name": "vibe-test",
                 "events": [
                     {"observed_at": timestamp.isoformat(), "action": "add_long"},
-                    {"observed_at": (timestamp + timedelta(days=1)).isoformat(),
-                     "action": "add_long"},
-                    {"observed_at": (timestamp + timedelta(days=2)).isoformat(),
-                     "action": "reduce_long"},
-                    {"observed_at": (timestamp + timedelta(days=3)).isoformat(),
-                     "action": "exit_long"},
+                    {
+                        "observed_at": (timestamp + timedelta(days=1)).isoformat(),
+                        "action": "add_long",
+                    },
+                    {
+                        "observed_at": (timestamp + timedelta(days=2)).isoformat(),
+                        "action": "reduce_long",
+                    },
+                    {
+                        "observed_at": (timestamp + timedelta(days=3)).isoformat(),
+                        "action": "exit_long",
+                    },
                 ],
             }
         }
     )
 
     assert [event.action for event in parameters.strategy.events] == [
-        "add_long", "add_long", "reduce_long", "exit_long",
+        "add_long",
+        "add_long",
+        "reduce_long",
+        "exit_long",
     ]
 
 
@@ -119,10 +128,8 @@ def test_external_signal_fills_at_next_bar_open() -> None:
                 "kind": "external_signals",
                 "name": "vibe-test",
                 "events": [
-                    {"observed_at": points[1].observed_at.isoformat(),
-                     "action": "add_long"},
-                    {"observed_at": points[3].observed_at.isoformat(),
-                     "action": "exit_long"},
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[3].observed_at.isoformat(), "action": "exit_long"},
                 ],
             },
         }
@@ -163,14 +170,67 @@ def test_signal_quality_uses_the_same_next_open_as_execution() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.presentation is not None
     assert result.presentation.open_positions[0].entry_price == 80.0
     assert result.presentation.signal_quality.expected_change == pytest.approx(0.25)
     assert result.presentation.signal_quality.status == "complete"
+
+
+def test_signal_quality_reports_independence_and_chronological_holdout() -> None:
+    points = _prices(
+        [
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            104,
+            103,
+            102,
+            101,
+            100,
+            99,
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            107,
+        ]
+    )
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "commission": 0,
+            "signal_horizon_bars": 2,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "holdout-quality-test",
+                "events": [
+                    {"observed_at": points[index].observed_at.isoformat(), "action": "add_long"}
+                    for index in (2, 3, 8, 16)
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    quality = result.presentation.signal_quality
+    assert quality.evaluated_signal_count == 4
+    assert quality.independent_signal_count == 3
+    assert quality.payoff_ratio is not None
+    assert quality.holdout_start_at == points[16].observed_at
+    assert quality.holdout_signal_count == 1
+    assert quality.holdout_evaluated_signal_count == 1
+    assert quality.holdout_win_rate == 1
+    assert quality.holdout_expected_change is not None
 
 
 def test_backtest_and_signal_evaluator_share_the_domain_signal_event() -> None:
@@ -209,9 +269,7 @@ def test_unevaluable_signal_quality_marks_the_integrated_report_partial() -> Non
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
@@ -244,9 +302,7 @@ def test_one_signal_stream_drives_quality_execution_and_position_sections() -> N
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.presentation is not None
     presentation = result.presentation
@@ -259,8 +315,19 @@ def test_one_signal_stream_drives_quality_execution_and_position_sections() -> N
     assert presentation.execution_audit.reduce_signal_count == 1
     assert presentation.execution_audit.exit_signal_count == 1
     assert presentation.execution_audit.executed_addition_count == 2
+    assert presentation.execution_audit.submitted_reduction_count == 1
+    assert presentation.execution_audit.submitted_exit_count == 1
+    assert presentation.execution_audit.executed_reduction_count == 1
+    assert presentation.execution_audit.executed_exit_count == 1
+    assert presentation.execution_audit.average_deployed_capital > 0
+    assert presentation.execution_audit.maximum_deployed_capital == pytest.approx(400)
+    assert presentation.execution_audit.maximum_exposure_fraction == pytest.approx(0.4)
     assert presentation.position_performance.closed_lot_count == 2
     assert presentation.position_performance.final_equity > 1_000
+    assert presentation.position_performance.realized_pnl > 0
+    assert presentation.position_performance.total_pnl > 0
+    assert presentation.position_performance.gross_turnover_ratio > 0
+    assert presentation.position_performance.return_on_average_deployed_capital is not None
 
 
 def test_start_date_uses_prior_bars_only_for_warmup() -> None:
@@ -281,10 +348,7 @@ def test_start_date_uses_prior_bars_only_for_warmup() -> None:
     assert result.presentation.assumptions.start_date == start_date
     assert result.presentation.price_bars[0].observed_at == points[3].observed_at
     assert len(result.presentation.curve) == len(points) - 3
-    assert all(
-        trade.entry_at >= points[3].observed_at
-        for trade in result.presentation.trades
-    )
+    assert all(trade.entry_at >= points[3].observed_at for trade in result.presentation.trades)
 
 
 def test_long_history_uses_all_calculation_bars_but_bounds_chart_payload() -> None:
@@ -309,9 +373,7 @@ def test_long_history_uses_all_calculation_bars_but_bounds_chart_payload() -> No
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.COMPLETE
     assert result.presentation is not None
@@ -349,17 +411,12 @@ def test_many_open_lots_are_aggregated_but_bounded_for_presentation() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.presentation is not None
     performance = result.presentation.position_performance
     assert performance.open_lot_count > 520
-    assert (
-        performance.open_lot_count
-        == result.presentation.execution_audit.executed_addition_count
-    )
+    assert performance.open_lot_count == result.presentation.execution_audit.executed_addition_count
     assert performance.open_total_size > 0
     assert performance.open_average_entry_price == pytest.approx(100.0)
     assert performance.open_unrealized_pnl == pytest.approx(0.0)
@@ -432,6 +489,60 @@ def test_early_exit_is_deferred_until_minimum_holding_period() -> None:
     assert result.presentation.trades[0].entry_at == points[2].observed_at
     assert result.presentation.trades[0].exit_at == points[5].observed_at
     assert result.presentation.trades[0].duration_bars == 3
+    assert result.presentation.execution_audit.delayed_signal_count == 1
+    assert result.presentation.execution_audit.submitted_exit_count == 1
+    assert result.presentation.execution_audit.executed_exit_count == 1
+
+
+@pytest.mark.parametrize(
+    ("action", "submitted_field", "executed_field", "boundary_field"),
+    [
+        (
+            "reduce_long",
+            "submitted_reduction_count",
+            "executed_reduction_count",
+            "unexecuted_reduction_boundary_count",
+        ),
+        (
+            "exit_long",
+            "submitted_exit_count",
+            "executed_exit_count",
+            "unexecuted_exit_boundary_count",
+        ),
+    ],
+)
+def test_pending_sell_at_history_boundary_is_reported_as_unexecuted(
+    action: str,
+    submitted_field: str,
+    executed_field: str,
+    boundary_field: str,
+) -> None:
+    points = _prices([100, 101, 102, 103, 104, 105, 106])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "minimum_holding_bars": 10,
+            "commission": 0,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "boundary-sell-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[5].observed_at.isoformat(), "action": action},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    audit = result.presentation.execution_audit
+    assert audit.delayed_signal_count == 1
+    assert getattr(audit, submitted_field) == 0
+    assert getattr(audit, executed_field) == 0
+    assert getattr(audit, boundary_field) == 1
+    assert result.presentation.position_performance.open_lot_count == 1
 
 
 def test_backtest_returns_chart_ready_indicator_series() -> None:
@@ -445,7 +556,8 @@ def test_backtest_returns_chart_ready_indicator_series() -> None:
 
     assert result.presentation is not None
     assert [series.key for series in result.presentation.indicator_series] == [
-        "sma_fast", "sma_slow"
+        "sma_fast",
+        "sma_slow",
     ]
     assert result.presentation.indicator_series[0].points[-1].observed_at == points[-1].observed_at
 
@@ -466,9 +578,7 @@ def test_persistent_rsi_condition_adds_only_on_threshold_transition() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
@@ -499,9 +609,7 @@ async def test_rsi_curve_matches_technical_skill_across_asset_classes(
         },
     )
 
-    report = await ResearchEngine.from_settings(providers=_providers(points)).analyze(
-        request
-    )
+    report = await ResearchEngine.from_settings(providers=_providers(points)).analyze(request)
     results = {result.analyst: result for result in report.results}
     presentation = results["backtesting"].presentation
 
@@ -680,21 +788,22 @@ def test_repeated_signals_add_and_remove_fixed_notional_tranches() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.trades) == 2
     assert [trade.entry_at for trade in result.presentation.trades] == [
-        points[2].observed_at, points[3].observed_at,
+        points[2].observed_at,
+        points[3].observed_at,
     ]
     assert [trade.exit_at for trade in result.presentation.trades] == [
-        points[4].observed_at, points[5].observed_at,
+        points[4].observed_at,
+        points[5].observed_at,
     ]
     assert all(trade.size == pytest.approx(2.0) for trade in result.presentation.trades)
     assert not result.presentation.open_positions
+    assert result.presentation.position_performance.gross_turnover_ratio == pytest.approx(0.8)
 
 
 def test_entry_is_skipped_when_a_full_tranche_is_not_available() -> None:
@@ -720,9 +829,7 @@ def test_entry_is_skipped_when_a_full_tranche_is_not_available() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
@@ -731,6 +838,8 @@ def test_entry_is_skipped_when_a_full_tranche_is_not_available() -> None:
         position.size * position.entry_price == pytest.approx(200, abs=0.01)
         for position in result.presentation.open_positions
     )
+    assert result.presentation.execution_audit.rejected_signal_count == 1
+    assert result.presentation.execution_audit.rejected_allocation_cap_count == 1
 
 
 def test_maximum_allocation_caps_additions() -> None:
@@ -756,13 +865,13 @@ def test_maximum_allocation_caps_additions() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.open_positions) == 3
+    assert result.presentation.execution_audit.rejected_signal_count == 3
+    assert result.presentation.execution_audit.rejected_allocation_cap_count == 3
 
 
 def test_deployment_cap_uses_open_lot_entry_cost_not_market_value() -> None:
@@ -785,9 +894,7 @@ def test_deployment_cap_uses_open_lot_entry_cost_not_market_value() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.presentation is not None
     assert len(result.presentation.open_positions) == 2
@@ -818,16 +925,12 @@ def test_exit_long_closes_all_open_tranches() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
     assert len(result.presentation.trades) == 3
-    assert {trade.exit_at for trade in result.presentation.trades} == {
-        points[5].observed_at
-    }
+    assert {trade.exit_at for trade in result.presentation.trades} == {points[5].observed_at}
     assert not result.presentation.open_positions
 
 
@@ -853,9 +956,7 @@ def test_addition_cooldown_skips_near_duplicate_signals() -> None:
         },
     )
 
-    result = configured.analyze(
-        InstrumentId(symbol="TEST", market="US"), _providers(points)
-    )
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
     assert result.status is ReportStatus.PARTIAL
     assert result.presentation is not None
@@ -863,6 +964,76 @@ def test_addition_cooldown_skips_near_duplicate_signals() -> None:
         points[2].observed_at,
         points[5].observed_at,
     ]
+    assert result.presentation.execution_audit.rejected_cooldown_count == 1
+
+
+def test_costs_and_open_pnl_are_reconciled_in_phase_three_metrics() -> None:
+    points = _prices([100.0, 100.0, 110.0, 120.0, 130.0])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "commission": 0.01,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "cost-reconciliation-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    audit = result.presentation.execution_audit
+    performance = result.presentation.position_performance
+    assert audit.total_costs > 0
+    assert audit.average_entry_fill_price == pytest.approx(110.0)
+    assert audit.average_deployed_capital > 0
+    assert performance.realized_pnl == 0
+    assert performance.open_unrealized_pnl > 0
+    assert performance.total_pnl == pytest.approx(performance.final_equity - 1_000)
+    assert performance.total_pnl == pytest.approx(
+        performance.realized_pnl + performance.open_unrealized_pnl
+    )
+    assert performance.exposure_adjusted_buy_hold_return == pytest.approx(
+        performance.buy_hold_return * audit.average_exposure_fraction
+    )
+
+
+def test_realized_and_open_net_pnl_reconcile_for_a_partial_position() -> None:
+    points = _prices([100, 100, 105, 110, 115, 120, 125, 130])
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "position_budget": 1_000,
+            "tranche_fraction": 0.2,
+            "commission": 0.01,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "partial-position-reconciliation",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[2].observed_at.isoformat(), "action": "add_long"},
+                    {"observed_at": points[4].observed_at.isoformat(), "action": "reduce_long"},
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    performance = result.presentation.position_performance
+    assert performance.realized_pnl > 0
+    assert performance.open_unrealized_pnl > 0
+    assert performance.total_pnl == pytest.approx(
+        performance.realized_pnl + performance.open_unrealized_pnl
+    )
+    assert performance.gross_turnover_ratio == pytest.approx(0.62234794685)
 
 
 def test_external_event_matches_same_instant_with_different_offset() -> None:
@@ -875,9 +1046,7 @@ def test_external_event_matches_same_instant_with_different_offset() -> None:
             "strategy": {
                 "kind": "external_signals",
                 "name": "offset-test",
-                "events": [
-                    {"observed_at": same_instant.isoformat(), "action": "add_long"}
-                ],
+                "events": [{"observed_at": same_instant.isoformat(), "action": "add_long"}],
             },
         },
     )
@@ -890,8 +1059,25 @@ def test_external_event_matches_same_instant_with_different_offset() -> None:
 
 
 def test_sma_backtest_produces_bounded_report_data() -> None:
-    closes = [100.0, 99.0, 98.0, 97.0, 96.0, 98.0, 101.0, 104.0, 107.0,
-              106.0, 103.0, 100.0, 97.0, 95.0, 98.0, 102.0, 106.0]
+    closes = [
+        100.0,
+        99.0,
+        98.0,
+        97.0,
+        96.0,
+        98.0,
+        101.0,
+        104.0,
+        107.0,
+        106.0,
+        103.0,
+        100.0,
+        97.0,
+        95.0,
+        98.0,
+        102.0,
+        106.0,
+    ]
     points = _prices(closes)
     parameters = {
         "strategy": {"kind": "sma_crossover", "fast_window": 2, "slow_window": 4},
@@ -915,12 +1101,15 @@ def test_sma_backtest_produces_bounded_report_data() -> None:
 @pytest.mark.parametrize(
     "strategy",
     [
-        {"kind": "macd_crossover", "fast_window": 2, "slow_window": 4,
-         "signal_window": 2},
-        {"kind": "rsi_mean_reversion", "window": 2, "entry_threshold": 40,
-         "exit_threshold": 60},
-        {"kind": "markov_regime", "window": 2, "bull_threshold": 0.01,
-         "bear_threshold": -0.01, "min_train": 50},
+        {"kind": "macd_crossover", "fast_window": 2, "slow_window": 4, "signal_window": 2},
+        {"kind": "rsi_mean_reversion", "window": 2, "entry_threshold": 40, "exit_threshold": 60},
+        {
+            "kind": "markov_regime",
+            "window": 2,
+            "bull_threshold": 0.01,
+            "bear_threshold": -0.01,
+            "min_train": 50,
+        },
     ],
 )
 def test_each_built_in_strategy_runs_through_the_same_contract(
@@ -928,9 +1117,7 @@ def test_each_built_in_strategy_runs_through_the_same_contract(
 ) -> None:
     closes = [100.0 + (index % 12) * 2 - (index % 5) * 3 for index in range(80)]
     points = _prices(closes)
-    configured = configure_skill(
-        BacktestingSkill(), {"strategy": strategy, "commission": 0}
-    )
+    configured = configure_skill(BacktestingSkill(), {"strategy": strategy, "commission": 0})
 
     result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
 
@@ -1027,9 +1214,7 @@ async def test_vibe_request_uses_existing_run_skill_and_inline_price_flow(
             ),
         ),
     )
-    app = ResearchApplication(
-        ResearchEngine.from_settings(), ReportStore(tmp_path / "reports")
-    )
+    app = ResearchApplication(ResearchEngine.from_settings(), ReportStore(tmp_path / "reports"))
 
     payload = await app.run_skill("backtesting", request)
 
