@@ -229,8 +229,42 @@ def test_signal_quality_reports_independence_and_chronological_holdout() -> None
     assert quality.holdout_start_at == points[16].observed_at
     assert quality.holdout_signal_count == 1
     assert quality.holdout_evaluated_signal_count == 1
+    assert quality.holdout_independent_signal_count == 1
     assert quality.holdout_win_rate == 1
     assert quality.holdout_expected_change is not None
+
+
+def test_holdout_statistics_use_non_overlapping_outcomes() -> None:
+    points = _prices(
+        [
+            100, 101, 102, 103, 104, 105, 104, 103, 102, 101, 100,
+            99, 100, 101, 102, 103, 104, 100, 100, 110, 90,
+        ]
+    )
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "commission": 0,
+            "signal_horizon_bars": 2,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "overlapping-holdout-test",
+                "events": [
+                    {"observed_at": points[index].observed_at.isoformat(), "action": "add_long"}
+                    for index in (16, 17)
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    quality = result.presentation.signal_quality
+    assert quality.holdout_evaluated_signal_count == 2
+    assert quality.holdout_independent_signal_count == 1
+    assert quality.holdout_win_rate == 1
+    assert quality.holdout_expected_change == pytest.approx(0.1)
 
 
 def test_backtest_and_signal_evaluator_share_the_domain_signal_event() -> None:
@@ -319,6 +353,11 @@ def test_one_signal_stream_drives_quality_execution_and_position_sections() -> N
     assert presentation.execution_audit.submitted_exit_count == 1
     assert presentation.execution_audit.executed_reduction_count == 1
     assert presentation.execution_audit.executed_exit_count == 1
+    assert {trade.exit_reason for trade in presentation.trades} == {
+        "strategy_reduce", "strategy_exit"
+    }
+    assert presentation.execution_audit.stop_loss_exit_count == 0
+    assert presentation.execution_audit.take_profit_exit_count == 0
     assert presentation.execution_audit.average_deployed_capital > 0
     assert presentation.execution_audit.maximum_deployed_capital == pytest.approx(400)
     assert presentation.execution_audit.maximum_exposure_fraction == pytest.approx(0.4)
@@ -731,6 +770,40 @@ def test_protective_levels_are_anchored_to_actual_entry_price() -> None:
     trade = result.presentation.trades[0]
     assert trade.entry_price == 150.0
     assert trade.exit_price == 135.0
+    assert trade.exit_reason == "stop_loss"
+    assert result.presentation.execution_audit.stop_loss_exit_count == 1
+    assert result.presentation.execution_audit.take_profit_exit_count == 0
+
+
+def test_take_profit_exit_is_attributed() -> None:
+    original = _prices([100.0, 100.0, 100.0, 125.0, 125.0])
+    points = (
+        *original[:3],
+        replace(original[3], open=100.0, high=125.0, low=100.0, close=125.0),
+        original[4],
+    )
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "commission": 0,
+            "take_profit_pct": 0.2,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "take-profit-test",
+                "events": [
+                    {"observed_at": points[1].observed_at.isoformat(), "action": "add_long"}
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(InstrumentId(symbol="TEST", market="US"), _providers(points))
+
+    assert result.presentation is not None
+    trade = result.presentation.trades[0]
+    assert trade.exit_reason == "take_profit"
+    assert result.presentation.execution_audit.stop_loss_exit_count == 0
+    assert result.presentation.execution_audit.take_profit_exit_count == 1
 
 
 def test_protective_exit_waits_for_minimum_holding_period() -> None:

@@ -53,7 +53,10 @@ from trade_research.skills.indicators import (
     rsi_series,
     validated_prices,
 )
-from trade_research.skills.signal_evaluation import evaluate_fixed_horizon_signals
+from trade_research.skills.signal_evaluation import (
+    FixedHorizonOutcome,
+    evaluate_fixed_horizon_signals,
+)
 
 StrategyKind = Literal[
     "sma_crossover",
@@ -270,6 +273,7 @@ class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
         self.pending_exit_targets: tuple[int, ...] = ()
         self.exit_submitted = False
         self.last_addition_bar: int | None = None
+        self.exit_reasons: dict[int, str] = {}
         self.audit_counts = {
             "submitted_addition": 0,
             "submitted_reduction": 0,
@@ -289,6 +293,25 @@ class FractionalTrancheSignalStrategy(Strategy):  # type: ignore[misc]
         self.audit_counts[key] += 1
 
     def next(self) -> None:
+        for trade in self.closed_trades:
+            entry_bar = int(trade.entry_bar)
+            if entry_bar in self.exit_reasons:
+                continue
+            if entry_bar in self.pending_reduction_audits:
+                reason = "strategy_reduce"
+            elif entry_bar in self.pending_exit_targets:
+                reason = "strategy_exit"
+            elif self.stop_loss_pct and float(trade.exit_price) <= (
+                float(trade.entry_price) * (1 - self.stop_loss_pct)
+            ):
+                reason = "stop_loss"
+            elif self.take_profit_pct and float(trade.exit_price) >= (
+                float(trade.entry_price) * (1 + self.take_profit_pct)
+            ):
+                reason = "take_profit"
+            else:
+                reason = "unknown"
+            self.exit_reasons[entry_bar] = reason
         closed_entry_bars = {int(trade.entry_bar) for trade in self.closed_trades}
         unresolved_reductions: list[int] = []
         for entry_bar in self.pending_reduction_audits:
@@ -771,6 +794,7 @@ def _presentation(
             commission=float(row["Commission"]),
             return_ratio=float(row["ReturnPct"]),
             duration_bars=max(0, int(row["ExitBar"]) - int(row["EntryBar"])),
+            exit_reason=strategy.exit_reasons.get(int(row["EntryBar"]), "unknown"),
         )
         for _, row in trade_frame.iterrows()
     )
@@ -881,6 +905,12 @@ def _presentation(
             submitted_exit_count=audit_counts["submitted_exit"],
             executed_reduction_count=audit_counts["executed_reduction"],
             executed_exit_count=audit_counts["executed_exit"],
+            stop_loss_exit_count=sum(
+                reason == "stop_loss" for reason in strategy.exit_reasons.values()
+            ),
+            take_profit_exit_count=sum(
+                reason == "take_profit" for reason in strategy.exit_reasons.values()
+            ),
             delayed_signal_count=(audit_counts["delayed_reduction"] + audit_counts["delayed_exit"]),
             rejected_signal_count=rejected_additions,
             rejected_allocation_cap_count=audit_counts["rejected_allocation_cap"],
@@ -1023,6 +1053,7 @@ def _signal_quality(
             holdout_start_at=holdout_start_at,
             holdout_signal_count=0,
             holdout_evaluated_signal_count=0,
+            holdout_independent_signal_count=0,
         )
     points = tuple(
         OutcomePoint(
@@ -1043,16 +1074,12 @@ def _signal_quality(
     favorable = [event.maximum_favorable_change for event in study.outcomes]
     adverse = [event.maximum_adverse_change for event in study.outcomes]
     win_rate, expected_change, payoff_ratio = _change_statistics(changes)
-    independent_count = 0
-    last_exit: datetime | None = None
-    for outcome in study.outcomes:
-        if last_exit is None or outcome.entry_at > last_exit:
-            independent_count += 1
-            last_exit = outcome.exit_at
+    independent_outcomes = _non_overlapping_outcomes(study.outcomes)
     holdout_outcomes = tuple(
         outcome for outcome in study.outcomes if outcome.signal_at >= holdout_start_at
     )
-    holdout_changes = [outcome.change for outcome in holdout_outcomes]
+    holdout_independent_outcomes = _non_overlapping_outcomes(holdout_outcomes)
+    holdout_changes = [outcome.change for outcome in holdout_independent_outcomes]
     holdout_win_rate, holdout_expected, holdout_payoff = _change_statistics(holdout_changes)
     return BacktestSignalQuality(
         status=(
@@ -1065,7 +1092,7 @@ def _signal_quality(
         horizon_bars=horizon_bars,
         source_add_signal_count=len(additions),
         evaluated_signal_count=len(study.outcomes),
-        independent_signal_count=independent_count,
+        independent_signal_count=len(independent_outcomes),
         skipped_signal_count=study.skipped_event_count,
         win_rate=win_rate,
         expected_change=expected_change,
@@ -1075,10 +1102,23 @@ def _signal_quality(
         holdout_start_at=holdout_start_at,
         holdout_signal_count=sum(event.observed_at >= holdout_start_at for event in additions),
         holdout_evaluated_signal_count=len(holdout_outcomes),
+        holdout_independent_signal_count=len(holdout_independent_outcomes),
         holdout_win_rate=holdout_win_rate,
         holdout_expected_change=holdout_expected,
         holdout_payoff_ratio=holdout_payoff,
     )
+
+
+def _non_overlapping_outcomes(
+    outcomes: tuple[FixedHorizonOutcome, ...],
+) -> tuple[FixedHorizonOutcome, ...]:
+    selected: list[FixedHorizonOutcome] = []
+    last_exit: datetime | None = None
+    for outcome in outcomes:
+        if last_exit is None or outcome.entry_at > last_exit:
+            selected.append(outcome)
+            last_exit = outcome.exit_at
+    return tuple(selected)
 
 
 def _change_statistics(

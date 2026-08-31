@@ -605,6 +605,9 @@ class BacktestTrade(DomainModel):
     commission: float = Field(ge=0)
     return_ratio: float
     duration_bars: int = Field(ge=0)
+    exit_reason: Literal[
+        "strategy_reduce", "strategy_exit", "stop_loss", "take_profit", "unknown"
+    ]
 
 
 class BacktestOpenPosition(DomainModel):
@@ -675,6 +678,7 @@ class BacktestSignalQuality(DomainModel):
     holdout_start_at: datetime
     holdout_signal_count: int = Field(ge=0)
     holdout_evaluated_signal_count: int = Field(ge=0)
+    holdout_independent_signal_count: int = Field(ge=0)
     holdout_win_rate: float | None = Field(default=None, ge=0, le=1)
     holdout_expected_change: float | None = None
     holdout_payoff_ratio: float | None = Field(default=None, gt=0)
@@ -692,6 +696,8 @@ class BacktestExecutionAudit(DomainModel):
     submitted_exit_count: int = Field(ge=0)
     executed_reduction_count: int = Field(ge=0)
     executed_exit_count: int = Field(ge=0)
+    stop_loss_exit_count: int = Field(ge=0)
+    take_profit_exit_count: int = Field(ge=0)
     delayed_signal_count: int = Field(ge=0)
     rejected_signal_count: int = Field(ge=0)
     rejected_allocation_cap_count: int = Field(ge=0)
