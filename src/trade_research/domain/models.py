@@ -166,7 +166,11 @@ class InlinePriceSeries(DomainModel):
 
     instrument: InstrumentId
     source: Literal["yahoo", "tencent", "mootdx", "coinbase"]
-    bars: tuple[InlinePriceBar, ...] = Field(min_length=1, max_length=520)
+    currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+    price_adjustment: Literal["raw", "split_adjusted", "split_dividend_adjusted"]
+    daily_boundary: Literal["utc", "exchange_local"]
+    source_bar_count: int | None = Field(default=None, ge=1, le=4096)
+    bars: tuple[InlinePriceBar, ...] = Field(min_length=1, max_length=4096)
 
 
 class OutcomeSeriesSpec(DomainModel):
@@ -668,9 +672,9 @@ class BacktestSignalQuality(DomainModel):
     status: Literal["complete", "partial", "insufficient_history", "no_signals"]
     entry_lag_bars: Literal[1] = 1
     horizon_bars: int = Field(ge=1, le=520)
-    source_add_signal_count: int = Field(ge=0, le=520)
-    evaluated_signal_count: int = Field(ge=0, le=520)
-    skipped_signal_count: int = Field(ge=0, le=520)
+    source_add_signal_count: int = Field(ge=0)
+    evaluated_signal_count: int = Field(ge=0)
+    skipped_signal_count: int = Field(ge=0)
     win_rate: float | None = Field(default=None, ge=0, le=1)
     expected_change: float | None = None
     average_favorable_change: float | None = Field(default=None, ge=0)
@@ -680,11 +684,29 @@ class BacktestSignalQuality(DomainModel):
 class BacktestExecutionAudit(DomainModel):
     """Aggregate bridge from canonical strategy events to simulated lots."""
 
-    add_signal_count: int = Field(ge=0, le=520)
-    reduce_signal_count: int = Field(ge=0, le=520)
-    exit_signal_count: int = Field(ge=0, le=520)
-    executed_addition_count: int = Field(ge=0, le=520)
-    unexecuted_addition_count: int = Field(ge=0, le=520)
+    add_signal_count: int = Field(ge=0)
+    reduce_signal_count: int = Field(ge=0)
+    exit_signal_count: int = Field(ge=0)
+    executed_addition_count: int = Field(ge=0)
+    unexecuted_addition_count: int = Field(ge=0)
+
+
+class BacktestDataQuality(DomainModel):
+    """Calculation coverage and market-data conventions for one backtest."""
+
+    source_bar_count: int = Field(ge=1)
+    valid_bar_count: int = Field(ge=1)
+    discarded_bar_count: int = Field(ge=0)
+    warmup_bar_count: int = Field(ge=0)
+    calculation_bar_count: int = Field(ge=1)
+    presented_bar_count: int = Field(ge=1, le=520)
+    calculation_start_at: datetime
+    calculation_end_at: datetime
+    quote_currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
+    price_adjustment: Literal[
+        "raw", "split_adjusted", "split_dividend_adjusted"
+    ] | None = None
+    daily_boundary: Literal["utc", "exchange_local"] | None = None
 
 
 class BacktestPositionPerformance(DomainModel):
@@ -694,8 +716,11 @@ class BacktestPositionPerformance(DomainModel):
     total_return: float
     buy_hold_return: float
     max_drawdown: float = Field(ge=0, le=1)
-    closed_lot_count: int = Field(ge=0, le=520)
-    open_lot_count: int = Field(ge=0, le=520)
+    closed_lot_count: int = Field(ge=0)
+    open_lot_count: int = Field(ge=0)
+    open_total_size: float = Field(ge=0)
+    open_average_entry_price: float | None = Field(default=None, gt=0)
+    open_unrealized_pnl: float
     win_rate: float | None = Field(default=None, ge=0, le=1)
     sharpe_ratio: float | None = None
 
@@ -713,6 +738,7 @@ class BacktestPresentation(DomainModel):
     strategy_name: AnalystName
     signal_reference: OpaqueReference
     assumptions: BacktestAssumptions
+    data_quality: BacktestDataQuality
     signal_quality: BacktestSignalQuality
     execution_audit: BacktestExecutionAudit
     position_performance: BacktestPositionPerformance
@@ -720,7 +746,7 @@ class BacktestPresentation(DomainModel):
     indicator_series: tuple[BacktestIndicatorSeries, ...] = Field(default=(), max_length=4)
     curve: tuple[BacktestCurvePoint, ...] = Field(default=(), max_length=520)
     trades: tuple[BacktestTrade, ...] = Field(default=(), max_length=200)
-    open_positions: tuple[BacktestOpenPosition, ...] = Field(default=(), max_length=520)
+    open_positions: tuple[BacktestOpenPosition, ...] = Field(default=(), max_length=100)
     presentation_reduced: bool = False
 
 
@@ -749,7 +775,7 @@ class SignalDirectionSummary(DomainModel):
     """Compact performance split for one signal direction."""
 
     direction: Literal["long", "short"]
-    event_count: int = Field(ge=0, le=520)
+    event_count: int = Field(ge=0)
     win_rate: float | None = Field(default=None, ge=0, le=1)
     expected_r: float | None = None
 
@@ -757,13 +783,13 @@ class SignalDirectionSummary(DomainModel):
 class SignalEvaluationSummary(DomainModel):
     """Performance statistics for one historical outcome definition."""
 
-    event_count: int = Field(ge=0, le=520)
-    non_overlapping_event_count: int = Field(ge=0, le=520)
-    skipped_event_count: int = Field(ge=0, le=520)
-    purged_event_count: int = Field(default=0, ge=0, le=520)
-    win_count: int = Field(ge=0, le=520)
-    loss_count: int = Field(ge=0, le=520)
-    breakeven_count: int = Field(ge=0, le=520)
+    event_count: int = Field(ge=0)
+    non_overlapping_event_count: int = Field(ge=0)
+    skipped_event_count: int = Field(ge=0)
+    purged_event_count: int = Field(default=0, ge=0)
+    win_count: int = Field(ge=0)
+    loss_count: int = Field(ge=0)
+    breakeven_count: int = Field(ge=0)
     win_rate: float | None = Field(default=None, ge=0, le=1)
     non_overlapping_win_rate: float | None = Field(default=None, ge=0, le=1)
     non_overlapping_win_rate_lower_95: float | None = Field(

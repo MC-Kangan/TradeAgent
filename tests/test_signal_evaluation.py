@@ -437,6 +437,9 @@ def test_skill_exposes_standard_metrics_and_bounded_event_details() -> None:
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(
                 observed_at=_at(index),
@@ -554,6 +557,9 @@ async def test_application_evaluates_timestamped_signals_with_inline_series(
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(
                 observed_at=_at(index),
@@ -664,6 +670,9 @@ def test_configuration_reference_changes_with_outcome_rules() -> None:
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(observed_at=_at(index), close=value)
             for index, value in enumerate([100, 100, 106])
@@ -698,6 +707,9 @@ def test_configuration_reference_covers_experiment_identity() -> None:
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(observed_at=_at(index), close=value)
             for index, value in enumerate([100, 100, 106])
@@ -743,6 +755,9 @@ def test_experiment_evaluation_end_trims_later_outcomes_and_marks_holdout() -> N
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(observed_at=_at(index), close=value)
             for index, value in enumerate([100, 100, 106, 106, 110])
@@ -785,6 +800,9 @@ def test_period_metrics_are_exported_as_standard_observations() -> None:
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(observed_at=_at(index), close=value)
             for index, value in enumerate([100, 100, 101, 101, 102, 102])

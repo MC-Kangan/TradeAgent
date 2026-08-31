@@ -125,7 +125,7 @@ class ExternalSignalEventParameters(_BacktestParameters):
 class ExternalSignalsParameters(_BacktestParameters):
     kind: Literal["external_signals"]
     name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9-]*$")
-    events: tuple[ExternalSignalEventParameters, ...] = Field(min_length=1, max_length=520)
+    events: tuple[ExternalSignalEventParameters, ...] = Field(min_length=1, max_length=4096)
 
     @field_validator("events")
     @classmethod
@@ -271,7 +271,7 @@ class SignalEvaluationSkillParameters(_BacktestParameters):
         pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
     )
     instructions: tuple[SignalEventParameters, ...] = Field(
-        min_length=1, max_length=520
+        min_length=1, max_length=4096
     )
     target_series: OutcomeSeriesSpec = Field(
         default_factory=lambda: OutcomeSeriesSpec(

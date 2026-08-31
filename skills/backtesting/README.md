@@ -55,3 +55,14 @@ Every result retains its bounded strategy and cost assumptions plus a canonical
 configuration hash. Signal quality, execution audit, and position performance
 are reported separately from the same canonical event stream. No optimizer,
 short selling, portfolio simulation, arbitrary Python, or interactive plot is exposed.
+
+Calculation history and browser payload size are independent. A run may use up
+to 4,096 daily bars, including pre-start indicator warm-up, while price,
+indicator, and equity charts remain bounded to 520 representative points.
+Equity-curve downsampling retains bucket highs and drawdown peaks. At most 100
+open-lot snapshots are displayed, while open-lot count, size, average entry,
+and unrealized P/L continue to use every simulated lot. Downsampling never
+changes aggregate metrics or marks the analysis partial.
+Data-quality output records the full calculation coverage, displayed coverage,
+discarded rows, quote currency, corporate-action adjustment convention, and
+whether daily bars use an exchange-local or UTC boundary.

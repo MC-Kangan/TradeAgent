@@ -282,6 +282,8 @@ _CLOSED_SCALAR_KEYS = frozenset(
         "period_type",
         "period_role",
         "currency",
+        "price_adjustment",
+        "daily_boundary",
         "period_end",
         *_TIMESTAMP_KEYS,
         *_REFERENCE_KEYS,
@@ -289,6 +291,7 @@ _CLOSED_SCALAR_KEYS = frozenset(
         "window",
         "evaluation_period",
         "point_count",
+        "source_point_count",
     }
 )
 _REFERENCE_FIELDS = frozenset({"provider_kind", "vendor_field", "reference"})
@@ -433,7 +436,7 @@ def _sanitize_scalar(key: str, value: object) -> JsonValue | None:
             if value in {"full_history", "development", "validation", "holdout"}
             else None
         )
-    if key == "point_count":
+    if key in {"point_count", "source_point_count"}:
         return (
             cast(JsonValue, value)
             if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 4096
@@ -441,6 +444,14 @@ def _sanitize_scalar(key: str, value: object) -> JsonValue | None:
         )
     if key == "currency":
         return _pattern_value(value, _CURRENCY_PATTERN)
+    if key == "price_adjustment":
+        return (
+            cast(JsonValue, value)
+            if value in {"raw", "split_adjusted", "split_dividend_adjusted"}
+            else None
+        )
+    if key == "daily_boundary":
+        return cast(JsonValue, value) if value in {"utc", "exchange_local"} else None
     if key == "period_end":
         return _iso_date(value)
     if key in _TIMESTAMP_KEYS:

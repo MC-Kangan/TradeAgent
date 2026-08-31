@@ -2,7 +2,7 @@
 
 ## Inputs
 
-- One instrument and 2–520 timezone-aware daily bars.
+- One instrument and 2–4,096 timezone-aware daily bars.
 - Positive, finite Open, High, Low, and Close values; Volume is optional.
 - One validated built-in strategy configuration or bounded external signal list.
 - Explicit position budget, commission, spread, tranche fraction, deployment
@@ -27,10 +27,13 @@ indicator or regime transitions and exit fully when their thesis reverses.
 
 - Separate fixed-horizon entry-signal quality, signal-to-execution audit, and
   net position-performance sections derived from one canonical event stream.
+- Calculation coverage, warm-up size, discarded-row count, quote currency,
+  price-adjustment convention, and daily-boundary convention.
 - Final equity, strategy and buy/hold returns, maximum drawdown, trade count,
   win rate, and Sharpe ratio when the engine can calculate them.
-- At most 520 equity/drawdown points and 200 closed trades.
-- Bounded daily price and strategy-indicator series plus open-position snapshots.
+- Full-history calculations with extrema-aware equity sampling, at most 520
+  chart points, 200 displayed closed trades, and 100 displayed open-lot snapshots.
+- Full open-position aggregates even when individual snapshots are reduced.
 - SHA-256 references for input prices and the derived signal vector.
 - Complete bounded strategy, capital, cost, sizing, and protective-level
   assumptions with a canonical configuration reference.

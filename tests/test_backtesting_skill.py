@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from trade_research.application import ResearchApplication
@@ -24,6 +25,7 @@ from trade_research.providers import CapabilityName, PricePoint, ProviderRegistr
 from trade_research.queue import JobQueue
 from trade_research.reporting import ReportStore, render_json
 from trade_research.skills import BacktestingSkill, SkillRegistry
+from trade_research.skills.backtesting import _curve_presentation_indexes
 from trade_research.skills.parameters import BacktestingSkillParameters, configure_skill
 
 
@@ -279,7 +281,131 @@ def test_start_date_uses_prior_bars_only_for_warmup() -> None:
     assert result.presentation.assumptions.start_date == start_date
     assert result.presentation.price_bars[0].observed_at == points[3].observed_at
     assert len(result.presentation.curve) == len(points) - 3
-    assert all(trade.entry_at >= points[3].observed_at for trade in result.presentation.trades)
+    assert all(
+        trade.entry_at >= points[3].observed_at
+        for trade in result.presentation.trades
+    )
+
+
+def test_long_history_uses_all_calculation_bars_but_bounds_chart_payload() -> None:
+    points = _prices([100.0 + index * 0.01 for index in range(2_000)])
+    start_index = 200
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "start_date": points[start_index].observed_at.date().isoformat(),
+            "commission": 0,
+            "signal_horizon_bars": 21,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "long-history-test",
+                "events": [
+                    {
+                        "observed_at": points[start_index + 10].observed_at.isoformat(),
+                        "action": "add_long",
+                    }
+                ],
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.status is ReportStatus.COMPLETE
+    assert result.presentation is not None
+    quality = result.presentation.data_quality
+    assert quality.source_bar_count == 2_000
+    assert quality.valid_bar_count == 2_000
+    assert quality.warmup_bar_count == start_index
+    assert quality.calculation_bar_count == 1_800
+    assert quality.presented_bar_count == 520
+    assert len(result.presentation.price_bars) == 520
+    assert result.presentation.presentation_reduced is True
+    assert "bounded_input" not in {item.value for item in result.limitations}
+
+
+def test_many_open_lots_are_aggregated_but_bounded_for_presentation() -> None:
+    points = _prices([100.0] * 700)
+    events = [
+        {
+            "observed_at": points[index].observed_at.isoformat(),
+            "action": "add_long",
+        }
+        for index in range(600)
+    ]
+    configured = configure_skill(
+        BacktestingSkill(),
+        {
+            "commission": 0,
+            "tranche_fraction": 0.001,
+            "deployment_cap_fraction": 0.6,
+            "strategy": {
+                "kind": "external_signals",
+                "name": "many-open-lots",
+                "events": events,
+            },
+        },
+    )
+
+    result = configured.analyze(
+        InstrumentId(symbol="TEST", market="US"), _providers(points)
+    )
+
+    assert result.presentation is not None
+    performance = result.presentation.position_performance
+    assert performance.open_lot_count > 520
+    assert (
+        performance.open_lot_count
+        == result.presentation.execution_audit.executed_addition_count
+    )
+    assert performance.open_total_size > 0
+    assert performance.open_average_entry_price == pytest.approx(100.0)
+    assert performance.open_unrealized_pnl == pytest.approx(0.0)
+    assert len(result.presentation.open_positions) == 100
+    assert result.presentation.presentation_reduced is True
+
+
+def test_curve_sampling_retains_equity_high_and_maximum_drawdown() -> None:
+    frame = pd.DataFrame(
+        {
+            "Equity": [1_000.0] * 1_000,
+            "DrawdownPct": [0.0] * 1_000,
+        }
+    )
+    frame.loc[333, "Equity"] = 2_000.0
+    frame.loc[337, "DrawdownPct"] = 0.75
+
+    indexes = _curve_presentation_indexes(list(frame.iterrows()), 520)
+
+    assert len(indexes) <= 520
+    assert 333 in indexes
+    assert 337 in indexes
+
+
+def test_inline_price_contract_accepts_ten_year_daily_history() -> None:
+    points = _prices([100.0 + index * 0.01 for index in range(3_650)])
+    series = InlinePriceSeries(
+        instrument=InstrumentId(symbol="TEST", market="US"),
+        source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
+        bars=tuple(
+            InlinePriceBar(
+                observed_at=point.observed_at,
+                open=point.open,
+                high=point.high,
+                low=point.low,
+                close=point.close,
+                volume=point.volume,
+            )
+            for point in points
+        ),
+    )
+
+    assert len(series.bars) == 3_650
 
 
 def test_early_exit_is_deferred_until_minimum_holding_period() -> None:
@@ -884,6 +1010,9 @@ async def test_vibe_request_uses_existing_run_skill_and_inline_price_flow(
             InlinePriceSeries(
                 instrument=instrument,
                 source="yahoo",
+                currency="USD",
+                price_adjustment="split_dividend_adjusted",
+                daily_boundary="exchange_local",
                 bars=tuple(
                     InlinePriceBar(
                         observed_at=point.observed_at,
@@ -932,6 +1061,9 @@ async def test_backtesting_is_rejected_by_queue_instead_of_silently_changed(
             InlinePriceSeries(
                 instrument=instrument,
                 source="yahoo",
+                currency="USD",
+                price_adjustment="split_dividend_adjusted",
+                daily_boundary="exchange_local",
                 bars=tuple(
                     InlinePriceBar(
                         observed_at=point.observed_at,

@@ -21,6 +21,7 @@ from trade_research.domain import (
     AnalystResult,
     BacktestAssumptions,
     BacktestCurvePoint,
+    BacktestDataQuality,
     BacktestExecutionAudit,
     BacktestIndicatorPoint,
     BacktestIndicatorSeries,
@@ -131,7 +132,8 @@ class BacktestingSkill:
         return (CapabilityName.PRICES,)
 
     def analyze(self, instrument: InstrumentId, providers: ProviderRegistry) -> AnalystResult:
-        prices, discarded, _ = validated_prices(providers.prices(instrument))
+        supplied_prices = providers.prices(instrument)
+        prices, discarded, _ = validated_prices(supplied_prices)
         missing_ohl = any(
             point.open is None or point.high is None or point.low is None for point in prices
         )
@@ -196,14 +198,15 @@ class BacktestingSkill:
         presentation = _presentation(
             stats, simulation_prices, self, simulation_events,
             _slice_indicators(evaluation.indicators, start_index),
+            source_bar_count=len(supplied_prices),
+            valid_bar_count=len(prices),
+            warmup_bar_count=start_index,
             fractional_unit=fractional_unit,
         )
         observations = _observations(instrument, simulation_prices, stats)
         limitations: list[LimitationKind] = []
         if discarded:
             limitations.append(LimitationKind.INVALID_ROWS_DISCARDED)
-        if presentation.presentation_reduced:
-            limitations.append(LimitationKind.BOUNDED_INPUT)
         if presentation.signal_quality.skipped_signal_count:
             limitations.append(LimitationKind.INSUFFICIENT_HISTORY)
         executed_entries = len(stats["_trades"]) + len(stats["_strategy"].trades)
@@ -665,14 +668,23 @@ def _presentation(
     events: tuple[SignalEvent, ...],
     indicators: tuple[IndicatorDefinition, ...],
     *,
+    source_bar_count: int,
+    valid_bar_count: int,
+    warmup_bar_count: int,
     fractional_unit: float,
 ) -> BacktestPresentation:
     curve_frame = cast(pd.DataFrame, stats["_equity_curve"])
     trade_frame = cast(pd.DataFrame, stats["_trades"])
     curve_rows = list(curve_frame.iterrows())
-    reduced = len(curve_rows) > 520 or len(trade_frame) > 200
+    strategy = stats["_strategy"]
+    reduced = (
+        len(prices) > 520
+        or len(curve_rows) > 520
+        or len(trade_frame) > 200
+        or len(strategy.trades) > 100
+    )
     if len(curve_rows) > 520:
-        indexes = [round(index * (len(curve_rows) - 1) / 519) for index in range(520)]
+        indexes = _curve_presentation_indexes(curve_rows, 520)
         curve_rows = [curve_rows[index] for index in indexes]
     curve = tuple(
         BacktestCurvePoint(
@@ -697,8 +709,7 @@ def _presentation(
         )
         for _, row in trade_frame.iterrows()
     )
-    strategy = stats["_strategy"]
-    open_positions = tuple(
+    all_open_positions = tuple(
         BacktestOpenPosition(
             entry_at=trade.entry_time,
             size=abs(float(trade.size)) * fractional_unit,
@@ -710,6 +721,13 @@ def _presentation(
         )
         for trade in strategy.trades
     )
+    open_positions = _bounded_endpoints(all_open_positions, 100)
+    required_times = {
+        timestamp
+        for trade in trades
+        for timestamp in (trade.entry_at, trade.exit_at)
+    } | {position.entry_at for position in open_positions}
+    presentation_indexes = _presentation_indexes(prices, required_times, 520)
     price_bars = tuple(
         ReportPriceBar(
             observed_at=point.observed_at,
@@ -719,14 +737,16 @@ def _presentation(
             close=point.close,
             volume=float(point.volume or 0),
         )
-        for point in prices
+        for index in presentation_indexes
+        for point in (prices[index],)
     )
     indicator_series = tuple(
         BacktestIndicatorSeries(
             key=item.key, label=item.label, panel=item.panel,
             points=tuple(
                 BacktestIndicatorPoint(observed_at=point.observed_at, value=float(value))
-                for point, value in zip(prices, item.values, strict=True)
+                for index in presentation_indexes
+                for point, value in ((prices[index], item.values[index]),)
                 if value is not None and math.isfinite(value)
             ),
         )
@@ -758,6 +778,25 @@ def _presentation(
         strategy_name=config.name,
         signal_reference=signal_reference,
         assumptions=assumptions,
+        data_quality=BacktestDataQuality(
+            source_bar_count=(
+                _provenance_int(prices[0], "source_point_count") or source_bar_count
+            ),
+            valid_bar_count=valid_bar_count,
+            discarded_bar_count=max(
+                0,
+                (_provenance_int(prices[0], "source_point_count") or source_bar_count)
+                - valid_bar_count,
+            ),
+            warmup_bar_count=warmup_bar_count,
+            calculation_bar_count=len(prices),
+            presented_bar_count=len(price_bars),
+            calculation_start_at=prices[0].observed_at,
+            calculation_end_at=prices[-1].observed_at,
+            quote_currency=_provenance_text(prices[0], "currency"),
+            price_adjustment=_price_adjustment(prices[0]),
+            daily_boundary=_daily_boundary(prices[0]),
+        ),
         signal_quality=signal_quality,
         execution_audit=BacktestExecutionAudit(
             add_signal_count=add_signal_count,
@@ -768,13 +807,100 @@ def _presentation(
             executed_addition_count=executed_additions,
             unexecuted_addition_count=max(0, add_signal_count - executed_additions),
         ),
-        position_performance=_position_performance(stats),
+        position_performance=_position_performance(stats, fractional_unit),
         price_bars=price_bars,
         indicator_series=indicator_series,
         curve=curve,
         trades=trades,
         open_positions=open_positions,
         presentation_reduced=reduced,
+    )
+
+
+def _presentation_indexes(
+    prices: tuple[PricePoint, ...],
+    required_times: set[datetime],
+    limit: int,
+) -> tuple[int, ...]:
+    """Bound chart rows while retaining displayed execution timestamps."""
+
+    if len(prices) <= limit:
+        return tuple(range(len(prices)))
+    by_time = {point.observed_at: index for index, point in enumerate(prices)}
+    required = {0, len(prices) - 1}
+    required.update(
+        index for timestamp in required_times if (index := by_time.get(timestamp)) is not None
+    )
+    if len(required) >= limit:
+        ordered = sorted(required)
+        return tuple(
+            ordered[round(index * (len(ordered) - 1) / (limit - 1))]
+            for index in range(limit)
+        )
+    candidates = [index for index in range(len(prices)) if index not in required]
+    slots = limit - len(required)
+    sampled = {
+        candidates[round(index * (len(candidates) - 1) / (slots - 1))]
+        for index in range(slots)
+    } if slots > 1 else {candidates[len(candidates) // 2]}
+    return tuple(sorted(required | sampled))
+
+
+def _curve_presentation_indexes(
+    curve_rows: list[tuple[object, pd.Series]], limit: int
+) -> tuple[int, ...]:
+    """Retain endpoints plus the equity high and drawdown peak in each bucket."""
+
+    if len(curve_rows) <= limit:
+        return tuple(range(len(curve_rows)))
+    bucket_count = max(1, (limit - 2) // 2)
+    interior_count = len(curve_rows) - 2
+    selected = {0, len(curve_rows) - 1}
+    for bucket in range(bucket_count):
+        start = 1 + bucket * interior_count // bucket_count
+        end = 1 + (bucket + 1) * interior_count // bucket_count
+        indexes = range(start, max(start + 1, end))
+        selected.add(max(indexes, key=lambda index: float(curve_rows[index][1]["Equity"])))
+        selected.add(
+            max(indexes, key=lambda index: float(curve_rows[index][1]["DrawdownPct"]))
+        )
+    return tuple(sorted(selected))
+
+
+def _bounded_endpoints[T](items: tuple[T, ...], limit: int) -> tuple[T, ...]:
+    """Bound a chronological presentation list while retaining both ends."""
+
+    if len(items) <= limit:
+        return items
+    head = limit // 2
+    return items[:head] + items[-(limit - head):]
+
+
+def _provenance_text(point: PricePoint, key: str) -> str | None:
+    value = point.provenance.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _provenance_int(point: PricePoint, key: str) -> int | None:
+    value = point.provenance.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _price_adjustment(
+    point: PricePoint,
+) -> Literal["raw", "split_adjusted", "split_dividend_adjusted"] | None:
+    value = _provenance_text(point, "price_adjustment")
+    return cast(
+        Literal["raw", "split_adjusted", "split_dividend_adjusted"] | None,
+        value if value in {"raw", "split_adjusted", "split_dividend_adjusted"} else None,
+    )
+
+
+def _daily_boundary(point: PricePoint) -> Literal["utc", "exchange_local"] | None:
+    value = _provenance_text(point, "daily_boundary")
+    return cast(
+        Literal["utc", "exchange_local"] | None,
+        value if value in {"utc", "exchange_local"} else None,
     )
 
 
@@ -833,7 +959,9 @@ def _signal_quality(
     )
 
 
-def _position_performance(stats: pd.Series) -> BacktestPositionPerformance:
+def _position_performance(
+    stats: pd.Series, fractional_unit: float
+) -> BacktestPositionPerformance:
     def ratio(key: str, divisor: float = 1.0) -> float | None:
         value = stats.get(key)
         if isinstance(value, int | float) and not isinstance(value, bool):
@@ -843,6 +971,13 @@ def _position_performance(stats: pd.Series) -> BacktestPositionPerformance:
 
     trade_frame = cast(pd.DataFrame, stats["_trades"])
     strategy = stats["_strategy"]
+    open_total_size = sum(
+        abs(float(trade.size)) * fractional_unit for trade in strategy.trades
+    )
+    open_entry_notional = sum(
+        abs(float(trade.size)) * float(trade.entry_price)
+        for trade in strategy.trades
+    )
     return BacktestPositionPerformance(
         final_equity=ratio("Equity Final [$]") or 0.0,
         total_return=ratio("Return [%]", 100.0) or 0.0,
@@ -850,6 +985,13 @@ def _position_performance(stats: pd.Series) -> BacktestPositionPerformance:
         max_drawdown=ratio("Max. Drawdown [%]", -100.0) or 0.0,
         closed_lot_count=len(trade_frame),
         open_lot_count=len(strategy.trades),
+        open_total_size=open_total_size,
+        open_average_entry_price=(
+            open_entry_notional / open_total_size
+            if open_total_size > 0
+            else None
+        ),
+        open_unrealized_pnl=sum(float(trade.pl) for trade in strategy.trades),
         win_rate=ratio("Win Rate [%]", 100.0),
         sharpe_ratio=ratio("Sharpe Ratio"),
     )

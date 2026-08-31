@@ -17,6 +17,9 @@ def _series(symbol: str = "AAPL", market: str = "US") -> InlinePriceSeries:
     return InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=(
             InlinePriceBar(
                 observed_at=datetime(2026, 1, 2, tzinfo=UTC),
@@ -57,6 +60,9 @@ async def test_application_run_skill_accepts_inline_prices_without_global_provid
     series = InlinePriceSeries(
         instrument=instrument,
         source="yahoo",
+        currency="USD",
+        price_adjustment="split_dividend_adjusted",
+        daily_boundary="exchange_local",
         bars=tuple(
             InlinePriceBar(observed_at=start + timedelta(days=index), close=100 + index)
             for index in range(30)

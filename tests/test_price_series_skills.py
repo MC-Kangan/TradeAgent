@@ -71,6 +71,9 @@ def test_inline_crypto_series_accepts_coinbase_provenance() -> None:
     series = InlinePriceSeries(
         instrument=InstrumentId(symbol="BTC-USD", market="CRYPTO"),
         source="coinbase",
+        currency="USD",
+        price_adjustment="raw",
+        daily_boundary="utc",
         bars=(
             InlinePriceBar(
                 observed_at=datetime(2025, 1, 1, tzinfo=UTC),

@@ -58,6 +58,14 @@ class InlinePriceProvider:
                     "provider_kind": item.source,
                     "reference": _sha256(row),
                     "series_ref": series_ref,
+                    "currency": item.currency,
+                    "price_adjustment": item.price_adjustment,
+                    "daily_boundary": item.daily_boundary,
+                    **(
+                        {"source_point_count": item.source_bar_count}
+                        if item.source_bar_count is not None
+                        else {}
+                    ),
                 },
             )
             for bar, row in zip(item.bars, rows, strict=True)
