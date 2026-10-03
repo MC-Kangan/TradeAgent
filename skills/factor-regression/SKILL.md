@@ -10,7 +10,7 @@ run_skill or trade-research analyze --request-file. It is immediate-only;
 raw histories must not be queued or persisted in reports.
 
 Read [configuration, contracts and interpretation](../../docs/factor-mvp2-implementation.md)
-for the current factor-regression-v3 contract. Presets expand to ordinary factor
+for the current factor-regression-v4 contract. Presets expand to ordinary factor
 lists. Explicit factors replace the preset; no fixed market/growth/value/momentum
 or single-industry parameter fields remain.
 
@@ -23,7 +23,8 @@ HAC intervals; inspect coverage and diagnostics before interpreting coefficients
 These are explanatory regressions, not forecasts, causal estimates or investment
 recommendations. Large factor counts need substantially more data than the validation
 minimum. Correlated regressors can make individual coefficients unstable. No PCA or
-orthogonalization is performed automatically.
+orthogonalization is performed automatically. Explicit residualization and named
+comparisons are documented in [model comparison](../../docs/factor-model-comparison.md).
 
 Yahoo uses adjusted closes for equities/ETFs and rejects unverified index histories.
 A price index is not a total-return index. Use verified Bloomberg mappings for entitled

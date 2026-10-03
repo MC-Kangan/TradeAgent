@@ -119,8 +119,7 @@ def _project_result(result: AnalystResult, instrument: InstrumentId) -> AnalystR
             f"{max(0, len(result.presentation.coefficients) - 1)} fitted exposures"
             if isinstance(result.presentation, FactorRegressionPresentation)
             else (
-                f"{result.analyst} analysis {status.value} with "
-                f"{len(observations)} numeric factors"
+                f"{result.analyst} analysis {status.value} with {len(observations)} numeric factors"
             )
         ),
         status=status,
@@ -320,16 +319,44 @@ def render_markdown(report: ResearchReport) -> str:
                     f"| {item.role} | {item.instrument.market}:{item.instrument.symbol} | "
                     f"{item.currency} | {item.return_basis} | {item.vendor_field} |"
                 )
-            if study.baseline_r_squared is not None:
-                lines.append(
-                    f"Baseline R² on the same sample: {study.baseline_r_squared:.4f}; "
-                    f"selected-factor increment: {study.incremental_r_squared:.4f}."
+            if study.comparisons:
+                lines.extend(
+                    (
+                        "",
+                        "Original-factor models on identical observations:",
+                        "| Model | N | R² | Adjusted R² | Residual volatility |",
+                        "| --- | ---: | ---: | ---: | ---: |",
+                    )
                 )
-            lines.append(
-                f"Rolling window: {study.rolling_window} observations; "
-                f"{len(study.rolling)} month-end fits. "
-                f"Influential observations: {study.influential_count}."
-            )
+                for model in study.comparisons:
+                    lines.append(
+                        f"| {model.name} | {model.sample_count} | "
+                        f"{model.r_squared:.4f} | {model.adjusted_r_squared:.4f} | "
+                        f"{model.residual_volatility:.6g} |"
+                    )
+                lines.append("In-sample explanation only; higher R² is not forecasting evidence.")
+            for rule in study.residualizations:
+                lines.append(
+                    f"- Residualized {rule.factor_id} against {', '.join(rule.against)}: "
+                    f"{rule.remaining_variance_fraction:.1%} of original variance remains."
+                )
+            if study.stability:
+                lines.extend(
+                    (
+                        "",
+                        "Rolling exposure stability "
+                        "(overlapping windows, not confidence intervals):",
+                        "| Factor | Windows | Minimum | Median | Maximum | Positive share |",
+                        "| --- | ---: | ---: | ---: | ---: | ---: |",
+                    )
+                )
+                for stability in study.stability:
+                    lines.append(
+                        f"| {stability.label} | {stability.window_count} | "
+                        f"{stability.minimum:.5g} | "
+                        f"{stability.median:.5g} | {stability.maximum:.5g} | "
+                        f"{stability.positive_fraction:.1%} |"
+                    )
             for coverage in study.coverage:
                 lines.append(
                     f"- Coverage {coverage.role}: expected {coverage.expected_periods}, "

@@ -203,8 +203,8 @@ def prepare_study(
     if gaps:
         warnings.extend(("discontinuous_history", "hac_intervals_withheld"))
     # Every additional funded benchmark may contain the target; no historical weights are assumed.
-    if params.baseline_factor_ids:
-        warnings.append("industry_self_inclusion_unchecked")
+    if any(d.kind == "asset_return" for d in definitions):
+        warnings.append("benchmark_self_inclusion_unchecked")
     cash = np.array(
         [
             cast(float, factor_points[d].risk_free)

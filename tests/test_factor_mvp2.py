@@ -151,7 +151,9 @@ def french_request(frequency="daily", industry=False):
                 "instrument": {"symbol": "IHE", "market": "US"},
             }
         ]
-        params["baseline_factor_ids"] = [f.id for f in preset_factors("french")]
+        params["comparisons"] = [
+            {"name": "French baseline", "factor_ids": [f.id for f in preset_factors("french")]}
+        ]
     return AnalysisRequest(
         instrument=stock.instrument,
         analysts=("factor-regression",),
@@ -177,7 +179,7 @@ async def test_french_recovers_exposures_cash_and_industry_and_reports(frequency
         [0.0003, 1.2, 0.3, -0.4, 0.5, 0.2, -0.3, 0.8], abs=1e-10
     )
     assert p["return_mode"] == "excess_return"
-    assert p["incremental_r_squared"] > 0.1
+    assert p["r_squared"] - p["comparisons"][1]["r_squared"] > 0.1
     assert p["rolling"]
     assert "raw_returns_not_alpha" not in p["diagnostics"]
     assert "points" not in str(report)

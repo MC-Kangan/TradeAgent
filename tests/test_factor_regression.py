@@ -66,7 +66,7 @@ async def test_recovers_exposures_and_exports_only_derived_results(tmp_path):
     app = application(tmp_path)
     result = await app.run_skill("factor-regression", request())
     p = result["results"][0]["presentation"]
-    assert p["schema_version"] == "factor-regression-v3"
+    assert p["schema_version"] == "factor-regression-v4"
     assert p["sample_count"] == 300
     assert [c["estimate"] for c in p["coefficients"]] == pytest.approx(
         [0.0002, 1.2, 0.4, -0.3], abs=0.02

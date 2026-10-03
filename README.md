@@ -654,7 +654,7 @@ This project is research-only. See the repository license for details.
 
 The `factor-regression` analyst supports daily/monthly ETF-proxy and Fama–French
 five-factor-plus-momentum presets, configurable factor lists, same-sample
-subset comparisons, and rolling exposures. Preset factors can be removed and multiple
+named subset comparisons, optional residualization, and rolling exposure stability. Preset factors can be removed and multiple
 benchmarks or normalized research columns added. OLS/HAC estimation uses the shared
 native, HTTP, MCP and CLI interfaces. US and European French factors download
 directly from the public library. Yahoo supports explicit EUR/GBP/CHF-to-USD
@@ -669,3 +669,6 @@ See [factor regression usage and interpretation](skills/factor-regression/SKILL.
 and the [staged factor framework plan](docs/factor-framework-plan.md).
 Run an offline European example with
 `.venv/bin/python examples/factor_regression.py --region europe`.
+
+Sector-independent [model comparison and attribution](docs/factor-model-comparison.md)
+includes an offline European energy illustration: `.venv/bin/python examples/factor_model_comparison.py`.

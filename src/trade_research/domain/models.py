@@ -1211,7 +1211,7 @@ FactorDiagnostic = Literal[
     "research_data_revised",
     "fx_conversion",
     "fx_missing",
-    "industry_self_inclusion_unchecked",
+    "benchmark_self_inclusion_unchecked",
     "influential_observations",
     "rolling_windows_skipped",
     "return_convention_difference",
@@ -1270,8 +1270,52 @@ class FactorCoverage(DomainModel):
     alignment_losses: int = 0
 
 
+class FactorModelSpec(DomainModel):
+    name: str = Field(min_length=1, max_length=64)
+    factor_ids: tuple[FactorId, ...] = Field(min_length=1, max_length=MAX_FACTOR_COUNT)
+
+
+class FactorResidualization(DomainModel):
+    factor_id: FactorId
+    against: tuple[FactorId, ...] = Field(min_length=1, max_length=MAX_FACTOR_COUNT)
+
+
+class FactorResidualizationSummary(FactorResidualization):
+    remaining_variance_fraction: FiniteFloat = Field(ge=0, le=1)
+
+
+class FactorModelCoefficient(DomainModel):
+    term: FactorId
+    label: str
+    estimate: FiniteFloat
+
+
+class FactorModelComparison(DomainModel):
+    name: str
+    factor_ids: tuple[FactorId, ...]
+    sample_count: int
+    r_squared: FiniteFloat
+    adjusted_r_squared: FiniteFloat
+    residual_volatility: FiniteFloat
+    condition_number: FiniteFloat
+    coefficients: tuple[FactorModelCoefficient, ...]
+
+
+class FactorStability(DomainModel):
+    term: FactorId
+    label: str
+    window_count: int
+    minimum: FiniteFloat
+    maximum: FiniteFloat
+    median: FiniteFloat
+    latest: FiniteFloat
+    standard_deviation: FiniteFloat | None = None
+    positive_fraction: FiniteFloat = Field(ge=0, le=1)
+    negative_fraction: FiniteFloat = Field(ge=0, le=1)
+
+
 class FactorRegressionPresentation(DomainModel):
-    schema_version: Literal["factor-regression-v3"] = "factor-regression-v3"
+    schema_version: Literal["factor-regression-v4"] = "factor-regression-v4"
     purpose: Literal["historical_explanation"] = "historical_explanation"
     return_mode: Literal["raw_total_return", "excess_return"] = "raw_total_return"
     preset: Literal["us_etf", "custom", "french"]
@@ -1305,11 +1349,13 @@ class FactorRegressionPresentation(DomainModel):
     inputs: tuple[FactorInputSummary, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS)
     datasets: tuple[FactorDatasetSummary, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS + 1)
     coverage: tuple[FactorCoverage, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS + 1)
-    baseline_factor_ids: tuple[FactorId, ...] = ()
+    comparisons: tuple[FactorModelComparison, ...] = Field(default=(), max_length=9)
+    residualizations: tuple[FactorResidualizationSummary, ...] = Field(
+        default=(), max_length=MAX_FACTOR_COUNT
+    )
+    stability: tuple[FactorStability, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT)
     rolling_window: int = 252
     rolling: tuple[RollingFactorFit, ...] = Field(default=(), max_length=121)
-    baseline_r_squared: FiniteFloat | None = None
-    incremental_r_squared: FiniteFloat | None = None
     residual_autocorrelation: FiniteFloat | None = None
     influential_count: int = 0
     configuration_ref: OpaqueReference

@@ -12,7 +12,9 @@ from trade_research.domain.models import (
     MAX_FACTOR_COUNT,
     DomainModel,
     FactorFrequency,
+    FactorModelSpec,
     FactorRegion,
+    FactorResidualization,
     FactorSpec,
     InstrumentId,
 )
@@ -27,7 +29,10 @@ class FactorRegressionParameters(DomainModel):
     region: FactorRegion = "US"
     return_mode: Literal["raw_total_return", "excess_return"] = "raw_total_return"
     stock_calendar: str | None = Field(default=None, max_length=32)
-    baseline_factor_ids: tuple[str, ...] = ()
+    comparisons: tuple[FactorModelSpec, ...] = Field(default=(), max_length=8)
+    residualizations: tuple[FactorResidualization, ...] = Field(
+        default=(), max_length=MAX_FACTOR_COUNT
+    )
     max_factors: int = Field(default=32, ge=1, le=MAX_FACTOR_COUNT)
     rolling_window: int = Field(default=252, ge=24, le=2520)
     start_date: date | None = None
@@ -57,10 +62,24 @@ class FactorRegressionParameters(DomainModel):
         ids = [f.id for f in factors]
         if not factors or len(set(ids)) != len(ids) or len(ids) > self.max_factors:
             raise ValueError("select unique factor IDs within the configured factor limit")
-        if not set(self.baseline_factor_ids) < set(ids) and self.baseline_factor_ids:
-            raise ValueError("baseline must be a strict subset of selected factor IDs")
-        if len(set(self.baseline_factor_ids)) != len(self.baseline_factor_ids):
-            raise ValueError("baseline factor IDs must be unique")
+        names = [m.name.strip().casefold() for m in self.comparisons]
+        if len(names) != len(set(names)) or "full model" in names or "" in names:
+            raise ValueError("comparison names must be unique and not Full model")
+        for model in self.comparisons:
+            if len(set(model.factor_ids)) != len(model.factor_ids) or not set(
+                model.factor_ids
+            ) < set(ids):
+                raise ValueError("comparison factors must be a unique strict subset")
+        targets = [r.factor_id for r in self.residualizations]
+        if len(targets) != len(set(targets)) or not set(targets) <= set(ids):
+            raise ValueError("residualization targets must be unique selected factors")
+        for rule in self.residualizations:
+            if (
+                len(set(rule.against)) != len(rule.against)
+                or not set(rule.against) <= set(ids)
+                or set(rule.against) & set(targets)
+            ):
+                raise ValueError("residualization controls must be unique untransformed factors")
         if (
             self.start_date
             and self.end_date

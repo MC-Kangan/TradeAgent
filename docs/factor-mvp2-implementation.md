@@ -27,7 +27,7 @@ For example, a monthly model with market excess return, value and pharma:
     {"id": "pharma", "label": "Pharma ETF", "kind": "asset_return",
      "instrument": {"market": "US", "symbol": "IHE"}}
   ],
-  "baseline_factor_ids": ["market", "value"]
+  "comparisons": [{"name": "Market and value", "factor_ids": ["market", "value"]}]
 }
 ```
 
@@ -97,7 +97,8 @@ session authentication remains firm-specific. No live Bloomberg verification was
 The estimator uses statsmodels OLS with an intercept and standardized numerical design,
 then transforms coefficients and covariance back to original units. Standardized effects,
 correlations, VIF and condition number help compare factors and diagnose collinearity.
-No PCA, residualization or automatic factor selection is applied.
+No PCA or automatic factor selection is applied. Explicit residualization is optional;
+see [model comparison and attribution](factor-model-comparison.md).
 
 For consecutive retained calendar periods, pointwise 95% intervals use Bartlett HAC
 with the selected lag count, finite-sample correction and Student-t critical values.
@@ -106,7 +107,7 @@ confidence intervals and residual lag-one correlation are withheld. Treating com
 rows as adjacent would violate ordinary HAC's equally spaced observation assumption.
 No uncertainty claim is made for gapped samples.
 
-Reports (`factor-regression-v3`) expose each asset's expected periods, available complete
+Reports (`factor-regression-v4`) expose each asset's expected periods, available complete
 periods, missing/invalid periods, FX losses and alignment losses. The aggregate dropped
 count is expected target periods minus fitted observations; it includes missing leading
 months. Incomplete boundary months outside the selected complete-month window are
@@ -114,7 +115,7 @@ not expected periods. Discontinuity counts refer to internal gaps.
 
 Rolling windows use only their own observations and their own scaling. Month-end refits
 have no future information; singular windows are skipped. Rolling estimates have no
-confidence bands. Optional `baseline_factor_ids` compare a strict subset on exactly the
+confidence bands. Named `comparisons` compare strict subsets on exactly the
 same sample. Additional R² measures explanation, not forecasting improvement. Funded
 sector benchmarks may contain the target; constituent weights are not checked.
 Residual diagnostics flag influential data without removing market shocks.
@@ -142,3 +143,6 @@ in statsmodels; the only added dependency family is exchange calendars.
 The standalone Dash app remains in the sibling FactorPlayground directory. It exposes
 preset subsets, multiple extra benchmarks/spreads, advanced factor lists, provider
 selection, frequency and diagnostics. It calls the same backend and stores no histories.
+
+The latest [model-comparison increment](factor-model-comparison.md) adds named subsets,
+explicit residualization and descriptive rolling-stability summaries.

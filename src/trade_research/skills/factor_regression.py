@@ -8,7 +8,6 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import numpy as np
-from numpy.typing import NDArray
 from statsmodels.regression.linear_model import OLS
 
 from trade_research.domain import (
@@ -28,33 +27,30 @@ from trade_research.domain.models import (
 )
 from trade_research.providers import CapabilityName, ProviderRegistry
 from trade_research.providers.contracts import ProviderConfigurationError, ProviderContractError
+from trade_research.skills.factor_attribution import (
+    compare_models,
+    residualize,
+    stability_summary,
+    standardized_design,
+)
 from trade_research.skills.factor_parameters import (
     FactorRegressionParameters as FactorRegressionParameters,
 )
 from trade_research.skills.factor_study import StudyData, StudyError, prepare_study
 
 
-def standardized_design(
-    x: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Scale only the supplied sample and return the original-unit transform."""
-    scale = x.std(axis=0, ddof=1)
-    if np.any(scale <= 1e-14):
-        raise StudyError("rank_deficient", "fit")
-    means = x.mean(axis=0)
-    design = np.column_stack((np.ones(len(x)), (x - means) / scale))
-    if np.linalg.matrix_rank(design) < design.shape[1]:
-        raise StudyError("rank_deficient", "fit")
-    transform = np.eye(design.shape[1])
-    transform[0, 1:] = -means / scale
-    transform[1:, 1:] = np.diag(1 / scale)
-    return design, transform, scale
-
-
 def fit_study(
     data: StudyData, params: FactorRegressionParameters, presentation: FactorRegressionPresentation
 ) -> FactorRegressionPresentation:
-    x, y = data.x, data.y
+    ids = [d.id for d in data.definitions]
+    x, residualizations = residualize(data.x, ids, params.residualizations)
+    y = data.y
+    definitions = tuple(
+        d.model_copy(update={"label": d.label + " (residualized)"})
+        if d.id in {r.factor_id for r in params.residualizations}
+        else d
+        for d in data.definitions
+    )
     standardized, transform, scale = standardized_design(x)
     if y.std(ddof=1) <= 1e-14:
         raise StudyError("constant_target", "fit")
@@ -72,9 +68,9 @@ def fit_study(
         warnings.append("high_collinearity")
     coefficients = tuple(
         FactorCoefficient(
-            term="intercept" if i == 0 else data.definitions[i - 1].id,
-            label="Intercept" if i == 0 else data.definitions[i - 1].label,
-            unit="decimal_return" if i == 0 else data.definitions[i - 1].unit,
+            term="intercept" if i == 0 else definitions[i - 1].id,
+            label="Intercept" if i == 0 else definitions[i - 1].label,
+            unit="decimal_return" if i == 0 else definitions[i - 1].unit,
             estimate=float(value),
             standard_error=None if data.gaps else float(errors[i]),
             lower_95=None if data.gaps else float(intervals[i, 0]),
@@ -83,12 +79,6 @@ def fit_study(
         )
         for i, value in enumerate(estimates)
     )
-    baseline = None
-    if params.baseline_factor_ids:
-        indices = [0] + [
-            i + 1 for i, d in enumerate(data.definitions) if d.id in params.baseline_factor_ids
-        ]
-        baseline = float(OLS(y, standardized[:, indices]).fit().rsquared)
     month_last = {d.replace(day=1): i for i, d in enumerate(data.days)}
     rolling = []
     for i in month_last.values():
@@ -96,7 +86,8 @@ def fit_study(
         if lo < 0:
             continue
         try:
-            window, window_transform, _ = standardized_design(x[lo : i + 1])
+            window_x, _ = residualize(data.x[lo : i + 1], ids, params.residualizations)
+            window, window_transform, _ = standardized_design(window_x)
             if y[lo : i + 1].std() <= 1e-14:
                 raise StudyError("constant_target", "fit")
         except StudyError:
@@ -132,8 +123,9 @@ def fit_study(
             "variance_inflation_factors": tuple(float(v) for v in vifs),
             "condition_number": condition,
             "rolling": tuple(rolling),
-            "baseline_r_squared": baseline,
-            "incremental_r_squared": None if baseline is None else float(fit.rsquared) - baseline,
+            "comparisons": compare_models(data.x, y, data.definitions, params.comparisons),
+            "residualizations": residualizations,
+            "stability": stability_summary(rolling, definitions),
             "influential_count": influential,
             "residual_autocorrelation": ac,
             "diagnostics": tuple(warnings),
@@ -166,7 +158,6 @@ class FactorRegressionSkill:
             minimum_observations=params.minimum_observations,
             hac_lags=params.hac_lags,
             configuration_ref=reference,
-            baseline_factor_ids=params.baseline_factor_ids,
         )
         stage = "fetch"
         try:
