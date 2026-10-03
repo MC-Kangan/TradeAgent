@@ -28,8 +28,10 @@ comparison fair. The automatic **Full model** row and all named comparison rows 
 original, untransformed factors.
 
 Outputs include sample count, R², adjusted R², residual standard deviation (with
-residual degrees of freedom), standardized-design condition number and coefficient
-point estimates. Comparing shared coefficients shows sensitivity to model specification.
+residual degrees of freedom), standardized-design condition number, VIF, a collinearity flag and coefficient
+point estimates. Markdown exports include these original-model diagnostics and
+coefficients separately from the selected (possibly residualized) basis. An original-model
+collinearity warning remains visible after residualization. Comparing shared coefficients shows sensitivity to model specification.
 There is no automated winner, p-value screening or best-subset search. Adding regressors
 cannot reduce ordinary in-sample R²; an increase alone is not investment evidence.
 
@@ -71,8 +73,12 @@ number of retained observations; where data is missing their calendar spans may 
 Read each window's actual dates and the study's discontinuity diagnostics.
 
 For each non-intercept coefficient, reports show window count, minimum, median,
-maximum, latest value, sample standard deviation (only with two or more windows),
-and positive/negative shares. These are descriptive summaries of overlapping fits.
+maximum, last valid value and its window end date, sample standard deviation (only with two or more windows),
+and positive/negative shares. The last valid value is marked stale if the newest eligible
+window could not be fitted. Skipped window end dates are listed explicitly, including
+when no rolling fit succeeds. Charts leave gaps rather than connecting across those
+failures. Reports retain the configured window length and success/skip counts.
+These are descriptive summaries of overlapping fits.
 They are not independent tests, confidence bands, structural-break tests or forecasts.
 No stability score or arbitrary pass/fail cutoff is imposed.
 

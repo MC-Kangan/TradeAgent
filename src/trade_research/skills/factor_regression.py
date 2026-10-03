@@ -29,6 +29,7 @@ from trade_research.providers import CapabilityName, ProviderRegistry
 from trade_research.providers.contracts import ProviderConfigurationError, ProviderContractError
 from trade_research.skills.factor_attribution import (
     compare_models,
+    high_collinearity,
     residualize,
     stability_summary,
     standardized_design,
@@ -64,7 +65,10 @@ def fit_study(
     vifs = np.diag(np.linalg.inv(correlation))
     condition = float(np.linalg.cond(standardized))
     warnings = list(data.warnings)
-    if condition > 30 or max(vifs) > 10:
+    comparisons = compare_models(data.x, y, data.definitions, params.comparisons)
+    if params.residualizations and comparisons[0].high_collinearity:
+        warnings.append("original_high_collinearity")
+    if high_collinearity(condition, vifs):
         warnings.append("high_collinearity")
     coefficients = tuple(
         FactorCoefficient(
@@ -81,6 +85,7 @@ def fit_study(
     )
     month_last = {d.replace(day=1): i for i, d in enumerate(data.days)}
     rolling = []
+    skipped = []
     for i in month_last.values():
         lo = i + 1 - params.rolling_window
         if lo < 0:
@@ -91,6 +96,7 @@ def fit_study(
             if y[lo : i + 1].std() <= 1e-14:
                 raise StudyError("constant_target", "fit")
         except StudyError:
+            skipped.append(data.intervals[i][1])
             if "rolling_windows_skipped" not in warnings:
                 warnings.append("rolling_windows_skipped")
             continue
@@ -123,9 +129,10 @@ def fit_study(
             "variance_inflation_factors": tuple(float(v) for v in vifs),
             "condition_number": condition,
             "rolling": tuple(rolling),
-            "comparisons": compare_models(data.x, y, data.definitions, params.comparisons),
+            "comparisons": comparisons,
+            "rolling_skipped_end_dates": tuple(skipped),
             "residualizations": residualizations,
-            "stability": stability_summary(rolling, definitions),
+            "stability": stability_summary(rolling, definitions, data.intervals[-1][1]),
             "influential_count": influential,
             "residual_autocorrelation": ac,
             "diagnostics": tuple(warnings),

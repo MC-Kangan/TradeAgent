@@ -293,7 +293,7 @@ def render_markdown(report: ResearchReport) -> str:
                 lines.extend(
                     (
                         "",
-                        "Factor correlations and variance inflation factors (VIF):",
+                        "Selected-basis factor correlations and variance inflation factors (VIF):",
                         "",
                         "| Factor | " + " | ".join(factor_labels) + " | VIF |",
                         "| --- | " + " ---: |" * (len(factor_labels) + 1),
@@ -324,21 +324,52 @@ def render_markdown(report: ResearchReport) -> str:
                     (
                         "",
                         "Original-factor models on identical observations:",
-                        "| Model | N | R² | Adjusted R² | Residual volatility |",
-                        "| --- | ---: | ---: | ---: | ---: |",
+                        "| Model | N | R² | Adjusted R² | Residual volatility "
+                        "| Condition | High collinearity |",
+                        "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
                     )
                 )
                 for model in study.comparisons:
                     lines.append(
                         f"| {model.name} | {model.sample_count} | "
                         f"{model.r_squared:.4f} | {model.adjusted_r_squared:.4f} | "
-                        f"{model.residual_volatility:.6g} |"
+                        f"{model.residual_volatility:.6g} | {model.condition_number:.3f} | "
+                        f"{model.high_collinearity} |"
                     )
                 lines.append("In-sample explanation only; higher R² is not forecasting evidence.")
+                lines.extend(
+                    (
+                        "",
+                        "Original-factor comparison coefficients:",
+                        "| Model | Factor | Estimate | VIF |",
+                        "| --- | --- | ---: | ---: |",
+                    )
+                )
+                for model in study.comparisons:
+                    for index, comparison_coefficient in enumerate(model.coefficients):
+                        vif_text = (
+                            "—"
+                            if index == 0
+                            else f"{model.variance_inflation_factors[index - 1]:.3f}"
+                        )
+                        lines.append(
+                            f"| {model.name} | {comparison_coefficient.label} | "
+                            f"{comparison_coefficient.estimate:.6g} | {vif_text} |"
+                        )
             for rule in study.residualizations:
                 lines.append(
                     f"- Residualized {rule.factor_id} against {', '.join(rule.against)}: "
                     f"{rule.remaining_variance_fraction:.1%} of original variance remains."
+                )
+            lines.append(
+                f"Rolling window: {study.rolling_window} observations; "
+                f"successful fits: {len(study.rolling)}; "
+                f"skipped fits: {len(study.rolling_skipped_end_dates)}."
+            )
+            if study.rolling_skipped_end_dates:
+                lines.append(
+                    "Skipped rolling window end dates: "
+                    + ", ".join(str(d) for d in study.rolling_skipped_end_dates)
                 )
             if study.stability:
                 lines.extend(
@@ -346,8 +377,9 @@ def render_markdown(report: ResearchReport) -> str:
                         "",
                         "Rolling exposure stability "
                         "(overlapping windows, not confidence intervals):",
-                        "| Factor | Windows | Minimum | Median | Maximum | Positive share |",
-                        "| --- | ---: | ---: | ---: | ---: | ---: |",
+                        "| Factor | Windows | Minimum | Median | Maximum | Positive share "
+                        "| Last valid end | Status |",
+                        "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
                     )
                 )
                 for stability in study.stability:
@@ -355,7 +387,8 @@ def render_markdown(report: ResearchReport) -> str:
                         f"| {stability.label} | {stability.window_count} | "
                         f"{stability.minimum:.5g} | "
                         f"{stability.median:.5g} | {stability.maximum:.5g} | "
-                        f"{stability.positive_fraction:.1%} |"
+                        f"{stability.positive_fraction:.1%} | {stability.latest_end_date} | "
+                        f"{'current' if stability.latest_is_current else 'stale'} |"
                     )
             for coverage in study.coverage:
                 lines.append(

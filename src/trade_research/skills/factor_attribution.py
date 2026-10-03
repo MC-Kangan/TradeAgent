@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 from numpy.typing import NDArray
 from statsmodels.regression.linear_model import OLS
@@ -17,6 +19,10 @@ from trade_research.domain.models import (
     RollingFactorFit,
 )
 from trade_research.skills.factor_study import StudyError
+
+
+def high_collinearity(condition: float, vifs: NDArray[np.float64]) -> bool:
+    return bool(condition > 30 or np.max(vifs) > 10)
 
 
 def standardized_design(
@@ -79,6 +85,8 @@ def compare_models(
         design, transform, _ = standardized_design(x[:, indices])
         fit = OLS(y, design, missing="raise").fit()
         estimates = transform @ fit.params
+        condition = float(np.linalg.cond(design))
+        vifs = np.diag(np.linalg.inv(np.atleast_2d(np.corrcoef(x[:, indices], rowvar=False))))
         coefficients = (
             FactorModelCoefficient(
                 term="intercept", label="Intercept", estimate=float(estimates[0])
@@ -100,7 +108,9 @@ def compare_models(
                 r_squared=float(fit.rsquared),
                 adjusted_r_squared=float(fit.rsquared_adj),
                 residual_volatility=float(np.sqrt(fit.ssr / fit.df_resid)),
-                condition_number=float(np.linalg.cond(design)),
+                condition_number=condition,
+                variance_inflation_factors=tuple(float(v) for v in vifs),
+                high_collinearity=high_collinearity(condition, vifs),
                 coefficients=coefficients,
             )
         )
@@ -110,6 +120,7 @@ def compare_models(
 def stability_summary(
     rolling: list[RollingFactorFit],
     definitions: tuple[FactorDefinition, ...],
+    latest_expected_end: date,
 ) -> tuple[FactorStability, ...]:
     """Descriptive dispersion across overlapping windows; not confidence intervals."""
     if not rolling:
@@ -124,6 +135,8 @@ def stability_summary(
             maximum=float(estimates[:, i + 1].max()),
             median=float(np.median(estimates[:, i + 1])),
             latest=float(estimates[-1, i + 1]),
+            latest_end_date=rolling[-1].end_date,
+            latest_is_current=rolling[-1].end_date == latest_expected_end,
             standard_deviation=float(estimates[:, i + 1].std(ddof=1)) if len(rolling) > 1 else None,
             positive_fraction=float(np.mean(estimates[:, i + 1] > 0)),
             negative_fraction=float(np.mean(estimates[:, i + 1] < 0)),

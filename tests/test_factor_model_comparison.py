@@ -163,3 +163,69 @@ async def test_residualized_transport_parity_and_safe_report(tmp_path):
     assert "Original-factor models" in markdown
     assert "variance remains" in markdown
     assert "overlapping windows" in markdown
+
+
+@pytest.mark.asyncio
+async def test_stale_latest_exposure_has_date_and_skipped_window_dates():
+    from trade_research.skills.factor_regression import fit_study
+    from trade_research.skills.factor_study import prepare_study
+
+    req = request_with()
+    engine = ResearchEngine.from_settings()
+    report = await engine.analyze(req)
+    params = FactorRegressionParameters.model_validate(req.skill_parameters["factor-regression"])
+    data = prepare_study(req.instrument, params, engine._providers_for(req))
+    data.x[-70:, -1] = data.x[-70:, 0]
+    p = fit_study(data, params, report.results[0].presentation)
+    assert p.rolling[-1].end_date == date(2024, 1, 31)
+    assert p.rolling_skipped_end_dates[-1] == p.actual_end
+    assert len(p.rolling_skipped_end_dates) == 11
+    assert all(
+        s.latest_end_date == date(2024, 1, 31) and not s.latest_is_current for s in p.stability
+    )
+    from trade_research.reporting import render_markdown
+
+    rendered = render_markdown(
+        report.model_copy(
+            update={"results": (report.results[0].model_copy(update={"presentation": p}),)}
+        )
+    )
+    assert "2024-01-31" in rendered
+    assert "stale" in rendered
+    assert "Rolling window: 60" in rendered
+
+
+@pytest.mark.asyncio
+async def test_original_collinearity_and_coefficients_survive_residualization_export():
+    from trade_research.domain.models import FactorResidualization
+    from trade_research.reporting import render_markdown
+    from trade_research.skills.factor_regression import fit_study
+    from trade_research.skills.factor_study import prepare_study
+
+    req = request_with()
+    engine = ResearchEngine.from_settings()
+    report = await engine.analyze(req)
+    params = FactorRegressionParameters.model_validate(req.skill_parameters["factor-regression"])
+    data = prepare_study(req.instrument, params, engine._providers_for(req))
+    data.x[:, -1] = data.x[:, 0] + np.random.default_rng(9).normal(0, 1e-6, len(data.x))
+    params = params.model_copy(
+        update={
+            "residualizations": (
+                FactorResidualization(factor_id="industry", against=("market_excess",)),
+            )
+        }
+    )
+    p = fit_study(data, params, report.results[0].presentation)
+    assert p.condition_number < 2
+    assert p.comparisons[0].condition_number > 20000
+    assert p.comparisons[0].high_collinearity
+    assert max(p.comparisons[0].variance_inflation_factors) > 10
+    assert "original_high_collinearity" in p.diagnostics
+    rendered = render_markdown(
+        report.model_copy(
+            update={"results": (report.results[0].model_copy(update={"presentation": p}),)}
+        )
+    )
+    assert f"{p.comparisons[0].condition_number:.3f}" in rendered
+    assert "| Full model | Industry |" in rendered
+    assert "Selected-basis" in rendered

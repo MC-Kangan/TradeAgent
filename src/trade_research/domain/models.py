@@ -1195,6 +1195,7 @@ FactorDiagnostic = Literal[
     "rank_deficient",
     "constant_target",
     "high_collinearity",
+    "original_high_collinearity",
     "short_history",
     "missing_intervals",
     "discontinuous_history",
@@ -1298,6 +1299,8 @@ class FactorModelComparison(DomainModel):
     adjusted_r_squared: FiniteFloat
     residual_volatility: FiniteFloat
     condition_number: FiniteFloat
+    variance_inflation_factors: tuple[FiniteFloat, ...]
+    high_collinearity: bool
     coefficients: tuple[FactorModelCoefficient, ...]
 
 
@@ -1309,6 +1312,8 @@ class FactorStability(DomainModel):
     maximum: FiniteFloat
     median: FiniteFloat
     latest: FiniteFloat
+    latest_end_date: date
+    latest_is_current: bool
     standard_deviation: FiniteFloat | None = None
     positive_fraction: FiniteFloat = Field(ge=0, le=1)
     negative_fraction: FiniteFloat = Field(ge=0, le=1)
@@ -1356,6 +1361,7 @@ class FactorRegressionPresentation(DomainModel):
     stability: tuple[FactorStability, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT)
     rolling_window: int = 252
     rolling: tuple[RollingFactorFit, ...] = Field(default=(), max_length=121)
+    rolling_skipped_end_dates: tuple[date, ...] = Field(default=(), max_length=121)
     residual_autocorrelation: FiniteFloat | None = None
     influential_count: int = 0
     configuration_ref: OpaqueReference
