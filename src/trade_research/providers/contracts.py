@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from types import MappingProxyType
 from typing import Final, Literal, NotRequired, Protocol, TypedDict, runtime_checkable
 
@@ -18,6 +18,7 @@ from trade_research.domain import (
     OutcomeSeriesSpec,
     Position,
 )
+from trade_research.domain.models import FactorReturnSeries
 from trade_research.domain.provenance import (
     PeriodRole,
     PeriodType,
@@ -208,3 +209,12 @@ class PortfolioProvider(Protocol):
     """An in-memory-only capability for user-supplied portfolio context."""
 
     def positions(self) -> tuple[Position, ...]: ...
+
+
+@runtime_checkable
+class FactorReturnProvider(Protocol):
+    """Bounded historical simple total returns with explicit interval metadata."""
+
+    def return_history(
+        self, instrument: InstrumentId, start: date, end: date
+    ) -> FactorReturnSeries: ...

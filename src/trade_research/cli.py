@@ -131,6 +131,23 @@ def list_skills() -> None:
     _write_json(_get_application_or_error().list_skills())
 
 
+@app.command("analyze")
+def analyze(request_file: Annotated[Path, typer.Option("--request-file")]) -> None:
+    """Run a typed JSON request immediately; input series are never queued."""
+    try:
+        with request_file.open("rb") as source:
+            payload = source.read(4 * 1024 * 1024 + 1)
+        if len(payload) > 4 * 1024 * 1024:
+            raise ValueError("request too large")
+        request = AnalysisRequest.model_validate_json(payload)
+        result = _run_async(_get_application_or_error().research(request))
+    except (OSError, ValueError, KeyError):
+        raise typer.BadParameter("invalid analysis request") from None
+    except ProviderConfigurationError:
+        raise typer.BadParameter("selected analyst capability is not configured") from None
+    _write_json(result)
+
+
 @app.command("run-skill")
 def run_skill(
     name: str,

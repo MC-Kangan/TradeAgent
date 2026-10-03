@@ -36,6 +36,10 @@ class ProviderKind(StrEnum):
 class MetricKind(StrEnum):
     """Raw and derived v1 metrics permitted in observations and provenance."""
 
+    FACTOR_R_SQUARED = "factor_r_squared"
+    FACTOR_MARKET_BETA = "factor_market_beta"
+    FACTOR_STYLE_BETA = "factor_style_beta"
+    FACTOR_MOMENTUM_BETA = "factor_momentum_beta"
     OPEN = "open"
     HIGH = "high"
     LOW = "low"
@@ -205,6 +209,7 @@ class PeriodRole(StrEnum):
 
 
 class DerivedAlgorithm(StrEnum):
+    FACTOR_OLS_HAC = "factor_ols_hac"
     DIRECT_VALUE = "direct_value"
     PERIOD_GROWTH = "period_growth"
     RATIO = "ratio"

@@ -47,9 +47,10 @@ jobs:
           engine = ResearchEngine.from_settings()
           skill_names = engine.skills.names
           base = Path('skills')
+          directories = {'fundamental': 'fundamental-analysis', 'technical': 'technical-analysis', 'filings': 'filings-analysis'}
           missing = []
           for name in skill_names:
-              skill_md = base / name / 'SKILL.md' if name != 'review' else base / 'review' / 'SKILL.md'
+              skill_md = base / directories.get(name, name) / 'SKILL.md'
               if not skill_md.is_file():
                   missing.append(str(skill_md))
           if missing:

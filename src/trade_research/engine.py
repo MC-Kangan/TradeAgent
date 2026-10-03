@@ -31,6 +31,11 @@ from trade_research.providers import (
     SecFilingsProvider,
     YahooPriceProvider,
 )
+from trade_research.providers.factor_returns import (
+    BloombergReturnProvider,
+    InlineReturnProvider,
+    YahooReturnProvider,
+)
 from trade_research.providers.registry import CapabilityName, CapabilityProvider, ProviderRegistry
 from trade_research.reporting import sanitize_report
 from trade_research.settings import Settings
@@ -52,6 +57,7 @@ from trade_research.skills import (
     VolatilityRegimeSkill,
     WorthBuyStocksSkill,
 )
+from trade_research.skills.factor_regression import FactorRegressionSkill
 from trade_research.skills.parameters import PORTFOLIO_SKILLS, configure_skill
 
 
@@ -84,6 +90,7 @@ class ResearchEngine:
         default_skills = cast(
             tuple[ResearchSkill, ...],
             (
+                FactorRegressionSkill(),
                 FundamentalSkill(),
                 TechnicalSkill(),
                 FilingsSkill(),
@@ -120,7 +127,11 @@ class ResearchEngine:
         """Report capabilities that cannot be supplied inline with a request."""
 
         skill = self._skills.require(skill_name)
-        request_capabilities = {CapabilityName.PRICES, CapabilityName.OUTCOMES}
+        request_capabilities = {
+            CapabilityName.PRICES,
+            CapabilityName.OUTCOMES,
+            CapabilityName.FACTOR_RETURNS,
+        }
         return tuple(
             capability
             for capability in skill.required_capabilities
@@ -188,11 +199,13 @@ class ResearchEngine:
             raise ValueError("portfolio requests may select only portfolio-scoped skills")
         if request.scope == "instrument" and selected_portfolio_skills:
             raise ValueError("instrument requests cannot select portfolio-scoped skills")
+        as_of = self._clock().astimezone(UTC).date()
         return tuple(
             configure_skill(
                 skill,
                 request.skill_parameters.get(skill.name, {}),
                 portfolio_instruments=request.portfolio_instruments,
+                as_of=as_of,
             )
             for skill in self._skills.discover(request.analysts)
         )
@@ -221,11 +234,15 @@ class ResearchEngine:
         return await self._run_skill(skill, request, providers)
 
     def _providers_for(self, request: AnalysisRequest) -> ProviderRegistry:
-        if not request.price_series and not request.outcome_series:
+        if not request.price_series and not request.outcome_series and not request.factor_series:
             return self._providers
         providers: dict[str, CapabilityProvider] = {
             name.value: provider for name, provider in self._providers.providers.items()
         }
+        if request.factor_series:
+            providers[CapabilityName.FACTOR_RETURNS.value] = InlineReturnProvider(
+                request.factor_series
+            )
         if request.price_series:
             providers[CapabilityName.PRICES.value] = InlinePriceProvider(
                 request.price_series
@@ -247,6 +264,7 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
         providers["prices"] = ReadOnlySqlPriceProvider(settings.price_path)
     elif settings.price_provider == "yahoo":
         providers["prices"] = YahooPriceProvider()
+        providers["factor_returns"] = YahooReturnProvider()
     elif settings.price_provider == "ccxt":
         assert settings.ccxt_exchange is not None
         providers["prices"] = CcxtPriceProvider(settings.ccxt_exchange)
@@ -257,6 +275,13 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
             host=settings.bloomberg_host,
             port=settings.bloomberg_port,
         )
+
+        if settings.bloomberg_return_mappings:
+            providers["factor_returns"] = BloombergReturnProvider(
+                settings.bloomberg_return_mappings,
+                host=settings.bloomberg_host,
+                port=settings.bloomberg_port,
+            )
 
     if settings.fundamental_provider in {"local_csv", "local_parquet"}:
         assert settings.fundamental_path is not None

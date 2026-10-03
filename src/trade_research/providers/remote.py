@@ -121,8 +121,10 @@ def _http_get(url: str, headers: Mapping[str, str]) -> str:
                 raise ProviderContractError("remote provider returned invalid UTF-8") from error
         except (httpx.TimeoutException, httpx.ConnectError) as error:
             last_error = error
-        except ProviderConfigurationError:
-            raise
+        except ProviderConfigurationError as error:
+            if isinstance(error, ProviderContractError):
+                raise
+            last_error = error
         if attempt < _RETRY_LIMIT - 1:
             time.sleep(_RETRY_BACKOFF_BASE * (2**attempt))
     raise ProviderConfigurationError("remote provider request failed after retries") from last_error
@@ -137,9 +139,9 @@ def _bounded_payload(payload: str) -> str:
 class YahooPriceProvider:
     """Yahoo chart endpoint adapter with a fixed symbol-only request shape.
 
-    Returns **adjusted close** prices from the Yahoo Finance v8 chart API.
-    The ``close`` values are adjusted for splits and dividends.  Open, high,
-    low, and volume are **unadjusted** as reported by the exchange.
+    Returns the quote OHLCV array as supplied by Yahoo. This is not a
+    dividend-adjusted total-return series; use YahooReturnProvider for factors.
+    No adjusted close is mixed into execution bars.
     """
 
     _CHART_WINDOWS = frozenset(

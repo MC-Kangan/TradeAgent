@@ -11,7 +11,15 @@ from ipaddress import ip_address
 from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 from trade_research.domain.provenance import (
     DerivedAlgorithm,
@@ -264,6 +272,43 @@ class InlineOutcomeSeries(DomainModel):
         return self
 
 
+class FactorReturnPoint(DomainModel):
+    """Decimal simple total return over an explicit pair of session dates."""
+
+    start_date: date
+    end_date: date
+    value: FiniteFloat = Field(ge=-1)
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> Self:
+        if self.start_date >= self.end_date:
+            raise ValueError("return intervals must increase")
+        return self
+
+
+class FactorReturnSeries(DomainModel):
+    """Normalized historical returns, transient inputs rather than report data."""
+
+    instrument: InstrumentId
+    currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+    return_basis: Literal["gross_total_return", "net_total_return", "adjusted_close_return"]
+    source: ProviderKind
+    vendor_field: Literal["ADJ_CLOSE", "TOTAL_RETURN", "PX_LAST", "TOTAL_RETURN_INDEX_GROSS_DVDS"]
+    retrieved_at: datetime
+    points: tuple[FactorReturnPoint, ...] = Field(max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_history(self) -> Self:
+        if self.retrieved_at.tzinfo is None:
+            raise ValueError("retrieval time must include a timezone")
+        for index, point in enumerate(self.points):
+            if point.end_date > self.retrieved_at.date():
+                raise ValueError("return interval is future-dated")
+            if index and point.start_date < self.points[index - 1].end_date:
+                raise ValueError("return intervals must be ordered and nonoverlapping")
+        return self
+
+
 class AnalysisRequest(DomainModel):
     """One bounded instrument or portfolio research request."""
 
@@ -279,6 +324,7 @@ class AnalysisRequest(DomainModel):
     skill_parameters: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     price_series: tuple[InlinePriceSeries, ...] = Field(default=(), max_length=9)
     outcome_series: tuple[InlineOutcomeSeries, ...] = Field(default=(), max_length=9)
+    factor_series: tuple[FactorReturnSeries, ...] = Field(default=(), max_length=5)
 
     @field_validator("analysts")
     @classmethod
@@ -295,6 +341,12 @@ class AnalysisRequest(DomainModel):
 
     @model_validator(mode="after")
     def validate_scope_and_price_series(self) -> Self:
+        if self.factor_series:
+            if self.scope != "instrument" or "factor-regression" not in self.analysts:
+                raise ValueError("factor series require instrument-scoped factor regression")
+            identities = tuple(item.instrument for item in self.factor_series)
+            if len(set(identities)) != len(identities):
+                raise ValueError("factor series instruments must be unique")
         basket = InstrumentId(symbol="BASKET", market="PORTFOLIO")
         if self.scope == "portfolio":
             if self.instrument != basket:
@@ -1010,6 +1062,77 @@ class PriceActionStructurePresentation(DomainModel):
     events: tuple[PriceActionCandleEvent, ...] = Field(default=(), max_length=10)
 
 
+FactorTerm = Literal["intercept", "market", "growth_minus_value", "momentum_minus_market"]
+FactorDiagnostic = Literal[
+    "currency_mismatch",
+    "return_basis_mismatch",
+    "insufficient_history",
+    "rank_deficient",
+    "constant_target",
+    "high_collinearity",
+    "short_history",
+    "missing_intervals",
+    "discontinuous_history",
+    "long_intervals_excluded",
+    "raw_returns_not_alpha",
+    "nonsynchronous_closes",
+    "unsupported_market",
+    "numerical_failure",
+]
+
+
+class FactorCoefficient(DomainModel):
+    term: FactorTerm
+    estimate: FiniteFloat
+    standard_error: FiniteFloat = Field(ge=0)
+    lower_95: FiniteFloat
+    upper_95: FiniteFloat
+    standardized_effect: FiniteFloat | None = None
+
+
+FactorInputRole = Literal["stock", "market", "growth", "value", "momentum"]
+
+
+class FactorInputSummary(DomainModel):
+    role: FactorInputRole
+    instrument: InstrumentId
+    source: ProviderKind
+    currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+    return_basis: Literal["gross_total_return", "net_total_return", "adjusted_close_return"]
+    vendor_field: Literal["ADJ_CLOSE", "TOTAL_RETURN", "PX_LAST", "TOTAL_RETURN_INDEX_GROSS_DVDS"]
+    reference: OpaqueReference
+    retrieved_at: datetime
+    interval_count: int = Field(ge=0, le=4096)
+
+
+class FactorRegressionPresentation(DomainModel):
+    schema_version: Literal["factor-regression-v1"] = "factor-regression-v1"
+    purpose: Literal["historical_explanation"] = "historical_explanation"
+    return_mode: Literal["raw_total_return"] = "raw_total_return"
+    preset: Literal["us_etf", "custom"]
+    requested_start: date
+    requested_end: date
+    actual_start: date | None = None
+    actual_end: date | None = None
+    sample_count: int = Field(default=0, ge=0, le=4096)
+    dropped_interval_count: int = Field(default=0, ge=0, le=20480)
+    discontinuity_count: int = Field(default=0, ge=0, le=4095)
+    minimum_observations: int = Field(ge=60, le=2520)
+    hac_lags: int = Field(ge=0, le=60)
+    covariance: Literal["HAC_bartlett_small_sample_t"] = "HAC_bartlett_small_sample_t"
+    coefficients: tuple[FactorCoefficient, ...] = Field(default=(), max_length=4)
+    r_squared: FiniteFloat | None = None
+    adjusted_r_squared: FiniteFloat | None = None
+    residual_volatility: FiniteFloat | None = None
+    condition_number: FiniteFloat | None = None
+    factor_correlations: tuple[tuple[FiniteFloat, ...], ...] = Field(default=(), max_length=3)
+    variance_inflation_factors: tuple[FiniteFloat, ...] = Field(default=(), max_length=3)
+    diagnostics: tuple[FactorDiagnostic, ...] = ()
+    inputs: tuple[FactorInputSummary, ...] = Field(default=(), max_length=5)
+    configuration_ref: OpaqueReference
+    numerical_library: Literal["statsmodels_0_15_0"] = "statsmodels_0_15_0"
+
+
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
@@ -1034,6 +1157,7 @@ class AnalystResult(DomainModel):
         | BacktestPresentation
         | SignalEvaluationPresentation
         | PriceActionStructurePresentation
+        | FactorRegressionPresentation
         | None
     ) = None
 

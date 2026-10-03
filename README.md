@@ -649,3 +649,16 @@ See `AGENTS.md` for the full security policy. Key points:
 ## License
 
 This project is research-only. See the repository license for details.
+
+## Factor analysis MVP 1
+
+The `factor-regression` analyst explains a stock's daily total returns using
+market, growth-minus-value, and momentum-minus-market factors. It provides OLS
+coefficients, HAC confidence intervals and collinearity diagnostics through the
+existing native, HTTP, MCP and CLI interfaces. Inputs can come from adjusted
+Yahoo history, explicitly mapped Bloomberg history, or normalized local returns.
+
+See [factor regression usage and interpretation](skills/factor-regression/SKILL.md)
+and the [staged factor framework plan](docs/factor-framework-plan.md).
+Run an offline European example with
+`.venv/bin/python examples/factor_regression.py --region europe`.

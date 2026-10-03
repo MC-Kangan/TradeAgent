@@ -123,6 +123,8 @@ def create_app(application: ResearchApplication, *, bearer_token: str) -> FastAP
             ) from error
         except KeyError as error:
             raise HTTPException(status_code=422, detail="unknown selected skill") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="invalid request") from error
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail="research queue unavailable") from error
 

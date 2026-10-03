@@ -17,6 +17,7 @@ from trade_research.domain import (
     Observation,
     OutcomeSeriesSpec,
 )
+from trade_research.domain.models import FactorReturnSeries
 from trade_research.domain.provenance import (
     normalize_provider_kind,
     sanitize_provenance,
@@ -27,6 +28,7 @@ from trade_research.providers.contracts import (
     MAX_FUNDAMENTAL_ROWS,
     MAX_OUTCOME_POINTS,
     MAX_PRICE_POINTS,
+    FactorReturnProvider,
     FilingProvider,
     FundamentalProvider,
     OutcomePoint,
@@ -41,6 +43,7 @@ from trade_research.providers.contracts import (
 
 
 class CapabilityName(StrEnum):
+    FACTOR_RETURNS = "factor_returns"
     PRICES = "prices"
     OUTCOMES = "outcomes"
     FUNDAMENTALS = "fundamentals"
@@ -49,7 +52,8 @@ class CapabilityName(StrEnum):
 
 
 type CapabilityProvider = (
-    PriceProvider
+    FactorReturnProvider
+    | PriceProvider
     | OutcomeSeriesProvider
     | FundamentalProvider
     | FilingProvider
@@ -71,6 +75,7 @@ class ProviderRegistry:
                 ) from None
 
             protocol = {
+                CapabilityName.FACTOR_RETURNS: FactorReturnProvider,
                 CapabilityName.PRICES: PriceProvider,
                 CapabilityName.OUTCOMES: OutcomeSeriesProvider,
                 CapabilityName.FUNDAMENTALS: FundamentalProvider,
@@ -78,6 +83,7 @@ class ProviderRegistry:
                 CapabilityName.PORTFOLIO: PortfolioProvider,
             }[name]
             method_name = {
+                CapabilityName.FACTOR_RETURNS: "return_history",
                 CapabilityName.PRICES: "price_history",
                 CapabilityName.OUTCOMES: "outcome_history",
                 CapabilityName.FUNDAMENTALS: "fundamentals",
@@ -142,6 +148,23 @@ class ProviderRegistry:
             raise ProviderConfigurationError(
                 f"provider capability is not configured: {name}"
             ) from None
+
+    def factor_returns(
+        self, instrument: InstrumentId, start: date, end: date
+    ) -> FactorReturnSeries:
+        provider = self._providers.get(CapabilityName.FACTOR_RETURNS)
+        if not isinstance(provider, FactorReturnProvider):
+            raise ProviderConfigurationError("factor return provider is not configured")
+        series = provider.return_history(instrument, start, end)
+        if not isinstance(series, FactorReturnSeries):
+            raise ProviderContractError("factor provider returned a malformed series")
+        try:
+            series = FactorReturnSeries.model_validate(series.model_dump())
+        except ValueError as error:
+            raise ProviderContractError("factor provider violated the series contract") from error
+        if series.instrument != instrument:
+            raise ProviderContractError("factor provider returned the wrong instrument")
+        return series
 
     def prices(self, instrument: InstrumentId) -> tuple[PricePoint, ...]:
         points = self.require("prices").price_history(instrument)

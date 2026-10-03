@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from typing import Any
 from uuid import UUID
 
@@ -46,9 +47,11 @@ class ResearchApplication:
         skill = self.engine.skills.require(name)
         missing_capabilities = self.engine.missing_service_capabilities(name)
         short_descriptions = {
+            "factor-regression": (
+                "Historical market, growth/value and momentum exposures with HAC uncertainty."
+            ),
             "fundamental": (
-                "SEC-backed growth, profitability, cash-flow, leverage, "
-                "and valuation factors."
+                "SEC-backed growth, profitability, cash-flow, leverage, and valuation factors."
             ),
             "filings": "SEC filing activity and reporting-recency checks.",
             "worth-buy-stocks": "Trend, relative strength, and risk checks.",
@@ -68,6 +71,7 @@ class ResearchApplication:
             ),
         }
         supported_asset_types = {
+            "factor-regression": ["equity"],
             "fundamental": ["equity"],
             "filings": ["equity"],
             "worth-buy-stocks": ["equity"],
@@ -112,6 +116,7 @@ class ResearchApplication:
             base_skill,
             params,
             portfolio_instruments=request.portfolio_instruments,
+            as_of=self.engine.clock().astimezone(UTC).date(),
         )
         result = await self.engine.run_configured_skill(configured, request)
         wrapped = ResearchReport(
@@ -132,18 +137,19 @@ class ResearchApplication:
     async def start_research(self, request: AnalysisRequest) -> JsonObject:
         """Persist a safe queued request for a separately supervised worker."""
 
-        if self.queue is None:
-            raise RuntimeError("a job queue is required to start durable research")
-        immediate_only = {"backtesting", "signal-evaluation"}
+        immediate_only = {"backtesting", "signal-evaluation", "factor-regression"}
         if (
-            request.price_series
+            request.factor_series
+            or request.price_series
             or request.outcome_series
             or immediate_only.intersection(request.analysts)
         ):
             raise ValueError(
-                "inline price/outcome series, backtesting, and signal evaluation are "
+                "inline series, factor regression, backtesting, and signal evaluation are "
                 "immediate-only; use run_skill or research"
             )
+        if self.queue is None:
+            raise RuntimeError("a job queue is required to start durable research")
         self.engine.configure_request(request)
         self.engine.validate_analysts(request.analysts)
         submission = self.queue.enqueue(request)

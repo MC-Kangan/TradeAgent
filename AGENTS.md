@@ -12,6 +12,10 @@ This file is authoritative for this repository. Trade Research is analytics-only
 
 ## Development and tests
 
+- Before major development, briefly inspect established, relevant open-source projects and their primary documentation. Record the key ideas worth borrowing and how they fit this architecture; popularity alone is not a reason to adopt a project.
+- Prefer small local implementations of domain workflows over dependence on a large research framework. Reuse established numerical libraries for statistical primitives; do not reimplement regression solvers merely to avoid dependencies. Add a dependency only when it reduces total maintenance cost.
+- Deliver the smallest useful end-to-end MVP first, then enrich it in working increments. Avoid speculative abstractions, plugin systems, configuration layers, and infrastructure; add scale mechanisms in response to measured needs.
+- Keep source-specific connection/authentication, identifiers, and field mapping inside data adapters. Normalize units, currencies, adjustments, timestamps, availability, and missingness through shared typed contracts before analytics; never silently treat unlike series as equivalent.
 - Follow test-driven development: add a focused failing test, verify the reason, implement the minimum change, then refactor while green.
 - Before completion run: `.venv/bin/python -m pytest`, `.venv/bin/ruff check .`, `.venv/bin/mypy`, and `.venv/bin/python -m build` when `build` is installed.
 - Validate Compose with `docker compose config` when Docker Compose exists. Do not start services as part of tests or validation.

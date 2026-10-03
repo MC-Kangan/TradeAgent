@@ -101,6 +101,8 @@ class JobQueue:
                 )
 
     def enqueue(self, request: AnalysisRequest) -> QueueSubmission:
+        if request.factor_series or "factor-regression" in request.analysts:
+            raise ValueError("factor regression requires immediate analysis")
         persisted = PersistedAnalysisRequest.from_request(request)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")

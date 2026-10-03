@@ -24,6 +24,7 @@ from trade_research.domain import (
     ReportStatus,
     ResearchReport,
 )
+from trade_research.domain.models import FactorRegressionPresentation
 from trade_research.domain.provenance import normalize_provider_kind
 from trade_research.projection import project_observation_value
 
@@ -225,6 +226,83 @@ def render_markdown(report: ResearchReport) -> str:
                 + (", ".join(item.value for item in result.limitations) or "none"),
             )
         )
+        if isinstance(result.presentation, FactorRegressionPresentation):
+            study = result.presentation
+            labels = {
+                "intercept": "Intercept (per interval)",
+                "market": "Market",
+                "growth_minus_value": "Growth minus value",
+                "momentum_minus_market": "Momentum minus market",
+            }
+            lines.extend(
+                (
+                    "",
+                    "Historical explanation of raw total returns; "
+                    "the intercept is not risk-adjusted alpha.",
+                    "Coefficients describe associations, not forecasts or causal effects.",
+                    "Returns use decimal units: 0.01 means 1%. Betas are dimensionless.",
+                    "",
+                    f"- Aligned intervals: {study.sample_count}; "
+                    f"dropped: {study.dropped_interval_count}",
+                    f"- Discontinuities: {study.discontinuity_count} "
+                    "(gaps between retained return intervals; separate from alignment losses)",
+                    "- HAC lags count retained observations, not elapsed calendar days.",
+                    f"- Actual window: {study.actual_start} to {study.actual_end}",
+                    f"- HAC lags: {study.hac_lags}; 95% confidence intervals use Student t",
+                    "- Diagnostics: " + ", ".join(study.diagnostics),
+                    "",
+                    "| Term | Estimate | Standard error | 95% interval |",
+                    "| --- | ---: | ---: | --- |",
+                )
+            )
+            for coefficient in study.coefficients:
+                lines.append(
+                    f"| {labels[coefficient.term]} | {coefficient.estimate:.6g} | "
+                    f"{coefficient.standard_error:.6g} | "
+                    f"[{coefficient.lower_95:.6g}, {coefficient.upper_95:.6g}] |"
+                )
+            if study.r_squared is not None:
+                lines.extend(
+                    (
+                        "",
+                        f"R-squared: {study.r_squared:.4f}; "
+                        f"adjusted R-squared: {study.adjusted_r_squared:.4f}.",
+                        "Residual volatility per observed interval: "
+                        f"{study.residual_volatility:.6g}.",
+                        f"Standardized design condition number: {study.condition_number:.4g}.",
+                    )
+                )
+            if study.factor_correlations:
+                lines.extend(
+                    (
+                        "",
+                        "Factor correlations and variance inflation factors (VIF):",
+                        "",
+                        "| Factor | Market | Growth minus value | Momentum minus market | VIF |",
+                        "| --- | ---: | ---: | ---: | ---: |",
+                    )
+                )
+                factor_labels = ("Market", "Growth minus value", "Momentum minus market")
+                for label, row, vif in zip(
+                    factor_labels,
+                    study.factor_correlations,
+                    study.variance_inflation_factors,
+                    strict=True,
+                ):
+                    values = " | ".join(f"{value:.3f}" for value in row)
+                    lines.append(f"| {label} | {values} | {vif:.3f} |")
+            lines.extend(
+                (
+                    "",
+                    "| Input role | Instrument | Currency | Return basis | Field |",
+                    "| --- | --- | --- | --- | --- |",
+                )
+            )
+            for item in study.inputs:
+                lines.append(
+                    f"| {item.role} | {item.instrument.market}:{item.instrument.symbol} | "
+                    f"{item.currency} | {item.return_basis} | {item.vendor_field} |"
+                )
         if result.observations:
             lines.extend(
                 (

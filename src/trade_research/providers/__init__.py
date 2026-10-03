@@ -7,6 +7,7 @@ from trade_research.providers.contracts import (
     MAX_LOCAL_BYTES,
     MAX_OUTCOME_POINTS,
     MAX_PRICE_POINTS,
+    FactorReturnProvider,
     FilingProvider,
     FundamentalProvider,
     FundamentalStatementMetadata,
@@ -20,6 +21,12 @@ from trade_research.providers.contracts import (
     PriceProvider,
     ProviderConfigurationError,
     ProviderContractError,
+)
+from trade_research.providers.factor_returns import (
+    BloombergReturnMapping,
+    BloombergReturnProvider,
+    InlineReturnProvider,
+    YahooReturnProvider,
 )
 from trade_research.providers.inline import InlineOutcomeProvider, InlinePriceProvider
 from trade_research.providers.local import (
@@ -43,6 +50,11 @@ from trade_research.providers.sec import (
 )
 
 __all__ = [
+    "FactorReturnProvider",
+    "BloombergReturnMapping",
+    "BloombergReturnProvider",
+    "InlineReturnProvider",
+    "YahooReturnProvider",
     "CcxtPriceProvider",
     "BloombergPriceProvider",
     "CikResolver",

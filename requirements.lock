@@ -52,3 +52,11 @@ typing-extensions==4.16.0
 typing-inspection==0.4.2
 uvicorn==0.35.0
 xyzservices==2026.3.0
+
+# Statistical primitives for factor regression.
+formulaic==1.2.2
+interface-meta==2.0.1
+patsy==1.0.3
+scipy==1.18.1
+statsmodels==0.15.0
+wrapt==2.5.0

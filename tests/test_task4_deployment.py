@@ -466,6 +466,8 @@ def test_public_interfaces_and_dependencies_match_exact_research_only_allowlists
         "fastapi==0.116.1",
         "httpx==0.28.1",
         "mcp==1.12.4",
+        "numpy==2.5.2",
+        "statsmodels==0.15.0",
         "pydantic==2.11.7",
         "pyarrow==18.1.0",
         "typer==0.16.0",
@@ -473,6 +475,7 @@ def test_public_interfaces_and_dependencies_match_exact_research_only_allowlists
     }
     assert {command.name for command in app.registered_commands} == {
         "doctor",
+        "analyze",
         "list-skills",
         "run-skill",
         "research",

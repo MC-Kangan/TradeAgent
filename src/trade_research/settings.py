@@ -7,9 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
 from trade_research.providers.contracts import ProviderConfigurationError
+from trade_research.providers.factor_returns import BloombergReturnMapping
 
 PriceProviderName = Literal["local_csv", "local_parquet", "local_sql", "yahoo", "ccxt", "bloomberg"]
 FundamentalProviderName = Literal["local_csv", "local_parquet", "local_sql", "sec_company_facts"]
@@ -28,6 +29,9 @@ class Settings(BaseModel):
     ccxt_exchange: str | None = None
     bloomberg_host: str = "localhost"
     bloomberg_port: int = 8194
+    bloomberg_return_mappings: tuple[BloombergReturnMapping, ...] = Field(
+        default=(), max_length=128
+    )
     data_root: Path | None = None
     api_token: SecretStr | None = None
     discord_webhook_url: SecretStr | None = None
@@ -65,6 +69,12 @@ class Settings(BaseModel):
             raise ValueError("bloomberg_host is accepted only for the bloomberg provider")
         if self.price_provider != "bloomberg" and self.bloomberg_port != 8194:
             raise ValueError("bloomberg_port is accepted only for the bloomberg provider")
+        if self.bloomberg_return_mappings and self.price_provider != "bloomberg":
+            raise ValueError("Bloomberg mappings require the Bloomberg provider")
+        if len({m.instrument for m in self.bloomberg_return_mappings}) != len(
+            self.bloomberg_return_mappings
+        ):
+            raise ValueError("Bloomberg mappings must be unique")
         return self
 
     @classmethod
