@@ -650,13 +650,20 @@ See `AGENTS.md` for the full security policy. Key points:
 
 This project is research-only. See the repository license for details.
 
-## Factor analysis MVP 1
+## Factor analysis MVP 2A
 
-The `factor-regression` analyst explains a stock's daily total returns using
-market, growth-minus-value, and momentum-minus-market factors. It provides OLS
-coefficients, HAC confidence intervals and collinearity diagnostics through the
-existing native, HTTP, MCP and CLI interfaces. Inputs can come from adjusted
-Yahoo history, explicitly mapped Bloomberg history, or normalized local returns.
+The `factor-regression` analyst supports daily/monthly ETF-proxy and Fama–French
+five-factor-plus-momentum presets, configurable factor lists, same-sample
+subset comparisons, and rolling exposures. Preset factors can be removed and multiple
+benchmarks or normalized research columns added. OLS/HAC estimation uses the shared
+native, HTTP, MCP and CLI interfaces. US and European French factors download
+directly from the public library. Yahoo supports explicit EUR/GBP/CHF-to-USD
+conversion; Bloomberg uses verified USD inputs or an injected/inline FX provider.
+Calendars validate session adjacency, native monthly inputs and complete monthly
+compounding. Coverage losses are explicit; internal gaps withhold HAC confidence
+intervals while retaining OLS exposures. Reports
+contain derived results and source hashes, not raw histories. See the
+[MVP 2A implementation notes](docs/factor-mvp2-implementation.md).
 
 See [factor regression usage and interpretation](skills/factor-regression/SKILL.md)
 and the [staged factor framework plan](docs/factor-framework-plan.md).

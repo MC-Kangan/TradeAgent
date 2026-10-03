@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import math
 import re
 from collections.abc import Mapping
@@ -272,6 +273,58 @@ class InlineOutcomeSeries(DomainModel):
         return self
 
 
+MAX_FACTOR_COUNT = 64
+MAX_FACTOR_INPUTS = 2 * MAX_FACTOR_COUNT + 1
+FactorFrequency = Literal["daily", "monthly"]
+FactorRegion = Literal["US", "Europe"]
+FactorId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
+Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+
+
+class FactorDefinition(DomainModel):
+    id: FactorId
+    label: str = Field(min_length=1, max_length=96)
+    kind: Literal["asset_return", "excess_return", "spread", "change"]
+    unit: Literal["decimal_return", "basis_points", "percentage_points"] = "decimal_return"
+
+    @model_validator(mode="after")
+    def validate_unit(self) -> Self:
+        if self.kind != "change" and self.unit != "decimal_return":
+            raise ValueError("return factors must use decimal_return units")
+        return self
+
+
+class FactorSpec(DomainModel):
+    """A selected normalized research column or one/two funded return legs."""
+
+    id: FactorId
+    label: str = Field(min_length=1, max_length=96)
+    kind: Literal["asset_return", "spread", "research"]
+    instrument: InstrumentId | None = None
+    short_instrument: InstrumentId | None = None
+    research_key: FactorId | None = None
+    calendar: str | None = Field(default=None, max_length=32)
+    short_calendar: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_legs(self) -> Self:
+        if self.id == "intercept":
+            raise ValueError("intercept is a reserved term")
+        if self.kind == "research":
+            if not self.research_key or any(
+                (self.instrument, self.short_instrument, self.calendar, self.short_calendar)
+            ):
+                raise ValueError("research factors require only a research key")
+        elif self.instrument is None or self.research_key is not None:
+            raise ValueError("asset factors require an instrument, not a research key")
+        elif self.kind == "spread":
+            if self.short_instrument is None or self.short_instrument == self.instrument:
+                raise ValueError("spreads require distinct long and short instruments")
+        elif self.short_instrument is not None or self.short_calendar is not None:
+            raise ValueError("a single asset cannot have a short leg")
+        return self
+
+
 class FactorReturnPoint(DomainModel):
     """Decimal simple total return over an explicit pair of session dates."""
 
@@ -290,6 +343,8 @@ class FactorReturnSeries(DomainModel):
     """Normalized historical returns, transient inputs rather than report data."""
 
     instrument: InstrumentId
+    frequency: FactorFrequency = "daily"
+    calendar: str | None = Field(default=None, max_length=32)
     currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
     return_basis: Literal["gross_total_return", "net_total_return", "adjusted_close_return"]
     source: ProviderKind
@@ -309,6 +364,68 @@ class FactorReturnSeries(DomainModel):
         return self
 
 
+class ResearchFactorPoint(DomainModel):
+    date: date
+    values: dict[FactorId, FiniteFloat] = Field(min_length=1, max_length=MAX_FACTOR_COUNT)
+    risk_free: FiniteFloat | None = Field(default=None, ge=-1)
+
+
+class ResearchFactorPanel(DomainModel):
+    """Provider-independent native-frequency factor observations."""
+
+    region: FactorRegion
+    frequency: FactorFrequency
+    currency: Currency
+    calendar: str = Field(min_length=1, max_length=32)
+    definitions: tuple[FactorDefinition, ...] = Field(min_length=1, max_length=MAX_FACTOR_COUNT)
+    source: ProviderKind
+    retrieved_at: datetime
+    reference: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+    points: tuple[ResearchFactorPoint, ...] = Field(max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> Self:
+        days = [p.date for p in self.points]
+        if self.frequency == "monthly" and any(
+            d.day != calendar.monthrange(d.year, d.month)[1] for d in days
+        ):
+            raise ValueError("monthly research dates require calendar month-end labels")
+        ids = [d.id for d in self.definitions]
+        if len(ids) != len(set(ids)) or "intercept" in ids:
+            raise ValueError("research column IDs must be unique and not intercept")
+        if any(set(p.values) != set(ids) for p in self.points):
+            raise ValueError("research values must match declared definitions")
+        if self.retrieved_at.tzinfo is None or days != sorted(set(days)):
+            raise ValueError("factor dates must be unique/ordered and retrieval timezone-aware")
+        if days and days[-1] > self.retrieved_at.date():
+            raise ValueError("future factor observation")
+        return self
+
+
+class FxLevelPoint(DomainModel):
+    date: date
+    value: FiniteFloat = Field(gt=0)
+
+
+class FxLevelSeries(DomainModel):
+    """Quote currency per unit of base currency at dated closes; never forward filled."""
+
+    base_currency: Currency
+    quote_currency: Currency = "USD"
+    source: ProviderKind
+    retrieved_at: datetime
+    points: tuple[FxLevelPoint, ...] = Field(max_length=4097)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> Self:
+        days = [p.date for p in self.points]
+        if self.retrieved_at.tzinfo is None or days != sorted(set(days)):
+            raise ValueError("FX dates must be ordered/unique and retrieval timezone-aware")
+        if days and days[-1] > self.retrieved_at.date():
+            raise ValueError("future FX observation")
+        return self
+
+
 class AnalysisRequest(DomainModel):
     """One bounded instrument or portfolio research request."""
 
@@ -324,7 +441,9 @@ class AnalysisRequest(DomainModel):
     skill_parameters: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     price_series: tuple[InlinePriceSeries, ...] = Field(default=(), max_length=9)
     outcome_series: tuple[InlineOutcomeSeries, ...] = Field(default=(), max_length=9)
-    factor_series: tuple[FactorReturnSeries, ...] = Field(default=(), max_length=5)
+    factor_series: tuple[FactorReturnSeries, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS)
+    research_factors: ResearchFactorPanel | None = None
+    fx_series: tuple[FxLevelSeries, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS)
 
     @field_validator("analysts")
     @classmethod
@@ -341,6 +460,13 @@ class AnalysisRequest(DomainModel):
 
     @model_validator(mode="after")
     def validate_scope_and_price_series(self) -> Self:
+        if self.research_factors is not None or self.fx_series:
+            if self.scope != "instrument" or "factor-regression" not in self.analysts:
+                raise ValueError("research factors and FX require instrument factor regression")
+            if len({(x.base_currency, x.quote_currency) for x in self.fx_series}) != len(
+                self.fx_series
+            ):
+                raise ValueError("FX currencies must be unique")
         if self.factor_series:
             if self.scope != "instrument" or "factor-regression" not in self.analysts:
                 raise ValueError("factor series require instrument-scoped factor regression")
@@ -657,9 +783,7 @@ class BacktestTrade(DomainModel):
     commission: float = Field(ge=0)
     return_ratio: float
     duration_bars: int = Field(ge=0)
-    exit_reason: Literal[
-        "strategy_reduce", "strategy_exit", "stop_loss", "take_profit", "unknown"
-    ]
+    exit_reason: Literal["strategy_reduce", "strategy_exit", "stop_loss", "take_profit", "unknown"]
 
 
 class BacktestOpenPosition(DomainModel):
@@ -1062,7 +1186,8 @@ class PriceActionStructurePresentation(DomainModel):
     events: tuple[PriceActionCandleEvent, ...] = Field(default=(), max_length=10)
 
 
-FactorTerm = Literal["intercept", "market", "growth_minus_value", "momentum_minus_market"]
+FactorTerm = FactorId
+
 FactorDiagnostic = Literal[
     "currency_mismatch",
     "return_basis_mismatch",
@@ -1078,19 +1203,33 @@ FactorDiagnostic = Literal[
     "nonsynchronous_closes",
     "unsupported_market",
     "numerical_failure",
+    "hac_intervals_withheld",
+    "unsupported_frequency",
+    "factor_definition_mismatch",
+    "calendar_unavailable",
+    "research_data_lag",
+    "research_data_revised",
+    "fx_conversion",
+    "fx_missing",
+    "industry_self_inclusion_unchecked",
+    "influential_observations",
+    "rolling_windows_skipped",
+    "return_convention_difference",
 ]
 
 
 class FactorCoefficient(DomainModel):
     term: FactorTerm
+    label: str
+    unit: str
     estimate: FiniteFloat
-    standard_error: FiniteFloat = Field(ge=0)
-    lower_95: FiniteFloat
-    upper_95: FiniteFloat
+    standard_error: FiniteFloat | None = Field(default=None, ge=0)
+    lower_95: FiniteFloat | None = None
+    upper_95: FiniteFloat | None = None
     standardized_effect: FiniteFloat | None = None
 
 
-FactorInputRole = Literal["stock", "market", "growth", "value", "momentum"]
+FactorInputRole = Annotated[str, Field(min_length=1, max_length=80)]
 
 
 class FactorInputSummary(DomainModel):
@@ -1105,11 +1244,40 @@ class FactorInputSummary(DomainModel):
     interval_count: int = Field(ge=0, le=4096)
 
 
+class RollingFactorFit(DomainModel):
+    end_date: date
+    start_date: date
+    sample_count: int
+    estimates: tuple[FiniteFloat, ...] = Field(max_length=MAX_FACTOR_COUNT + 1)
+    r_squared: FiniteFloat
+
+
+class FactorDatasetSummary(DomainModel):
+    source: ProviderKind
+    reference: OpaqueReference
+    retrieved_at: datetime
+    currency: str
+    label: str
+    observation_count: int
+
+
+class FactorCoverage(DomainModel):
+    role: str
+    expected_periods: int
+    available_periods: int
+    invalid_or_missing_periods: int
+    fx_endpoint_losses: int = 0
+    alignment_losses: int = 0
+
+
 class FactorRegressionPresentation(DomainModel):
-    schema_version: Literal["factor-regression-v1"] = "factor-regression-v1"
+    schema_version: Literal["factor-regression-v3"] = "factor-regression-v3"
     purpose: Literal["historical_explanation"] = "historical_explanation"
-    return_mode: Literal["raw_total_return"] = "raw_total_return"
-    preset: Literal["us_etf", "custom"]
+    return_mode: Literal["raw_total_return", "excess_return"] = "raw_total_return"
+    preset: Literal["us_etf", "custom", "french"]
+    frequency: FactorFrequency = "daily"
+    study_currency: str | None = None
+    region: FactorRegion = "US"
     requested_start: date
     requested_end: date
     actual_start: date | None = None
@@ -1119,17 +1287,35 @@ class FactorRegressionPresentation(DomainModel):
     discontinuity_count: int = Field(default=0, ge=0, le=4095)
     minimum_observations: int = Field(ge=60, le=2520)
     hac_lags: int = Field(ge=0, le=60)
-    covariance: Literal["HAC_bartlett_small_sample_t"] = "HAC_bartlett_small_sample_t"
-    coefficients: tuple[FactorCoefficient, ...] = Field(default=(), max_length=4)
+    covariance: Literal["HAC_bartlett_small_sample_t", "withheld_irregular_spacing"] = (
+        "HAC_bartlett_small_sample_t"
+    )
+    coefficients: tuple[FactorCoefficient, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT + 1)
     r_squared: FiniteFloat | None = None
     adjusted_r_squared: FiniteFloat | None = None
     residual_volatility: FiniteFloat | None = None
     condition_number: FiniteFloat | None = None
-    factor_correlations: tuple[tuple[FiniteFloat, ...], ...] = Field(default=(), max_length=3)
-    variance_inflation_factors: tuple[FiniteFloat, ...] = Field(default=(), max_length=3)
+    factor_correlations: tuple[tuple[FiniteFloat, ...], ...] = Field(
+        default=(), max_length=MAX_FACTOR_COUNT
+    )
+    variance_inflation_factors: tuple[FiniteFloat, ...] = Field(
+        default=(), max_length=MAX_FACTOR_COUNT
+    )
     diagnostics: tuple[FactorDiagnostic, ...] = ()
-    inputs: tuple[FactorInputSummary, ...] = Field(default=(), max_length=5)
+    inputs: tuple[FactorInputSummary, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS)
+    datasets: tuple[FactorDatasetSummary, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS + 1)
+    coverage: tuple[FactorCoverage, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS + 1)
+    baseline_factor_ids: tuple[FactorId, ...] = ()
+    rolling_window: int = 252
+    rolling: tuple[RollingFactorFit, ...] = Field(default=(), max_length=121)
+    baseline_r_squared: FiniteFloat | None = None
+    incremental_r_squared: FiniteFloat | None = None
+    residual_autocorrelation: FiniteFloat | None = None
+    influential_count: int = 0
     configuration_ref: OpaqueReference
+    error_stage: str | None = None
+    error_code: str | None = None
+    error_id: str | None = None
     numerical_library: Literal["statsmodels_0_15_0"] = "statsmodels_0_15_0"
 
 

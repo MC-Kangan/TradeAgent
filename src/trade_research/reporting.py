@@ -115,7 +115,13 @@ def _project_result(result: AnalystResult, instrument: InstrumentId) -> AnalystR
         analyst=result.analyst,
         instrument=instrument,
         summary=(
-            f"{result.analyst} analysis {status.value} with {len(observations)} numeric factors"
+            f"{result.analyst} analysis {status.value} with "
+            f"{max(0, len(result.presentation.coefficients) - 1)} fitted exposures"
+            if isinstance(result.presentation, FactorRegressionPresentation)
+            else (
+                f"{result.analyst} analysis {status.value} with "
+                f"{len(observations)} numeric factors"
+            )
         ),
         status=status,
         missing_metrics=result.missing_metrics,
@@ -228,38 +234,49 @@ def render_markdown(report: ResearchReport) -> str:
         )
         if isinstance(result.presentation, FactorRegressionPresentation):
             study = result.presentation
-            labels = {
-                "intercept": "Intercept (per interval)",
-                "market": "Market",
-                "growth_minus_value": "Growth minus value",
-                "momentum_minus_market": "Momentum minus market",
-            }
+            labels = {c.term: c.label for c in study.coefficients}
             lines.extend(
                 (
                     "",
-                    "Historical explanation of raw total returns; "
-                    "the intercept is not risk-adjusted alpha.",
+                    (
+                        "Historical explanation of excess returns; alpha is model-relative."
+                        if study.return_mode == "excess_return"
+                        else "Historical explanation of raw total returns; "
+                        "the intercept is not risk-adjusted alpha."
+                    ),
+                    f"Frequency: {study.frequency}; study currency: {study.study_currency}.",
                     "Coefficients describe associations, not forecasts or causal effects.",
-                    "Returns use decimal units: 0.01 means 1%. Betas are dimensionless.",
+                    "Target returns are decimal: 0.01 means 1%. Each coefficient is the change "
+                    "in target return per one unit of its factor; see input units below.",
                     "",
                     f"- Aligned intervals: {study.sample_count}; "
                     f"dropped: {study.dropped_interval_count}",
                     f"- Discontinuities: {study.discontinuity_count} "
                     "(gaps between retained return intervals; separate from alignment losses)",
-                    "- HAC lags count retained observations, not elapsed calendar days.",
+                    "- HAC lags count consecutive study periods; "
+                    "inference is withheld for irregular retained dates.",
                     f"- Actual window: {study.actual_start} to {study.actual_end}",
-                    f"- HAC lags: {study.hac_lags}; 95% confidence intervals use Student t",
+                    f"- HAC lags: {study.hac_lags}; inference: {study.covariance}",
                     "- Diagnostics: " + ", ".join(study.diagnostics),
                     "",
-                    "| Term | Estimate | Standard error | 95% interval |",
-                    "| --- | ---: | ---: | --- |",
+                    "| Term | Estimate | Standard error | 95% interval | Input unit |",
+                    "| --- | ---: | ---: | --- | --- |",
                 )
             )
             for coefficient in study.coefficients:
+                uncertainty = (
+                    f"[{coefficient.lower_95:.6g}, {coefficient.upper_95:.6g}]"
+                    if coefficient.lower_95 is not None and coefficient.upper_95 is not None
+                    else "Withheld: irregular dates"
+                )
+                se = (
+                    f"{coefficient.standard_error:.6g}"
+                    if coefficient.standard_error is not None
+                    else "—"
+                )
                 lines.append(
-                    f"| {labels[coefficient.term]} | {coefficient.estimate:.6g} | "
-                    f"{coefficient.standard_error:.6g} | "
-                    f"[{coefficient.lower_95:.6g}, {coefficient.upper_95:.6g}] |"
+                    f"| {coefficient.label} | {coefficient.estimate:.6g} | {se} | {uncertainty} | "
+                    f"{coefficient.unit} |"
                 )
             if study.r_squared is not None:
                 lines.extend(
@@ -273,16 +290,16 @@ def render_markdown(report: ResearchReport) -> str:
                     )
                 )
             if study.factor_correlations:
+                factor_labels = tuple(labels[c.term] for c in study.coefficients[1:])
                 lines.extend(
                     (
                         "",
                         "Factor correlations and variance inflation factors (VIF):",
                         "",
-                        "| Factor | Market | Growth minus value | Momentum minus market | VIF |",
-                        "| --- | ---: | ---: | ---: | ---: |",
+                        "| Factor | " + " | ".join(factor_labels) + " | VIF |",
+                        "| --- | " + " ---: |" * (len(factor_labels) + 1),
                     )
                 )
-                factor_labels = ("Market", "Growth minus value", "Momentum minus market")
                 for label, row, vif in zip(
                     factor_labels,
                     study.factor_correlations,
@@ -302,6 +319,33 @@ def render_markdown(report: ResearchReport) -> str:
                 lines.append(
                     f"| {item.role} | {item.instrument.market}:{item.instrument.symbol} | "
                     f"{item.currency} | {item.return_basis} | {item.vendor_field} |"
+                )
+            if study.baseline_r_squared is not None:
+                lines.append(
+                    f"Baseline R² on the same sample: {study.baseline_r_squared:.4f}; "
+                    f"selected-factor increment: {study.incremental_r_squared:.4f}."
+                )
+            lines.append(
+                f"Rolling window: {study.rolling_window} observations; "
+                f"{len(study.rolling)} month-end fits. "
+                f"Influential observations: {study.influential_count}."
+            )
+            for coverage in study.coverage:
+                lines.append(
+                    f"- Coverage {coverage.role}: expected {coverage.expected_periods}, "
+                    f"available {coverage.available_periods}, "
+                    f"invalid/missing {coverage.invalid_or_missing_periods}, "
+                    f"FX losses {coverage.fx_endpoint_losses}, "
+                    f"alignment losses {coverage.alignment_losses}"
+                )
+            if study.error_code:
+                lines.append(
+                    f"- Failure: {study.error_stage}/{study.error_code}; reference {study.error_id}"
+                )
+            for dataset in study.datasets:
+                lines.append(
+                    f"- {dataset.label}: {dataset.source}, {dataset.currency}; "
+                    f"retrieved {dataset.retrieved_at}; {dataset.reference}"
                 )
         if result.observations:
             lines.extend(

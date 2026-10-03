@@ -60,3 +60,8 @@ patsy==1.0.3
 scipy==1.18.1
 statsmodels==0.15.0
 wrapt==2.5.0
+exchange-calendars==4.13.2
+korean-lunar-calendar==0.4.0
+pyluach==2.3.0
+toolz==1.1.0
+tzdata==2026.5

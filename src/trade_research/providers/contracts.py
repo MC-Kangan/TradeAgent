@@ -18,7 +18,13 @@ from trade_research.domain import (
     OutcomeSeriesSpec,
     Position,
 )
-from trade_research.domain.models import FactorReturnSeries
+from trade_research.domain.models import (
+    FactorFrequency,
+    FactorRegion,
+    FactorReturnSeries,
+    FxLevelSeries,
+    ResearchFactorPanel,
+)
 from trade_research.domain.provenance import (
     PeriodRole,
     PeriodType,
@@ -218,3 +224,25 @@ class FactorReturnProvider(Protocol):
     def return_history(
         self, instrument: InstrumentId, start: date, end: date
     ) -> FactorReturnSeries: ...
+
+
+@runtime_checkable
+class ResearchFactorProvider(Protocol):
+    def research_factors(
+        self,
+        region: FactorRegion,
+        frequency: FactorFrequency,
+        start: date,
+        end: date,
+    ) -> ResearchFactorPanel: ...
+
+
+@runtime_checkable
+class FxProvider(Protocol):
+    def fx_history(
+        self,
+        currency: str,
+        start: date,
+        end: date,
+        quote_currency: str = "USD",
+    ) -> FxLevelSeries: ...

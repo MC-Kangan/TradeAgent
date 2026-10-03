@@ -31,11 +31,13 @@ from trade_research.providers import (
     SecFilingsProvider,
     YahooPriceProvider,
 )
+from trade_research.providers.factor_fx import InlineFxProvider, YahooFxProvider
 from trade_research.providers.factor_returns import (
     BloombergReturnProvider,
     InlineReturnProvider,
     YahooReturnProvider,
 )
+from trade_research.providers.french import FrenchFactorProvider, InlineResearchFactorProvider
 from trade_research.providers.registry import CapabilityName, CapabilityProvider, ProviderRegistry
 from trade_research.reporting import sanitize_report
 from trade_research.settings import Settings
@@ -234,28 +236,36 @@ class ResearchEngine:
         return await self._run_skill(skill, request, providers)
 
     def _providers_for(self, request: AnalysisRequest) -> ProviderRegistry:
-        if not request.price_series and not request.outcome_series and not request.factor_series:
+        if not any(
+            (
+                request.price_series,
+                request.outcome_series,
+                request.factor_series,
+                request.research_factors,
+                request.fx_series,
+            )
+        ):
             return self._providers
         providers: dict[str, CapabilityProvider] = {
             name.value: provider for name, provider in self._providers.providers.items()
         }
+        if request.research_factors is not None:
+            providers["research_factors"] = InlineResearchFactorProvider(request.research_factors)
+        if request.fx_series:
+            providers["fx"] = InlineFxProvider(request.fx_series)
         if request.factor_series:
             providers[CapabilityName.FACTOR_RETURNS.value] = InlineReturnProvider(
                 request.factor_series
             )
         if request.price_series:
-            providers[CapabilityName.PRICES.value] = InlinePriceProvider(
-                request.price_series
-            )
+            providers[CapabilityName.PRICES.value] = InlinePriceProvider(request.price_series)
         if request.outcome_series:
-            providers[CapabilityName.OUTCOMES.value] = InlineOutcomeProvider(
-                request.outcome_series
-            )
+            providers[CapabilityName.OUTCOMES.value] = InlineOutcomeProvider(request.outcome_series)
         return ProviderRegistry(providers)
 
 
 def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
-    providers: dict[str, CapabilityProvider] = {}
+    providers: dict[str, CapabilityProvider] = {"research_factors": FrenchFactorProvider()}
     if settings.price_provider in {"local_csv", "local_parquet"}:
         assert settings.price_path is not None
         providers["prices"] = LocalCsvParquetPriceProvider(settings.price_path)
@@ -265,6 +275,7 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
     elif settings.price_provider == "yahoo":
         providers["prices"] = YahooPriceProvider()
         providers["factor_returns"] = YahooReturnProvider()
+        providers["fx"] = YahooFxProvider()
     elif settings.price_provider == "ccxt":
         assert settings.ccxt_exchange is not None
         providers["prices"] = CcxtPriceProvider(settings.ccxt_exchange)

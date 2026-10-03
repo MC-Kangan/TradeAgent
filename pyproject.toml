@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "backtesting==0.6.6",
+  "exchange-calendars==4.13.2",
   "fastapi==0.116.1",
   "httpx==0.28.1",
   "mcp==1.12.4",
@@ -65,6 +66,8 @@ module = [
   "mcp.*",
   "statsmodels",
   "statsmodels.*",
+  "exchange_calendars",
+  "exchange_calendars.*",
   "pandas",
   "pandas.*",
   "pyarrow",

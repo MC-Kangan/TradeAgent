@@ -19,6 +19,7 @@ class ProviderKind(StrEnum):
     LOCAL_CSV = "local_csv"
     LOCAL_PARQUET = "local_parquet"
     LOCAL_SQL = "local_sql"
+    KENNETH_FRENCH = "kenneth_french"
     YAHOO = "yahoo"
     COINBASE = "coinbase"
     TENCENT = "tencent"

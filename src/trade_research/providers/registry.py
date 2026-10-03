@@ -17,7 +17,13 @@ from trade_research.domain import (
     Observation,
     OutcomeSeriesSpec,
 )
-from trade_research.domain.models import FactorReturnSeries
+from trade_research.domain.models import (
+    FactorFrequency,
+    FactorRegion,
+    FactorReturnSeries,
+    FxLevelSeries,
+    ResearchFactorPanel,
+)
 from trade_research.domain.provenance import (
     normalize_provider_kind,
     sanitize_provenance,
@@ -31,6 +37,7 @@ from trade_research.providers.contracts import (
     FactorReturnProvider,
     FilingProvider,
     FundamentalProvider,
+    FxProvider,
     OutcomePoint,
     OutcomeSeries,
     OutcomeSeriesProvider,
@@ -39,10 +46,13 @@ from trade_research.providers.contracts import (
     PriceProvider,
     ProviderConfigurationError,
     ProviderContractError,
+    ResearchFactorProvider,
 )
 
 
 class CapabilityName(StrEnum):
+    RESEARCH_FACTORS = "research_factors"
+    FX = "fx"
     FACTOR_RETURNS = "factor_returns"
     PRICES = "prices"
     OUTCOMES = "outcomes"
@@ -53,6 +63,8 @@ class CapabilityName(StrEnum):
 
 type CapabilityProvider = (
     FactorReturnProvider
+    | ResearchFactorProvider
+    | FxProvider
     | PriceProvider
     | OutcomeSeriesProvider
     | FundamentalProvider
@@ -75,6 +87,8 @@ class ProviderRegistry:
                 ) from None
 
             protocol = {
+                CapabilityName.RESEARCH_FACTORS: ResearchFactorProvider,
+                CapabilityName.FX: FxProvider,
                 CapabilityName.FACTOR_RETURNS: FactorReturnProvider,
                 CapabilityName.PRICES: PriceProvider,
                 CapabilityName.OUTCOMES: OutcomeSeriesProvider,
@@ -83,6 +97,8 @@ class ProviderRegistry:
                 CapabilityName.PORTFOLIO: PortfolioProvider,
             }[name]
             method_name = {
+                CapabilityName.RESEARCH_FACTORS: "research_factors",
+                CapabilityName.FX: "fx_history",
                 CapabilityName.FACTOR_RETURNS: "return_history",
                 CapabilityName.PRICES: "price_history",
                 CapabilityName.OUTCOMES: "outcome_history",
@@ -149,6 +165,48 @@ class ProviderRegistry:
                 f"provider capability is not configured: {name}"
             ) from None
 
+    def research_factors(
+        self,
+        region: FactorRegion,
+        frequency: FactorFrequency,
+        start: date,
+        end: date,
+    ) -> ResearchFactorPanel:
+        provider = self._providers.get(CapabilityName.RESEARCH_FACTORS)
+        if not isinstance(provider, ResearchFactorProvider):
+            raise ProviderConfigurationError("Research factor provider not configured")
+        panel = provider.research_factors(region, frequency, start, end)
+        if not isinstance(panel, ResearchFactorPanel):
+            raise ProviderContractError("Invalid research factor panel")
+        try:
+            panel = ResearchFactorPanel.model_validate(panel.model_dump())
+        except ValueError as error:
+            raise ProviderContractError("Invalid research factor panel") from error
+        if panel.region != region or panel.frequency != frequency:
+            raise ProviderContractError("Research factor region/frequency mismatch")
+        return panel
+
+    def fx_history(
+        self,
+        currency: str,
+        start: date,
+        end: date,
+        quote_currency: str = "USD",
+    ) -> FxLevelSeries:
+        provider = self._providers.get(CapabilityName.FX)
+        if not isinstance(provider, FxProvider):
+            raise ProviderConfigurationError("FX provider not configured")
+        series = provider.fx_history(currency, start, end, quote_currency)
+        if not isinstance(series, FxLevelSeries):
+            raise ProviderContractError("Invalid FX series")
+        try:
+            series = FxLevelSeries.model_validate(series.model_dump())
+        except ValueError as error:
+            raise ProviderContractError("Invalid FX series") from error
+        if series.base_currency != currency or series.quote_currency != quote_currency:
+            raise ProviderContractError("FX currency mismatch")
+        return series
+
     def factor_returns(
         self, instrument: InstrumentId, start: date, end: date
     ) -> FactorReturnSeries:
@@ -194,9 +252,7 @@ class ProviderRegistry:
             normalized.append(point)
         return tuple(normalized)
 
-    def outcomes(
-        self, instrument: InstrumentId, spec: OutcomeSeriesSpec
-    ) -> OutcomeSeries:
+    def outcomes(self, instrument: InstrumentId, spec: OutcomeSeriesSpec) -> OutcomeSeries:
         if CapabilityName.OUTCOMES in self._providers:
             provider = self.require("outcomes")
             series = provider.outcome_history(instrument, spec)
@@ -216,21 +272,13 @@ class ProviderRegistry:
             raise ProviderContractError("outcome provider returned an invalid barrier basis")
         series_source = normalize_provider_kind(series.source)
         if series.provenance.get("provider_kind") != series_source.value:
-            raise ProviderContractError(
-                "outcome provider provenance does not match its source"
-            )
+            raise ProviderContractError("outcome provider provenance does not match its source")
         _require_auditable_reference(series.provenance, "reference", "outcome")
         timestamps = [point.observed_at for point in series.points]
         if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
-            raise ProviderContractError(
-                "outcome provider must return ordered unique timestamps"
-            )
-        complete = [
-            point.high is not None and point.low is not None for point in series.points
-        ]
-        partial = [
-            (point.high is None) != (point.low is None) for point in series.points
-        ]
+            raise ProviderContractError("outcome provider must return ordered unique timestamps")
+        complete = [point.high is not None and point.low is not None for point in series.points]
+        partial = [(point.high is None) != (point.low is None) for point in series.points]
         if any(partial):
             raise ProviderContractError("outcome high and low must be supplied together")
         if series.barrier_basis == "high_low" and not all(complete):
@@ -238,9 +286,7 @@ class ProviderRegistry:
                 "high_low outcome series requires high and low for every point"
             )
         if series.barrier_basis == "observed_value" and any(complete):
-            raise ProviderContractError(
-                "observed_value outcome series cannot contain high or low"
-            )
+            raise ProviderContractError("observed_value outcome series cannot contain high or low")
         return series
 
     def _price_outcome_series(
@@ -264,9 +310,7 @@ class ProviderRegistry:
         sources = {point.source for point in prices}
         if len(sources) > 1:
             raise ProviderContractError("price outcome series has mixed provider sources")
-        source = normalize_provider_kind(
-            next(iter(sources), normalize_provider_kind("derived"))
-        )
+        source = normalize_provider_kind(next(iter(sources), normalize_provider_kind("derived")))
         rows = [
             {
                 "observed_at": point.observed_at.isoformat(),

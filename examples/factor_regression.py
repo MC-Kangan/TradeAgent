@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 
 import numpy as np
 
@@ -16,6 +16,7 @@ from trade_research.domain import (
 )
 from trade_research.engine import ResearchEngine
 from trade_research.reporting import render_markdown
+from trade_research.skills.factor_data import session_dates
 
 
 def synthetic_request(region: str) -> AnalysisRequest:
@@ -32,8 +33,7 @@ def synthetic_request(region: str) -> AnalysisRequest:
     x = rng.normal(0, 0.01, (300, 3))
     y = 0.0002 + x @ np.array([1.2, 0.4, -0.3]) + rng.normal(0, 0.001, 300)
     values = (y, x[:, 0], x[:, 0] + x[:, 1], x[:, 0], x[:, 0] + x[:, 2])
-    days = [date(2023, 1, 2) + timedelta(days=i) for i in range(600)]
-    days = [day for day in days if day.weekday() < 5][:301]
+    days = session_dates(market, date(2023, 1, 1), date(2025, 1, 1))[:301]
     series = tuple(
         FactorReturnSeries(
             instrument=instrument,
@@ -55,14 +55,28 @@ def synthetic_request(region: str) -> AnalysisRequest:
         "end_date": "2025-01-01",
     }
     if european:
-        params.update(
+        params["factors"] = [
             {
-                f"{role}_benchmark": instrument.model_dump()
-                for role, instrument in zip(
-                    ("market", "growth", "value", "momentum"), instruments[1:], strict=True
-                )
-            }
-        )
+                "id": "market",
+                "label": "Market",
+                "kind": "asset_return",
+                "instrument": instruments[1].model_dump(),
+            },
+            {
+                "id": "growth_minus_value",
+                "label": "Growth minus value",
+                "kind": "spread",
+                "instrument": instruments[2].model_dump(),
+                "short_instrument": instruments[3].model_dump(),
+            },
+            {
+                "id": "momentum_minus_market",
+                "label": "Momentum minus market",
+                "kind": "spread",
+                "instrument": instruments[4].model_dump(),
+                "short_instrument": instruments[1].model_dump(),
+            },
+        ]
     return AnalysisRequest(
         instrument=instruments[0],
         analysts=("factor-regression",),
