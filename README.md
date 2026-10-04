@@ -12,6 +12,30 @@ rather than using LLMs internally — no LLM inference calls exist in the codeba
 
 ---
 
+## Start here
+
+For the **Windows company laptop**, use the [corporate installation guide](docs/corporate-installation.md):
+JFrog configuration, two-repository installation, offline wheels, Bloomberg mappings,
+YAML packs and optional Claude Code integration. Review the [dependency audit](docs/dependency-audit.md)
+with IT before transfer. Windows/live Bloomberg acceptance still needs to run at your firm.
+
+For an interactive factor workflow, keep the standalone **FactorPlayground** repository
+next to this checkout and follow its README. It imports this package directly; no HTTP
+service, Docker or LLM is needed. Cloning this backend does not include the separate app.
+
+| Workflow | Current functionality / guide |
+|---|---|
+| Single-stock attribution | Daily/monthly French, mapped MSCI, equity/ETF and custom factor regressions; [model/data semantics](docs/factor-mvp2-implementation.md) |
+| Reusable factor sets | YAML selection, Bloomberg level baskets, unit scales, simple/log/difference transforms; [pack guide](docs/factor-yaml-packs.md) |
+| Correlated factors | Original joint model, selected residualization, ordered attribution, VIF and rolling/partial correlations; [diagnostics](docs/factor-attribution-diagnostics.md) |
+| Cross-sectional signals | Fixed 12–1 momentum, monthly ranking, IC, quantiles, costs and chronological holdout |
+| Other research | Registered analysts below, exposed through CLI, native Python, HTTP and MCP |
+
+Use original joint regression as the reference. Attribution transformations change the
+meaning of coefficients; they do not create independent information or predictive alpha.
+Exact redundant factors are rejected. Sector packs configure the shared engine rather
+than introducing a sector-specific estimator.
+
 ## Architecture
 
 ```
@@ -349,17 +373,20 @@ The bootstrap script is macOS/Linux only. Manual setup (PowerShell):
 
 ```powershell
 py -3.12 -m venv .venv
-.venv\Scripts\pip install -r requirements.lock
-.venv\Scripts\pip install -r requirements-dev.lock
-.venv\Scripts\pip install --no-deps --no-build-isolation -e .
+.\.venv\Scripts\python.exe -m pip install --only-binary=:all: -r requirements.lock
+# Optional for development:
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\trade-research.exe doctor
 ```
 
 Replace `.venv/bin/trade-research` with `.venv\Scripts\trade-research` throughout the
 documentation (or just `trade-research` if the venv is activated).
 
-> **Known Windows issue:** `trade-research doctor` may crash with a swallowed error on
-> Windows. The CLI and test suite are otherwise cross-platform once the environment is
-> installed.
+Windows has not been validated in the current local test run. The baseline lock targets
+macOS/Linux; pip may resolve additional Windows-only dependencies. Use the
+[Windows acceptance steps](docs/corporate-installation.md) before relying on the installation.
 
 ### Docker
 
@@ -408,7 +435,6 @@ pip install '.[crypto]'   # installs ccxt for crypto price data
   "price_provider": "yahoo",
   "fundamental_provider": "sec_company_facts",
   "data_root": ".trade-research",
-  "api_token": "your-token-here",
   "sec_user_agent": "Your Org (contact@example.com)",
   "sec_cik_overrides": {
     "BRK.A": "0001067983",
@@ -425,6 +451,10 @@ Set `TRADE_RESEARCH_CONFIG=/path/to/config.json`. Environment variables take pre
 over JSON config values for the same field.
 
 ### `.env` file
+
+The CLI supports `.env`; the standalone Dash app reads process environment directly.
+Set its variables in the shell that starts it. Keep API secrets in the firm-approved
+environment/secret configuration, not the JSON provider example.
 
 Place a `.env` file in the project root (never commit it):
 

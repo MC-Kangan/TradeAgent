@@ -138,6 +138,17 @@ class YahooReturnProvider:
             ) from error
 
 
+class BloombergLevelMapping(DomainModel):
+    """Explicit reference-data identity; no ticker inference or executable formulas."""
+
+    security: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9./_-]{0,40} (?:[A-Z]{2} Equity|Index|Comdty)$",
+    )
+    field: Literal["PX_LAST", "TOTAL_RETURN_INDEX_GROSS_DVDS"]
+
+
 class BloombergReturnMapping(DomainModel):
     """Administrator-verified security/field identity, never inferred from a suffix."""
 
@@ -197,6 +208,22 @@ class BloombergReturnProvider:
             raise ProviderConfigurationError(
                 "a verified Bloomberg total-return mapping is required"
             )
+        levels = self.level_history(mapping, start, end)
+        points = returns_from_levels(levels)
+        return FactorReturnSeries(
+            instrument=instrument,
+            source="bloomberg",
+            currency=mapping.currency,
+            return_basis=mapping.return_basis,
+            vendor_field=mapping.field,
+            retrieved_at=datetime.now(UTC),
+            points=tuple(p for p in points if start <= p.start_date and p.end_date <= end),
+        )
+
+    def level_history(
+        self, mapping: BloombergReturnMapping | BloombergLevelMapping, start: date, end: date
+    ) -> list[tuple[date, float | None]]:
+        """Read daily levels without assigning return semantics to a price field."""
         try:
             import blpapi
         except ImportError as error:
@@ -279,16 +306,11 @@ class BloombergReturnProvider:
                                     "Bloomberg exceeded the factor history limit"
                                 )
                     complete = matched and event.eventType() == blpapi.Event.RESPONSE
-                points = returns_from_levels(levels)
-                return FactorReturnSeries(
-                    instrument=instrument,
-                    source="bloomberg",
-                    currency=mapping.currency,
-                    return_basis=mapping.return_basis,
-                    vendor_field=mapping.field,
-                    retrieved_at=datetime.now(UTC),
-                    points=tuple(p for p in points if start <= p.start_date and p.end_date <= end),
-                )
+                if any(b[0] <= a[0] for a, b in zip(levels[:-1], levels[1:], strict=True)):
+                    raise ProviderContractError("Bloomberg dates must be ordered and unique")
+                if any(value is not None and not math.isfinite(value) for _, value in levels):
+                    raise ProviderContractError("Bloomberg levels must be finite")
+                return levels
             except (ValueError, TypeError, OverflowError) as error:
                 raise ProviderContractError("Bloomberg returned invalid historical data") from error
             finally:

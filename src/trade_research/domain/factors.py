@@ -43,4 +43,37 @@ def preset_factors(preset: str) -> tuple[FactorSpec, ...]:
                 short_instrument=asset("IWB"),
             ),
         )
+    if preset == "msci_europe":
+
+        def index(symbol: str) -> InstrumentId:
+            return InstrumentId(symbol=symbol, market="INDEX")
+
+        market = index("MSCI-EU-GTR-EUR")
+        return (
+            FactorSpec(
+                id="market",
+                label="MSCI Europe gross total return",
+                kind="asset_return",
+                instrument=market,
+                calendar="weekdays",
+            ),
+            FactorSpec(
+                id="growth_minus_value",
+                label="MSCI Europe growth minus value",
+                kind="spread",
+                instrument=index("MSCI-EU-GRW-GTR"),
+                short_instrument=index("MSCI-EU-VAL-GTR"),
+                calendar="weekdays",
+                short_calendar="weekdays",
+            ),
+            FactorSpec(
+                id="momentum_minus_market",
+                label="MSCI Europe momentum minus market",
+                kind="spread",
+                instrument=index("MSCI-EU-MOM-GTR"),
+                short_instrument=market,
+                calendar="weekdays",
+                short_calendar="weekdays",
+            ),
+        )
     return ()

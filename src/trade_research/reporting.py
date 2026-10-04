@@ -251,6 +251,8 @@ def render_markdown(report: ResearchReport) -> str:
                         "the intercept is not risk-adjusted alpha."
                     ),
                     f"Frequency: {study.frequency}; study currency: {study.study_currency}.",
+                    f"Attribution: {study.attribution_mode}; sequential order: "
+                    + (", ".join(study.sequential_order) or "not applied"),
                     "Coefficients describe associations, not forecasts or causal effects.",
                     "Target returns are decimal: 0.01 means 1%. Each coefficient is the change "
                     "in target return per one unit of its factor; see input units below.",
@@ -295,6 +297,22 @@ def render_markdown(report: ResearchReport) -> str:
                         f"Standardized design condition number: {study.condition_number:.4g}.",
                     )
                 )
+            if study.relationships:
+                lines.extend((
+                    "", "Original-input relationships on the aligned regression sample.",
+                    "Partial correlations control for all other factors. Incremental R² uses "
+                    "the same sample and need not add up. These are descriptive, not causal.",
+                    "| Factor | Pearson | Spearman | Partial correlation | Incremental R² |",
+                    "| --- | ---: | ---: | ---: | ---: |",
+                ))
+                for relationship in study.relationships:
+                    cells = [
+                        "—" if value is None else f"{value:.4f}"
+                        for value in (relationship.pearson, relationship.spearman,
+                                      relationship.partial_correlation,
+                                      relationship.incremental_r_squared)
+                    ]
+                    lines.append(f"| {relationship.label} | " + " | ".join(cells) + " |")
             if study.factor_correlations:
                 factor_labels = tuple(labels[c.term] for c in study.coefficients[1:])
                 lines.extend(

@@ -23,6 +23,7 @@ from trade_research.domain.models import (
     FactorCoefficient,
     FactorDiagnostic,
     FactorRegressionPresentation,
+    RollingFactorCorrelation,
     RollingFactorFit,
 )
 from trade_research.providers import CapabilityName, ProviderRegistry
@@ -37,6 +38,7 @@ from trade_research.skills.factor_attribution import (
 from trade_research.skills.factor_parameters import (
     FactorRegressionParameters as FactorRegressionParameters,
 )
+from trade_research.skills.factor_relationships import factor_relationships, stock_correlations
 from trade_research.skills.factor_study import StudyData, StudyError, prepare_study
 
 
@@ -44,11 +46,14 @@ def fit_study(
     data: StudyData, params: FactorRegressionParameters, presentation: FactorRegressionPresentation
 ) -> FactorRegressionPresentation:
     ids = [d.id for d in data.definitions]
-    x, residualizations = residualize(data.x, ids, params.residualizations)
+    # Detect exact redundancy before a change of basis can magnify roundoff.
+    standardized_design(data.x)
+    rules = params.attribution_rules()
+    x, residualizations = residualize(data.x, ids, rules)
     y = data.y
     definitions = tuple(
         d.model_copy(update={"label": d.label + " (residualized)"})
-        if d.id in {r.factor_id for r in params.residualizations}
+        if d.id in {r.factor_id for r in rules}
         else d
         for d in data.definitions
     )
@@ -66,7 +71,7 @@ def fit_study(
     condition = float(np.linalg.cond(standardized))
     warnings = list(data.warnings)
     comparisons = compare_models(data.x, y, data.definitions, params.comparisons)
-    if params.residualizations and comparisons[0].high_collinearity:
+    if rules and comparisons[0].high_collinearity:
         warnings.append("original_high_collinearity")
     if high_collinearity(condition, vifs):
         warnings.append("high_collinearity")
@@ -86,12 +91,23 @@ def fit_study(
     month_last = {d.replace(day=1): i for i, d in enumerate(data.days)}
     rolling = []
     skipped = []
+    rolling_correlations = []
     for i in month_last.values():
         lo = i + 1 - params.rolling_window
         if lo < 0:
             continue
+        pearson, spearman = stock_correlations(data.x[lo : i + 1], y[lo : i + 1])
+        rolling_correlations.append(
+            RollingFactorCorrelation(
+                start_date=data.intervals[lo][0],
+                end_date=data.intervals[i][1],
+                pearson=pearson,
+                spearman=spearman,
+            )
+        )
         try:
-            window_x, _ = residualize(data.x[lo : i + 1], ids, params.residualizations)
+            standardized_design(data.x[lo : i + 1])
+            window_x, _ = residualize(data.x[lo : i + 1], ids, rules)
             window, window_transform, _ = standardized_design(window_x)
             if y[lo : i + 1].std() <= 1e-14:
                 raise StudyError("constant_target", "fit")
@@ -122,6 +138,17 @@ def fit_study(
         {
             **presentation.model_dump(),
             "coefficients": coefficients,
+            "attribution_mode": "sequential"
+            if params.sequential_order
+            else "controls"
+            if rules
+            else "original",
+            "sequential_order": params.sequential_order,
+            "relationships": factor_relationships(data.x, y, data.definitions),
+            "rolling_correlations": rolling_correlations,
+            "original_factor_correlations": np.atleast_2d(
+                np.corrcoef(data.x, rowvar=False)
+            ).tolist(),
             "r_squared": float(fit.rsquared),
             "adjusted_r_squared": float(fit.rsquared_adj),
             "residual_volatility": float(np.sqrt(fit.ssr / fit.df_resid)),

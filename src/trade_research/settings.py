@@ -9,6 +9,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
+from trade_research.factor_packs import FactorPack
 from trade_research.providers.contracts import ProviderConfigurationError
 from trade_research.providers.factor_returns import BloombergReturnMapping
 
@@ -32,6 +33,7 @@ class Settings(BaseModel):
     bloomberg_return_mappings: tuple[BloombergReturnMapping, ...] = Field(
         default=(), max_length=128
     )
+    bloomberg_factor_pack: FactorPack | None = None
     data_root: Path | None = None
     api_token: SecretStr | None = None
     discord_webhook_url: SecretStr | None = None
@@ -69,6 +71,11 @@ class Settings(BaseModel):
             raise ValueError("bloomberg_host is accepted only for the bloomberg provider")
         if self.price_provider != "bloomberg" and self.bloomberg_port != 8194:
             raise ValueError("bloomberg_port is accepted only for the bloomberg provider")
+        if self.bloomberg_factor_pack is not None:
+            if self.price_provider != "bloomberg":
+                raise ValueError("Bloomberg factor packs require the Bloomberg provider")
+            if not self.bloomberg_factor_pack.enabled:
+                raise ValueError("configure and enable the Bloomberg factor pack first")
         if self.bloomberg_return_mappings and self.price_provider != "bloomberg":
             raise ValueError("Bloomberg mappings require the Bloomberg provider")
         if len({m.instrument for m in self.bloomberg_return_mappings}) != len(

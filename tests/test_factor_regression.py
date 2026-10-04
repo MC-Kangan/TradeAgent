@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from trade_research.application import ResearchApplication
 from trade_research.domain import AnalysisRequest, InstrumentId
+from trade_research.domain.factors import preset_factors
 from trade_research.domain.models import FactorReturnPoint, FactorReturnSeries
 from trade_research.engine import ResearchEngine
 from trade_research.http import create_app
@@ -18,6 +19,29 @@ from trade_research.skills.factor_regression import FactorRegressionParameters
 
 STOCK = InstrumentId(symbol="ACME", market="US")
 NAMES = ("ACME", "IWB", "IWF", "IWD", "MTUM")
+
+
+def test_msci_europe_preset_uses_canonical_entitled_index_definitions():
+    factors = preset_factors("msci_europe")
+
+    assert [factor.id for factor in factors] == [
+        "market",
+        "growth_minus_value",
+        "momentum_minus_market",
+    ]
+    assert {
+        instrument.market
+        for factor in factors
+        for instrument in (factor.instrument, factor.short_instrument)
+        if instrument is not None
+    } == {"INDEX"}
+    assert all(
+        calendar == "weekdays"
+        for factor in factors
+        for calendar in (factor.calendar, factor.short_calendar)
+        if calendar is not None
+    )
+    assert FactorRegressionParameters(preset="msci_europe").return_mode == "raw_total_return"
 
 
 def fixture_series(n=300, *, currency="USD", market="US"):

@@ -285,7 +285,9 @@ class FactorDefinition(DomainModel):
     id: FactorId
     label: str = Field(min_length=1, max_length=96)
     kind: Literal["asset_return", "excess_return", "spread", "change"]
-    unit: Literal["decimal_return", "basis_points", "percentage_points"] = "decimal_return"
+    unit: str = Field(
+        default="decimal_return", min_length=1, max_length=48, pattern=r"^[A-Za-z0-9_/%.-]+$"
+    )
 
     @model_validator(mode="after")
     def validate_unit(self) -> Self:
@@ -1332,11 +1334,27 @@ class FactorStability(DomainModel):
     negative_fraction: FiniteFloat = Field(ge=0, le=1)
 
 
+class FactorRelationship(DomainModel):
+    term: FactorId
+    label: str
+    pearson: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    spearman: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    partial_correlation: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    incremental_r_squared: FiniteFloat = Field(ge=0, le=1)
+
+
+class RollingFactorCorrelation(DomainModel):
+    start_date: date
+    end_date: date
+    pearson: tuple[FiniteFloat | None, ...]
+    spearman: tuple[FiniteFloat | None, ...]
+
+
 class FactorRegressionPresentation(DomainModel):
     schema_version: Literal["factor-regression-v4"] = "factor-regression-v4"
     purpose: Literal["historical_explanation"] = "historical_explanation"
     return_mode: Literal["raw_total_return", "excess_return"] = "raw_total_return"
-    preset: Literal["us_etf", "custom", "french"]
+    preset: Literal["us_etf", "msci_europe", "custom", "french"]
     frequency: FactorFrequency = "daily"
     study_currency: str | None = None
     region: FactorRegion = "US"
@@ -1377,6 +1395,13 @@ class FactorRegressionPresentation(DomainModel):
     rolling_skipped_end_dates: tuple[date, ...] = Field(default=(), max_length=121)
     residual_autocorrelation: FiniteFloat | None = None
     influential_count: int = 0
+    original_factor_correlations: tuple[tuple[FiniteFloat, ...], ...] = Field(
+        default=(), max_length=MAX_FACTOR_COUNT
+    )
+    relationships: tuple[FactorRelationship, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT)
+    rolling_correlations: tuple[RollingFactorCorrelation, ...] = Field(default=(), max_length=121)
+    attribution_mode: Literal["original", "controls", "sequential"] = "original"
+    sequential_order: tuple[FactorId, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT)
     configuration_ref: OpaqueReference
     error_stage: str | None = None
     error_code: str | None = None

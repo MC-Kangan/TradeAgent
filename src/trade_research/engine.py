@@ -38,6 +38,7 @@ from trade_research.providers.factor_returns import (
     YahooReturnProvider,
 )
 from trade_research.providers.french import FrenchFactorProvider, InlineResearchFactorProvider
+from trade_research.providers.pack_factors import PackFactorProvider
 from trade_research.providers.registry import CapabilityName, CapabilityProvider, ProviderRegistry
 from trade_research.reporting import sanitize_report
 from trade_research.settings import Settings
@@ -289,12 +290,17 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
             port=settings.bloomberg_port,
         )
 
-        if settings.bloomberg_return_mappings:
-            providers["factor_returns"] = BloombergReturnProvider(
+        if settings.bloomberg_return_mappings or settings.bloomberg_factor_pack:
+            return_provider = BloombergReturnProvider(
                 settings.bloomberg_return_mappings,
                 host=settings.bloomberg_host,
                 port=settings.bloomberg_port,
             )
+            providers["factor_returns"] = return_provider
+            if settings.bloomberg_factor_pack and settings.bloomberg_factor_pack.level_factors:
+                providers["research_factors"] = PackFactorProvider(
+                    settings.bloomberg_factor_pack, return_provider
+                )
 
     if settings.fundamental_provider in {"local_csv", "local_parquet"}:
         assert settings.fundamental_path is not None

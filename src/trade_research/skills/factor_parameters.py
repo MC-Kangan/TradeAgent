@@ -12,6 +12,7 @@ from trade_research.domain.models import (
     MAX_FACTOR_COUNT,
     DomainModel,
     FactorFrequency,
+    FactorId,
     FactorModelSpec,
     FactorRegion,
     FactorResidualization,
@@ -21,7 +22,7 @@ from trade_research.domain.models import (
 
 
 class FactorRegressionParameters(DomainModel):
-    preset: Literal["us_etf", "custom", "french"] = "us_etf"
+    preset: Literal["us_etf", "msci_europe", "custom", "french"] = "us_etf"
     factors: tuple[FactorSpec, ...] | None = Field(
         default=None, min_length=1, max_length=MAX_FACTOR_COUNT
     )
@@ -33,6 +34,7 @@ class FactorRegressionParameters(DomainModel):
     residualizations: tuple[FactorResidualization, ...] = Field(
         default=(), max_length=MAX_FACTOR_COUNT
     )
+    sequential_order: tuple[FactorId, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT)
     max_factors: int = Field(default=32, ge=1, le=MAX_FACTOR_COUNT)
     rolling_window: int = Field(default=252, ge=24, le=2520)
     start_date: date | None = None
@@ -62,6 +64,11 @@ class FactorRegressionParameters(DomainModel):
         ids = [f.id for f in factors]
         if not factors or len(set(ids)) != len(ids) or len(ids) > self.max_factors:
             raise ValueError("select unique factor IDs within the configured factor limit")
+        if self.sequential_order:
+            if self.residualizations:
+                raise ValueError("choose sequential attribution or explicit control rules")
+            if len(self.sequential_order) != len(ids) or set(self.sequential_order) != set(ids):
+                raise ValueError("sequential order must contain every selected factor exactly once")
         names = [m.name.strip().casefold() for m in self.comparisons]
         if len(names) != len(set(names)) or "full model" in names or "" in names:
             raise ValueError("comparison names must be unique and not Full model")
@@ -92,6 +99,15 @@ class FactorRegressionParameters(DomainModel):
 
     def selected_factors(self) -> tuple[FactorSpec, ...]:
         return self.factors if self.factors is not None else preset_factors(self.preset)
+
+    def attribution_rules(self) -> tuple[FactorResidualization, ...]:
+        if not self.sequential_order:
+            return self.residualizations
+        return tuple(
+            FactorResidualization(factor_id=key, against=self.sequential_order[:i])
+            for i, key in enumerate(self.sequential_order)
+            if i
+        )
 
     def benchmarks(self) -> tuple[InstrumentId, ...]:
         return tuple(

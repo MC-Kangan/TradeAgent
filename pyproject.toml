@@ -17,6 +17,7 @@ dependencies = [
   "numpy==2.5.2",
   "statsmodels==0.15.0",
   "pydantic==2.11.7",
+  "pyyaml==6.0.3",
   "pyarrow==18.1.0",
   "typer==0.16.0",
   "uvicorn==0.35.0",
@@ -58,6 +59,7 @@ files = ["src"]
 
 [[tool.mypy.overrides]]
 module = [
+  "yaml",
   "backtesting",
   "backtesting.*",
   "blpapi",

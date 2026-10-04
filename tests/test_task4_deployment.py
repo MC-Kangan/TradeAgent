@@ -470,6 +470,7 @@ def test_public_interfaces_and_dependencies_match_exact_research_only_allowlists
         "numpy==2.5.2",
         "statsmodels==0.15.0",
         "pydantic==2.11.7",
+        "pyyaml==6.0.3",
         "pyarrow==18.1.0",
         "typer==0.16.0",
         "uvicorn==0.35.0",

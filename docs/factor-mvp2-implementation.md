@@ -81,6 +81,15 @@ dates/values. It is responsible for its six-column catalog and USD convention.
 Those restrictions do not live in the generic model. French data may lag and be revised;
 this is not point-in-time predictive research.
 
+The `msci_europe` preset contains canonical MSCI Europe market, growth, value and
+momentum total-return index identities. It is intentionally provider-independent: a
+configured Bloomberg or firm adapter must map each identity to the exact entitled vendor
+security, total-return field, ISO currency and return basis. The engine never guesses
+Bloomberg mnemonics, scrapes licensed MSCI data or falls back to a public proxy. Commodity
+indexes follow the same contract, so Brent, natural-gas and diesel factors can be added as
+ordinary asset-return factors once their verified mappings share compatible currency and
+return conventions.
+
 `FxLevelSeries` states base and quote currency. Conversion is
 `(1 + local_return) * fx_end / fx_start - 1`. Required dates are derived from actual
 return endpoints, including the close preceding the first month. Yahoo currently
