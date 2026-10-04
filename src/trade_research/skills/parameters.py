@@ -12,13 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from trade_research.domain import InstrumentId, OutcomeSeriesSpec, SignalEvent
 from trade_research.skills.backtesting import StrategyConfiguration
 from trade_research.skills.core import ResearchSkill
+from trade_research.skills.cross_sectional_signal import (
+    CrossSectionalSignalParameters,
+)
 from trade_research.skills.factor_regression import FactorRegressionParameters
 from trade_research.skills.signal_evaluation import (
     EvaluationPeriod,
     ExperimentDefinition,
 )
 
-PORTFOLIO_SKILLS = frozenset({"correlation-analysis", "asset-allocation"})
+PORTFOLIO_SKILLS = frozenset(
+    {"correlation-analysis", "asset-allocation", "cross-sectional-signal"}
+)
 
 
 class TechnicalSkillParameters(BaseModel):
@@ -369,6 +374,21 @@ def configure_skill(
         resolved = FactorRegressionParameters.model_validate(params).resolve_dates(today)
         return replace(skill, parameters=resolved, as_of=today)  # type: ignore[type-var]
 
+    if skill.name == "cross-sectional-signal":
+        today = as_of or datetime.now(UTC).date()
+        cross_section_parameters = CrossSectionalSignalParameters.model_validate(
+            params
+        ).resolve_dates(today).validate_instruments(portfolio_instruments)
+        if not 3 <= len(portfolio_instruments) <= 64:
+            raise ValueError(
+                "cross-sectional-signal requires between 3 and 64 portfolio instruments"
+            )
+        return replace(  # type: ignore[type-var]
+            skill,
+            instruments=portfolio_instruments,
+            parameters=cross_section_parameters,
+        )
+
     if skill.name == "technical":
         technical_params = TechnicalSkillParameters.model_validate(params)
         return replace(skill, window=technical_params.window)  # type: ignore[type-var]
@@ -469,6 +489,7 @@ def configure_skill(
 
 SKILL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     "factor-regression": FactorRegressionParameters.model_json_schema(),
+    "cross-sectional-signal": CrossSectionalSignalParameters.model_json_schema(),
     "technical": TechnicalSkillParameters.model_json_schema(),
     "worth-buy-stocks": WorthBuyStocksParameters.model_json_schema(),
     "markov-method": MarkovMethodParameters.model_json_schema(),

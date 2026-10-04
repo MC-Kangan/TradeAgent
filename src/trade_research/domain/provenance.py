@@ -41,6 +41,9 @@ class MetricKind(StrEnum):
     FACTOR_MARKET_BETA = "factor_market_beta"
     FACTOR_STYLE_BETA = "factor_style_beta"
     FACTOR_MOMENTUM_BETA = "factor_momentum_beta"
+    CROSS_SECTION_RANK_IC = "cross_section_rank_ic"
+    CROSS_SECTION_TOP_MINUS_BOTTOM = "cross_section_top_minus_bottom"
+    CROSS_SECTION_TOP_TURNOVER = "cross_section_top_turnover"
     OPEN = "open"
     HIGH = "high"
     LOW = "low"
@@ -211,6 +214,7 @@ class PeriodRole(StrEnum):
 
 class DerivedAlgorithm(StrEnum):
     FACTOR_OLS_HAC = "factor_ols_hac"
+    CROSS_SECTIONAL_SIGNAL_EVALUATION = "cross_sectional_signal_evaluation"
     DIRECT_VALUE = "direct_value"
     PERIOD_GROWTH = "period_growth"
     RATIO = "ratio"

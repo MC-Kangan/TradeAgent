@@ -432,7 +432,7 @@ class AnalysisRequest(DomainModel):
     request_id: UUID = Field(default_factory=uuid4)
     instrument: InstrumentId
     scope: Literal["instrument", "portfolio"] = "instrument"
-    portfolio_instruments: tuple[InstrumentId, ...] = Field(default=(), max_length=9)
+    portfolio_instruments: tuple[InstrumentId, ...] = Field(default=(), max_length=64)
     analysts: tuple[AnalystName, ...] = Field(
         default=("fundamental", "technical"), min_length=1, max_length=MAX_ANALYSTS
     )
@@ -468,8 +468,14 @@ class AnalysisRequest(DomainModel):
             ):
                 raise ValueError("FX currencies must be unique")
         if self.factor_series:
-            if self.scope != "instrument" or "factor-regression" not in self.analysts:
-                raise ValueError("factor series require instrument-scoped factor regression")
+            factor_regression = self.scope == "instrument" and "factor-regression" in self.analysts
+            cross_section = (
+                self.scope == "portfolio" and "cross-sectional-signal" in self.analysts
+            )
+            if not (factor_regression or cross_section):
+                raise ValueError(
+                    "factor series require factor regression or cross-sectional signal research"
+                )
             identities = tuple(item.instrument for item in self.factor_series)
             if len(set(identities)) != len(identities):
                 raise ValueError("factor series instruments must be unique")
@@ -477,8 +483,8 @@ class AnalysisRequest(DomainModel):
         if self.scope == "portfolio":
             if self.instrument != basket:
                 raise ValueError("portfolio requests must use the PORTFOLIO:BASKET identity")
-            if not 2 <= len(self.portfolio_instruments) <= 9:
-                raise ValueError("portfolio requests require between 2 and 9 instruments")
+            if not 2 <= len(self.portfolio_instruments) <= 64:
+                raise ValueError("portfolio requests require between 2 and 64 instruments")
             if len(set(self.portfolio_instruments)) != len(self.portfolio_instruments):
                 raise ValueError("portfolio instruments must be unique")
             if any(item.market == "PORTFOLIO" for item in self.portfolio_instruments):
@@ -495,6 +501,13 @@ class AnalysisRequest(DomainModel):
             required = set(self.portfolio_instruments)
             if supplied != required:
                 raise ValueError("portfolio price series must exactly match portfolio instruments")
+        if self.scope == "portfolio" and self.factor_series:
+            if set(item.instrument for item in self.factor_series) != set(
+                self.portfolio_instruments
+            ):
+                raise ValueError(
+                    "portfolio factor series must exactly match portfolio instruments"
+                )
         outcome_keys = tuple((item.instrument, item.spec.name) for item in self.outcome_series)
         if len(set(outcome_keys)) != len(outcome_keys):
             raise ValueError("outcome series instrument/name pairs must be unique")
@@ -1371,6 +1384,122 @@ class FactorRegressionPresentation(DomainModel):
     numerical_library: Literal["statsmodels_0_15_0"] = "statsmodels_0_15_0"
 
 
+class CrossSectionQuantileReturn(DomainModel):
+    quantile: int = Field(ge=1, le=10)
+    asset_count: int = Field(ge=1, le=64)
+    mean_forward_return: FiniteFloat
+
+
+class CrossSectionQuantileSummary(DomainModel):
+    quantile: int = Field(ge=1, le=10)
+    period_count: int = Field(ge=1, le=121)
+    mean_forward_return: FiniteFloat
+
+
+class CrossSectionPeriod(DomainModel):
+    formation_date: date
+    eligible_asset_count: int = Field(ge=0, le=64)
+    rank_ic: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    quantile_returns: tuple[CrossSectionQuantileReturn, ...] = Field(
+        default=(), max_length=10
+    )
+    top_minus_bottom: FiniteFloat | None = None
+    top_turnover: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    top_return: FiniteFloat | None = Field(default=None, ge=-1)
+    net_top_return: FiniteFloat | None = Field(default=None, ge=-1)
+    universe_return: FiniteFloat | None = Field(default=None, ge=-1)
+    top_excess_return: FiniteFloat | None = None
+    diagnostics: tuple[
+        Literal[
+            "insufficient_assets",
+            "insufficient_group_assets",
+            "insufficient_distinct_scores",
+            "constant_forward_returns",
+        ],
+        ...,
+    ] = ()
+
+
+class CrossSectionAssetCoverage(DomainModel):
+    instrument: InstrumentId
+    sector: str | None = None
+    country: str | None = None
+    member_from: date | None = None
+    member_to: date | None = None
+    monthly_period_count: int = Field(ge=0, le=4096)
+    evaluated_period_count: int = Field(ge=0, le=121)
+
+
+class CrossSectionSegmentSummary(DomainModel):
+    name: Literal["development", "holdout"]
+    start_date: date
+    end_date: date
+    period_count: int = Field(ge=0, le=121)
+    purged_period_count: int = Field(default=0, ge=0, le=1)
+    average_rank_ic: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    median_rank_ic: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    rank_ic_information_ratio: FiniteFloat | None = None
+    positive_rank_ic_fraction: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    average_top_excess_return: FiniteFloat | None = None
+    annualized_net_top_return: FiniteFloat | None = Field(default=None, ge=-1)
+    annualized_universe_return: FiniteFloat | None = Field(default=None, ge=-1)
+
+
+class CrossSectionalSignalPresentation(DomainModel):
+    schema_version: Literal["cross-sectional-signal-v2"] = "cross-sectional-signal-v2"
+    purpose: Literal["predictive_signal_evaluation"] = "predictive_signal_evaluation"
+    signal: Literal["momentum_12_1"] = "momentum_12_1"
+    formation_frequency: Literal["monthly"] = "monthly"
+    entry_convention: Literal["next_session_close"] = "next_session_close"
+    holding_period: Literal["next_rebalance_close"] = "next_rebalance_close"
+    quantile_count: int = Field(ge=3, le=10)
+    minimum_assets: int = Field(ge=3, le=64)
+    universe_mode: Literal["current_watchlist", "point_in_time"] = "current_watchlist"
+    grouping: Literal["overall", "sector", "country", "sector_country"] = "overall"
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    return_basis: Literal["gross_total_return", "net_total_return", "adjusted_close_return"]
+    requested_start: date
+    requested_end: date
+    average_rank_ic: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    median_rank_ic: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    rank_ic_standard_deviation: FiniteFloat | None = Field(default=None, ge=0)
+    rank_ic_information_ratio: FiniteFloat | None = None
+    positive_rank_ic_fraction: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    rank_ic_lower_95: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    rank_ic_upper_95: FiniteFloat | None = Field(default=None, ge=-1, le=1)
+    average_top_minus_bottom: FiniteFloat | None = None
+    average_top_turnover: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    average_top_return: FiniteFloat | None = Field(default=None, ge=-1)
+    average_net_top_return: FiniteFloat | None = Field(default=None, ge=-1)
+    average_universe_return: FiniteFloat | None = Field(default=None, ge=-1)
+    average_top_excess_return: FiniteFloat | None = None
+    annualized_net_top_return: FiniteFloat | None = Field(default=None, ge=-1)
+    annualized_universe_return: FiniteFloat | None = Field(default=None, ge=-1)
+    annualized_net_top_volatility: FiniteFloat | None = Field(default=None, ge=0)
+    net_top_max_drawdown: FiniteFloat | None = Field(default=None, ge=-1, le=0)
+    transaction_cost_bps: FiniteFloat = Field(default=0, ge=0, le=500)
+    average_quantile_returns: tuple[CrossSectionQuantileSummary, ...] = Field(
+        default=(), max_length=10
+    )
+    periods: tuple[CrossSectionPeriod, ...] = Field(default=(), max_length=121)
+    segments: tuple[CrossSectionSegmentSummary, ...] = Field(default=(), max_length=2)
+    coverage: tuple[CrossSectionAssetCoverage, ...] = Field(default=(), max_length=64)
+    diagnostics: tuple[
+        Literal[
+            "current_universe_only",
+            "survivorship_bias_uncontrolled",
+            "transaction_costs_excluded",
+            "transaction_costs_illustrative",
+            "terminal_returns_unverified",
+            "holdout_not_configured",
+            "discontinuous_evaluation_periods",
+            "insufficient_valid_periods",
+        ],
+        ...,
+    ] = ()
+    configuration_ref: OpaqueReference
+
+
 class AnalystResult(DomainModel):
     """The output from one independently selected analyst."""
 
@@ -1396,6 +1525,7 @@ class AnalystResult(DomainModel):
         | SignalEvaluationPresentation
         | PriceActionStructurePresentation
         | FactorRegressionPresentation
+        | CrossSectionalSignalPresentation
         | None
     ) = None
 

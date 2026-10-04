@@ -10,6 +10,11 @@ from trade_research.skills.core import (
     SkillRegistry,
     TechnicalSkill,
 )
+from trade_research.skills.cross_sectional_signal import (
+    CrossSectionalSignalParameters,
+    CrossSectionalSignalSkill,
+    CrossSectionUniverseMember,
+)
 from trade_research.skills.markov_method import MarkovMethodSkill
 from trade_research.skills.parameters import (
     SKILL_PARAMETER_SCHEMAS,
@@ -38,6 +43,9 @@ __all__ = [
     "BacktestingSkill",
     "BacktestingSkillParameters",
     "CorrelationAnalysisSkill",
+    "CrossSectionalSignalParameters",
+    "CrossSectionalSignalSkill",
+    "CrossSectionUniverseMember",
     "FundamentalSkill",
     "MarkovMethodParameters",
     "MarkovMethodSkill",

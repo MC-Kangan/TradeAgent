@@ -24,7 +24,10 @@ from trade_research.domain import (
     ReportStatus,
     ResearchReport,
 )
-from trade_research.domain.models import FactorRegressionPresentation
+from trade_research.domain.models import (
+    CrossSectionalSignalPresentation,
+    FactorRegressionPresentation,
+)
 from trade_research.domain.provenance import normalize_provider_kind
 from trade_research.projection import project_observation_value
 
@@ -119,7 +122,11 @@ def _project_result(result: AnalystResult, instrument: InstrumentId) -> AnalystR
             f"{max(0, len(result.presentation.coefficients) - 1)} fitted exposures"
             if isinstance(result.presentation, FactorRegressionPresentation)
             else (
-                f"{result.analyst} analysis {status.value} with {len(observations)} numeric factors"
+                f"{result.analyst} analysis {status.value} across "
+                f"{len(result.presentation.coverage)} assets"
+                if isinstance(result.presentation, CrossSectionalSignalPresentation)
+                else f"{result.analyst} analysis {status.value} with "
+                f"{len(observations)} numeric factors"
             )
         ),
         status=status,
@@ -406,6 +413,121 @@ def render_markdown(report: ResearchReport) -> str:
                 lines.append(
                     f"- {dataset.label}: {dataset.source}, {dataset.currency}; "
                     f"retrieved {dataset.retrieved_at}; {dataset.reference}"
+                )
+        if isinstance(result.presentation, CrossSectionalSignalPresentation):
+            cross_section = result.presentation
+            lines.extend(
+                (
+                    "",
+                    "Predictive cross-sectional research; this is not contemporaneous "
+                    "factor attribution or a trading recommendation.",
+                    f"Signal: 12-1 momentum; frequency: {cross_section.formation_frequency}; "
+                    f"currency: {cross_section.currency}; return basis: "
+                    f"{cross_section.return_basis}.",
+                    f"Universe: {cross_section.universe_mode}; ranking: "
+                    f"{cross_section.grouping}; illustrative cost: "
+                    f"{cross_section.transaction_cost_bps:.1f} bps per unit turnover.",
+                    "Scores compound months t-12 through t-2 and omit the most recent "
+                    "completed month. Entry is the next session close and exit is the "
+                    "next rebalance session close.",
+                    f"- Universe: {len(cross_section.coverage)} assets; quantiles: "
+                    f"{cross_section.quantile_count}; minimum assets: "
+                    f"{cross_section.minimum_assets}",
+                    f"- Average rank IC: {cross_section.average_rank_ic}",
+                    f"- Median rank IC: {cross_section.median_rank_ic}; "
+                    f"standard deviation: {cross_section.rank_ic_standard_deviation}",
+                    "- IC information ratio (monthly mean / monthly standard deviation): "
+                    f"{cross_section.rank_ic_information_ratio}",
+                    f"- Positive IC share: {cross_section.positive_rank_ic_fraction}; "
+                    f"block-bootstrap 95% interval: [{cross_section.rank_ic_lower_95}, "
+                    f"{cross_section.rank_ic_upper_95}]",
+                    "- Average top-minus-bottom return: "
+                    f"{cross_section.average_top_minus_bottom}",
+                    f"- Average top-quantile turnover: {cross_section.average_top_turnover}",
+                    f"- Average top return: {cross_section.average_top_return}; net: "
+                    f"{cross_section.average_net_top_return}; universe: "
+                    f"{cross_section.average_universe_return}",
+                    f"- Average top excess return: {cross_section.average_top_excess_return}",
+                    f"- Annualized net top return: {cross_section.annualized_net_top_return}; "
+                    f"universe: {cross_section.annualized_universe_return}; "
+                    f"net top volatility: {cross_section.annualized_net_top_volatility}; "
+                    f"max drawdown: {cross_section.net_top_max_drawdown}",
+                    "- Diagnostics: " + ", ".join(cross_section.diagnostics),
+                    "",
+                    "| Formation | Eligible | Rank IC | Top | Net top | Universe | "
+                    "Top-bottom | Turnover | Diagnostics |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                )
+            )
+            if cross_section.average_quantile_returns:
+                lines.extend(
+                    (
+                        "",
+                        "Average equal-weighted forward return by score quantile:",
+                        "| Quantile | Formation periods | Mean forward return |",
+                        "| ---: | ---: | ---: |",
+                    )
+                )
+                for quantile in cross_section.average_quantile_returns:
+                    lines.append(
+                        f"| {quantile.quantile} | {quantile.period_count} | "
+                        f"{quantile.mean_forward_return:.6g} |"
+                    )
+            for period in cross_section.periods:
+                lines.append(
+                    f"| {period.formation_date} | {period.eligible_asset_count} | "
+                    f"{period.rank_ic if period.rank_ic is not None else '—'} | "
+                    f"{period.top_return if period.top_return is not None else '—'} | "
+                    f"{period.net_top_return if period.net_top_return is not None else '—'} | "
+                    f"{period.universe_return if period.universe_return is not None else '—'} | "
+                    f"{period.top_minus_bottom if period.top_minus_bottom is not None else '—'} | "
+                    f"{period.top_turnover if period.top_turnover is not None else '—'} | "
+                    f"{', '.join(period.diagnostics) or 'none'} |"
+                )
+            if cross_section.segments:
+                lines.extend(
+                    (
+                        "",
+                        "Chronological development and holdout results:",
+                        "| Segment | Window | Valid periods | Purged | Mean IC | Median IC "
+                        "| ICIR | Positive IC | Top excess | Annualized net top "
+                        "| Annualized universe |",
+                        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: "
+                        "| ---: | ---: |",
+                    )
+                )
+                for segment in cross_section.segments:
+                    lines.append(
+                        f"| {segment.name} | {segment.start_date} to {segment.end_date} | "
+                        f"{segment.period_count} | {segment.purged_period_count} | "
+                        f"{segment.average_rank_ic} | "
+                        f"{segment.median_rank_ic} | {segment.rank_ic_information_ratio} | "
+                        f"{segment.positive_rank_ic_fraction} | "
+                        f"{segment.average_top_excess_return} | "
+                        f"{segment.annualized_net_top_return} | "
+                        f"{segment.annualized_universe_return} |"
+                    )
+            lines.extend(
+                (
+                    "",
+                    "Quantile returns are equal-weighted within each formation date. "
+                    "The top-minus-bottom spread is a diagnostic before costs, borrow, "
+                    "funding or market impact.",
+                    "",
+                    "| Asset | Sector | Country | Membership | Monthly periods | "
+                    "Evaluated periods |",
+                    "| --- | --- | --- | --- | ---: | ---: |",
+                )
+            )
+            for asset_coverage in cross_section.coverage:
+                lines.append(
+                    f"| {asset_coverage.instrument.market}:"
+                    f"{asset_coverage.instrument.symbol} | {asset_coverage.sector or '—'} | "
+                    f"{asset_coverage.country or '—'} | "
+                    f"{asset_coverage.member_from or '—'} to "
+                    f"{asset_coverage.member_to or 'open'} | "
+                    f"{asset_coverage.monthly_period_count} | "
+                    f"{asset_coverage.evaluated_period_count} |"
                 )
         if result.observations:
             lines.extend(

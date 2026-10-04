@@ -45,6 +45,7 @@ from trade_research.skills import (
     AssetAllocationSkill,
     BacktestingSkill,
     CorrelationAnalysisSkill,
+    CrossSectionalSignalSkill,
     FilingsSkill,
     FundamentalSkill,
     MarkovMethodSkill,
@@ -93,6 +94,7 @@ class ResearchEngine:
             tuple[ResearchSkill, ...],
             (
                 FactorRegressionSkill(),
+                CrossSectionalSignalSkill(),
                 FundamentalSkill(),
                 TechnicalSkill(),
                 FilingsSkill(),

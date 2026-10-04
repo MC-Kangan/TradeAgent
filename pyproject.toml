@@ -66,6 +66,8 @@ module = [
   "mcp.*",
   "statsmodels",
   "statsmodels.*",
+  "scipy",
+  "scipy.*",
   "exchange_calendars",
   "exchange_calendars.*",
   "pandas",
