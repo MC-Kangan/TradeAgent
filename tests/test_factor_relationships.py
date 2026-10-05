@@ -47,6 +47,9 @@ def test_relationships_match_partial_regression_and_same_sample_drop_one():
         full.rsquared - OLS(y, controls).fit().rsquared
     )
     assert rows[1].pearson == pytest.approx(np.corrcoef(x[:, 1], y)[0, 1])
+    univariate = OLS(y, np.column_stack([np.ones(len(y)), x[:, 1]])).fit()
+    assert rows[1].univariate_beta == pytest.approx(univariate.params[1])
+    assert rows[1].univariate_r_squared == pytest.approx(univariate.rsquared)
 
 
 def test_perfect_fit_partial_correlation_is_unavailable():
@@ -141,3 +144,5 @@ def test_one_factor_relationships_and_spearman_ties():
     assert row.partial_correlation == pytest.approx(row.pearson)
     assert row.incremental_r_squared == pytest.approx(row.pearson**2)
     assert row.spearman == pytest.approx(spearmanr(x[:, 0], y).statistic)
+    univariate = OLS(y, np.column_stack([np.ones(6), x[:, 0]])).fit()
+    assert row.univariate_beta == pytest.approx(univariate.params[1])

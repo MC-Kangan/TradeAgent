@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import numpy as np
 from statsmodels.regression.linear_model import OLS
+from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
+from statsmodels.stats.stattools import durbin_watson, jarque_bera
+from statsmodels.tools.sm_exceptions import SingularMatrixWarning
 
 from trade_research.domain import (
     AnalystResult,
@@ -23,6 +27,7 @@ from trade_research.domain.models import (
     FactorCoefficient,
     FactorDiagnostic,
     FactorRegressionPresentation,
+    FactorResidualDiagnostics,
     RollingFactorCorrelation,
     RollingFactorFit,
 )
@@ -40,6 +45,57 @@ from trade_research.skills.factor_parameters import (
 )
 from trade_research.skills.factor_relationships import factor_relationships, stock_correlations
 from trade_research.skills.factor_study import StudyData, StudyError, prepare_study
+
+
+def _finite_scalar(value: object) -> float | None:
+    scalar = float(np.asarray(value).item())
+    return scalar if np.isfinite(scalar) else None
+
+
+def _residual_diagnostics(
+    residuals: np.ndarray, *, lag: int, parameter_count: int, regular_spacing: bool
+) -> FactorResidualDiagnostics:
+    selected_lag = min(max(lag, 1), 10, max(1, len(residuals) // 5))
+    jb_statistic, jb_p_value, skew, kurtosis = jarque_bera(residuals)
+    values: dict[str, float | int | None] = {
+        "lag": selected_lag,
+        "durbin_watson": None,
+        "ljung_box_statistic": None,
+        "ljung_box_p_value": None,
+        "jarque_bera_statistic": _finite_scalar(jb_statistic),
+        "jarque_bera_p_value": _finite_scalar(jb_p_value),
+        "residual_skew": _finite_scalar(skew),
+        "residual_kurtosis": _finite_scalar(kurtosis),
+        "arch_lm_statistic": None,
+        "arch_lm_p_value": None,
+    }
+    if regular_spacing:
+        ljung_box = acorr_ljungbox(residuals, lags=[selected_lag], return_df=True)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", SingularMatrixWarning)
+                arch_result = het_arch(
+                    residuals,
+                    nlags=selected_lag,
+                    ddof=parameter_count,
+                    result_object=True,
+                )
+        except (SingularMatrixWarning, ValueError, np.linalg.LinAlgError):
+            arch_result = None
+        values.update(
+            {
+                "durbin_watson": _finite_scalar(durbin_watson(residuals)),
+                "ljung_box_statistic": _finite_scalar(ljung_box["lb_stat"].iloc[0]),
+                "ljung_box_p_value": _finite_scalar(ljung_box["lb_pvalue"].iloc[0]),
+                "arch_lm_statistic": (
+                    None if arch_result is None else _finite_scalar(arch_result.lm)
+                ),
+                "arch_lm_p_value": (
+                    None if arch_result is None else _finite_scalar(arch_result.lmpval)
+                ),
+            }
+        )
+    return FactorResidualDiagnostics.model_validate(values)
 
 
 def fit_study(
@@ -63,6 +119,7 @@ def fit_study(
     fit = OLS(y, standardized, missing="raise").fit(
         cov_type="HAC", cov_kwds={"maxlags": params.hac_lags, "use_correction": True}, use_t=True
     )
+    joint_test = fit.f_test(np.eye(len(fit.params))[1:])
     estimates = transform @ fit.params
     intervals = fit.t_test(transform).conf_int()
     errors = np.sqrt(np.diag(transform @ fit.cov_params() @ transform.T))
@@ -129,11 +186,6 @@ def fit_study(
     influential = int(np.sum(fit.get_influence().cooks_distance[0] > 4 / len(y)))
     if influential:
         warnings.append("influential_observations")
-    ac = (
-        float(np.corrcoef(fit.resid[:-1], fit.resid[1:])[0, 1])
-        if not data.gaps and np.std(fit.resid) > 1e-14
-        else None
-    )
     return FactorRegressionPresentation.model_validate(
         {
             **presentation.model_dump(),
@@ -151,6 +203,8 @@ def fit_study(
             ).tolist(),
             "r_squared": float(fit.rsquared),
             "adjusted_r_squared": float(fit.rsquared_adj),
+            "joint_factor_f_statistic": _finite_scalar(joint_test.fvalue),
+            "joint_factor_p_value": _finite_scalar(joint_test.pvalue),
             "residual_volatility": float(np.sqrt(fit.ssr / fit.df_resid)),
             "factor_correlations": tuple(tuple(float(v) for v in row) for row in correlation),
             "variance_inflation_factors": tuple(float(v) for v in vifs),
@@ -161,7 +215,12 @@ def fit_study(
             "residualizations": residualizations,
             "stability": stability_summary(rolling, definitions, data.intervals[-1][1]),
             "influential_count": influential,
-            "residual_autocorrelation": ac,
+            "residual_diagnostics": _residual_diagnostics(
+                np.asarray(fit.resid),
+                lag=params.hac_lags,
+                parameter_count=len(fit.params),
+                regular_spacing=not bool(data.gaps),
+            ),
             "diagnostics": tuple(warnings),
             "covariance": "withheld_irregular_spacing"
             if data.gaps

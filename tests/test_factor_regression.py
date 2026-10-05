@@ -90,19 +90,31 @@ async def test_recovers_exposures_and_exports_only_derived_results(tmp_path):
     app = application(tmp_path)
     result = await app.run_skill("factor-regression", request())
     p = result["results"][0]["presentation"]
-    assert p["schema_version"] == "factor-regression-v4"
+    assert p["schema_version"] == "factor-regression-v5"
     assert p["sample_count"] == 300
     assert [c["estimate"] for c in p["coefficients"]] == pytest.approx(
         [0.0002, 1.2, 0.4, -0.3], abs=0.02
     )
     assert p["return_mode"] == "raw_total_return"
     assert p["hac_lags"] == 5
+    assert p["joint_factor_f_statistic"] > 0
+    assert 0 <= p["joint_factor_p_value"] <= 1
+    diagnostics = p["residual_diagnostics"]
+    assert 0 <= diagnostics["durbin_watson"] <= 4
+    assert diagnostics["lag"] == 5
+    assert 0 <= diagnostics["ljung_box_p_value"] <= 1
+    assert 0 <= diagnostics["jarque_bera_p_value"] <= 1
+    assert 0 <= diagnostics["arch_lm_p_value"] <= 1
     assert all(c["lower_95"] <= c["estimate"] <= c["upper_95"] for c in p["coefficients"])
     assert len(p["inputs"]) == 5
     assert all(i["reference"].startswith("sha256:") for i in p["inputs"])
     assert "points" not in str(result) and "price_bars" not in str(result)
     markdown = app.compile_report(result["request_id"])
     assert "variance inflation factors (VIF)" in markdown
+    assert "HAC joint factor test" in markdown
+    assert "p=<0.001" in markdown
+    assert "Univariate beta" in markdown
+    assert "Residual diagnostics" in markdown
     assert "Growth minus value" in markdown
     assert "not risk-adjusted alpha" in markdown
 
@@ -110,6 +122,8 @@ async def test_recovers_exposures_and_exports_only_derived_results(tmp_path):
 @pytest.mark.asyncio
 async def test_hac_matches_statsmodels(tmp_path):
     from statsmodels.regression.linear_model import OLS
+    from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
+    from statsmodels.stats.stattools import durbin_watson, jarque_bera
 
     series = fixture_series()
     arrays = [np.array([p.value for p in s.points]) for s in series]
@@ -121,6 +135,18 @@ async def test_hac_matches_statsmodels(tmp_path):
         "presentation"
     ]
     assert [c["standard_error"] for c in p["coefficients"]] == pytest.approx(expected.bse)
+    joint = expected.f_test(np.eye(len(expected.params))[1:])
+    assert p["joint_factor_f_statistic"] == pytest.approx(float(joint.fvalue))
+    assert p["joint_factor_p_value"] == pytest.approx(float(joint.pvalue))
+    residual = expected.resid
+    diagnostics = p["residual_diagnostics"]
+    ljung_box = acorr_ljungbox(residual, lags=[5], return_df=True)
+    arch = het_arch(residual, nlags=5, ddof=len(expected.params), result_object=True)
+    jarque = jarque_bera(residual)
+    assert diagnostics["durbin_watson"] == pytest.approx(durbin_watson(residual))
+    assert diagnostics["ljung_box_p_value"] == pytest.approx(ljung_box["lb_pvalue"].iloc[0])
+    assert diagnostics["jarque_bera_p_value"] == pytest.approx(jarque[1])
+    assert diagnostics["arch_lm_p_value"] == pytest.approx(arch.lmpval)
 
 
 @pytest.mark.asyncio
@@ -133,6 +159,9 @@ async def test_aligns_return_intervals_without_bridging_a_missing_date(tmp_path)
     ][0]["presentation"]
     assert p["sample_count"] == 299
     assert p["dropped_interval_count"] >= 1
+    assert p["residual_diagnostics"]["ljung_box_p_value"] is None
+    assert p["residual_diagnostics"]["arch_lm_p_value"] is None
+    assert p["residual_diagnostics"]["jarque_bera_p_value"] is not None
 
 
 @pytest.mark.asyncio

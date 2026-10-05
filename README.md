@@ -28,6 +28,7 @@ service, Docker or LLM is needed. Cloning this backend does not include the sepa
 | Single-stock attribution | Daily/monthly French, mapped MSCI, equity/ETF and custom factor regressions; [model/data semantics](docs/factor-mvp2-implementation.md) |
 | Reusable factor sets | YAML selection, Bloomberg level baskets, unit scales, simple/log/difference transforms; [pack guide](docs/factor-yaml-packs.md) |
 | Correlated factors | Original joint model, selected residualization, ordered attribution, VIF and rolling/partial correlations; [diagnostics](docs/factor-attribution-diagnostics.md) |
+| Model checks and scenarios | Univariate-vs-joint beta, HAC joint test, residual diagnostics and editable factor-move sensitivity; [interpretation guide](docs/factor-diagnostics-scenarios.md) |
 | Cross-sectional signals | Fixed 12–1 momentum, monthly ranking, IC, quantiles, costs and chronological holdout |
 | Other research | Registered analysts below, exposed through CLI, native Python, HTTP and MCP |
 

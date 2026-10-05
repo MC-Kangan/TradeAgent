@@ -191,6 +191,16 @@ def _input_citations(observation: Observation) -> tuple[Citation, ...]:
     return tuple(citations)
 
 
+def _optional_number(value: float | None) -> str:
+    return "—" if value is None else f"{value:.4g}"
+
+
+def _optional_p_value(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return "<0.001" if value < 0.001 else f"{value:.3f}"
+
+
 def _project_observation(observation: Observation, instrument: InstrumentId) -> Observation:
     return Observation(
         instrument=instrument,
@@ -292,27 +302,64 @@ def render_markdown(report: ResearchReport) -> str:
                         "",
                         f"R-squared: {study.r_squared:.4f}; "
                         f"adjusted R-squared: {study.adjusted_r_squared:.4f}.",
+                        "HAC joint factor test: "
+                        f"F={_optional_number(study.joint_factor_f_statistic)}, "
+                        f"p={_optional_p_value(study.joint_factor_p_value)}.",
                         "Residual volatility per observed interval: "
                         f"{study.residual_volatility:.6g}.",
                         f"Standardized design condition number: {study.condition_number:.4g}.",
                     )
                 )
             if study.relationships:
+                original_joint = {
+                    coefficient.term: coefficient.estimate
+                    for coefficient in study.comparisons[0].coefficients[1:]
+                }
                 lines.extend((
                     "", "Original-input relationships on the aligned regression sample.",
                     "Partial correlations control for all other factors. Incremental R² uses "
                     "the same sample and need not add up. These are descriptive, not causal.",
-                    "| Factor | Pearson | Spearman | Partial correlation | Incremental R² |",
-                    "| --- | ---: | ---: | ---: | ---: |",
+                    "Univariate beta comes from a separate intercept-inclusive regression; "
+                    "compare it with the joint coefficient to see specification sensitivity.",
+                    "| Factor | Univariate beta | Original joint beta | Univariate R² "
+                    "| Pearson | Spearman | Partial correlation | Incremental R² |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
                 ))
                 for relationship in study.relationships:
                     cells = [
                         "—" if value is None else f"{value:.4f}"
-                        for value in (relationship.pearson, relationship.spearman,
-                                      relationship.partial_correlation,
-                                      relationship.incremental_r_squared)
+                        for value in (
+                            relationship.univariate_beta,
+                            original_joint[relationship.term],
+                            relationship.univariate_r_squared,
+                            relationship.pearson,
+                            relationship.spearman,
+                            relationship.partial_correlation,
+                            relationship.incremental_r_squared,
+                        )
                     ]
                     lines.append(f"| {relationship.label} | " + " | ".join(cells) + " |")
+            if study.residual_diagnostics is not None:
+                diagnostic = study.residual_diagnostics
+                lines.extend(
+                    (
+                        "",
+                        "Residual diagnostics (descriptive specification checks):",
+                        "| Test | Statistic | p-value | Lag |",
+                        "| --- | ---: | ---: | ---: |",
+                        f"| Durbin–Watson | {_optional_number(diagnostic.durbin_watson)} "
+                        "| — | 1 |",
+                        f"| Ljung–Box | {_optional_number(diagnostic.ljung_box_statistic)} | "
+                        f"{_optional_p_value(diagnostic.ljung_box_p_value)} | {diagnostic.lag} |",
+                        f"| Jarque–Bera | {_optional_number(diagnostic.jarque_bera_statistic)} | "
+                        f"{_optional_p_value(diagnostic.jarque_bera_p_value)} | — |",
+                        f"| ARCH LM | {_optional_number(diagnostic.arch_lm_statistic)} | "
+                        f"{_optional_p_value(diagnostic.arch_lm_p_value)} | {diagnostic.lag} |",
+                        "Lag-based tests are withheld for irregular retained dates. Small p-values "
+                        "flag model assumptions for review; they do not choose factors "
+                        "automatically.",
+                    )
+                )
             if study.factor_correlations:
                 factor_labels = tuple(labels[c.term] for c in study.coefficients[1:])
                 lines.extend(

@@ -1337,6 +1337,8 @@ class FactorStability(DomainModel):
 class FactorRelationship(DomainModel):
     term: FactorId
     label: str
+    univariate_beta: FiniteFloat
+    univariate_r_squared: FiniteFloat = Field(ge=0, le=1)
     pearson: FiniteFloat | None = Field(default=None, ge=-1, le=1)
     spearman: FiniteFloat | None = Field(default=None, ge=-1, le=1)
     partial_correlation: FiniteFloat | None = Field(default=None, ge=-1, le=1)
@@ -1350,8 +1352,21 @@ class RollingFactorCorrelation(DomainModel):
     spearman: tuple[FiniteFloat | None, ...]
 
 
+class FactorResidualDiagnostics(DomainModel):
+    lag: int = Field(ge=1, le=60)
+    durbin_watson: FiniteFloat | None = Field(default=None, ge=0, le=4)
+    ljung_box_statistic: FiniteFloat | None = Field(default=None, ge=0)
+    ljung_box_p_value: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    jarque_bera_statistic: FiniteFloat | None = Field(default=None, ge=0)
+    jarque_bera_p_value: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    residual_skew: FiniteFloat | None = None
+    residual_kurtosis: FiniteFloat | None = Field(default=None, ge=0)
+    arch_lm_statistic: FiniteFloat | None = Field(default=None, ge=0)
+    arch_lm_p_value: FiniteFloat | None = Field(default=None, ge=0, le=1)
+
+
 class FactorRegressionPresentation(DomainModel):
-    schema_version: Literal["factor-regression-v4"] = "factor-regression-v4"
+    schema_version: Literal["factor-regression-v5"] = "factor-regression-v5"
     purpose: Literal["historical_explanation"] = "historical_explanation"
     return_mode: Literal["raw_total_return", "excess_return"] = "raw_total_return"
     preset: Literal["us_etf", "msci_europe", "custom", "french"]
@@ -1373,6 +1388,8 @@ class FactorRegressionPresentation(DomainModel):
     coefficients: tuple[FactorCoefficient, ...] = Field(default=(), max_length=MAX_FACTOR_COUNT + 1)
     r_squared: FiniteFloat | None = None
     adjusted_r_squared: FiniteFloat | None = None
+    joint_factor_f_statistic: FiniteFloat | None = Field(default=None, ge=0)
+    joint_factor_p_value: FiniteFloat | None = Field(default=None, ge=0, le=1)
     residual_volatility: FiniteFloat | None = None
     condition_number: FiniteFloat | None = None
     factor_correlations: tuple[tuple[FiniteFloat, ...], ...] = Field(
@@ -1393,7 +1410,7 @@ class FactorRegressionPresentation(DomainModel):
     rolling_window: int = 252
     rolling: tuple[RollingFactorFit, ...] = Field(default=(), max_length=121)
     rolling_skipped_end_dates: tuple[date, ...] = Field(default=(), max_length=121)
-    residual_autocorrelation: FiniteFloat | None = None
+    residual_diagnostics: FactorResidualDiagnostics | None = None
     influential_count: int = 0
     original_factor_correlations: tuple[tuple[FiniteFloat, ...], ...] = Field(
         default=(), max_length=MAX_FACTOR_COUNT

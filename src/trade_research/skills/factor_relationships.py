@@ -34,6 +34,9 @@ def factor_relationships(
     pearson, spearman = stock_correlations(x, y)
     rows = []
     for i, definition in enumerate(definitions):
+        univariate = OLS(
+            y, np.column_stack([np.ones(len(y)), x[:, i]]), missing="raise"
+        ).fit()
         controls = np.delete(design, i + 1, axis=1)
         reduced = OLS(y, controls, missing="raise").fit()
         residual_factor = OLS(design[:, i + 1], controls, missing="raise").fit().resid
@@ -48,6 +51,8 @@ def factor_relationships(
             FactorRelationship(
                 term=definition.id,
                 label=definition.label,
+                univariate_beta=float(univariate.params[1]),
+                univariate_r_squared=float(univariate.rsquared),
                 pearson=pearson[i],
                 spearman=spearman[i],
                 partial_correlation=partial,
