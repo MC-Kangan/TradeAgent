@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from trade_research.factor_packs import FactorPack, load_factor_packs, transform_levels
+from trade_research.factor_packs import (
+    FactorPack,
+    load_factor_packs,
+    merge_factor_packs,
+    transform_levels,
+)
 
 
 def pack(**updates):
@@ -67,6 +72,64 @@ def test_pack_rejects_incompatible_units_and_unknown_legs():
     p["inputs"]["diesel"]["unit"] = "USD/tonne"
     with pytest.raises(ValueError, match="units"):
         FactorPack.model_validate(p)
+
+
+def test_pack_allows_factor_input_currency_to_differ_from_study_currency():
+    p = pack().model_dump()
+    p["currency"] = "EUR"
+
+    configured = FactorPack.model_validate(p)
+
+    assert configured.currency == "EUR"
+    assert configured.inputs["oil"].currency == "USD"
+
+
+def test_merge_factor_packs_combines_selected_msci_and_energy_factors():
+    energy = pack().subset({"crack"})
+    msci = FactorPack.model_validate(
+        dict(
+            id="msci",
+            label="MSCI",
+            enabled=True,
+            sources=("configured",),
+            currency="EUR",
+            calendar="weekdays",
+            inputs={
+                "market_level": dict(
+                    security="MARKET Index",
+                    field="PX_LAST",
+                    currency="EUR",
+                    unit="index_points",
+                )
+            },
+            level_factors=[
+                dict(
+                    id="market",
+                    label="MSCI market",
+                    legs={"market_level": 1},
+                    transform="simple_return",
+                )
+            ],
+        )
+    )
+
+    combined = merge_factor_packs((msci, energy), study_currency="EUR")
+
+    assert [factor.id for factor in combined.level_factors] == ["market", "crack"]
+    assert set(combined.inputs) == {"market_level", "oil", "diesel"}
+    assert combined.currency == "EUR"
+    assert combined.calendar == "weekdays"
+
+
+def test_pack_subset_preserves_declared_input_order():
+    selected = pack().subset({"crack"})
+
+    assert list(selected.inputs) == ["oil", "diesel"]
+
+
+def test_merge_factor_packs_rejects_duplicate_factor_ids():
+    with pytest.raises(ValueError, match="duplicate factor ID"):
+        merge_factor_packs((pack(), pack(id="other")), study_currency="USD")
     p = pack().model_dump()
     p["level_factors"][0]["legs"] = {"unknown": 1}
     with pytest.raises(ValueError, match="unknown"):

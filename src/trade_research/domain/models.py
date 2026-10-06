@@ -1365,6 +1365,39 @@ class FactorResidualDiagnostics(DomainModel):
     arch_lm_p_value: FiniteFloat | None = Field(default=None, ge=0, le=1)
 
 
+class FactorStudyPreviewColumn(DomainModel):
+    term: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=96)
+    unit: str = Field(min_length=1, max_length=48)
+
+
+class FactorStudyPreviewRow(DomainModel):
+    start_date: date
+    end_date: date
+    values: tuple[FiniteFloat, ...] = Field(max_length=MAX_FACTOR_COUNT + 1)
+
+
+class FactorStudyPreview(DomainModel):
+    """In-memory aligned model inputs; never embedded in a persisted research report."""
+
+    schema_version: Literal["factor-study-preview-v1"] = "factor-study-preview-v1"
+    columns: tuple[FactorStudyPreviewColumn, ...] = Field(
+        min_length=2, max_length=MAX_FACTOR_COUNT + 1
+    )
+    rows: tuple[FactorStudyPreviewRow, ...] = Field(max_length=4096)
+    inputs: tuple[FactorInputSummary, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS)
+    datasets: tuple[FactorDatasetSummary, ...] = Field(
+        default=(), max_length=MAX_FACTOR_INPUTS + 1
+    )
+    coverage: tuple[FactorCoverage, ...] = Field(default=(), max_length=MAX_FACTOR_INPUTS + 1)
+
+    @model_validator(mode="after")
+    def validate_row_width(self) -> Self:
+        if any(len(row.values) != len(self.columns) for row in self.rows):
+            raise ValueError("row values must match preview columns")
+        return self
+
+
 class FactorRegressionPresentation(DomainModel):
     schema_version: Literal["factor-regression-v5"] = "factor-regression-v5"
     purpose: Literal["historical_explanation"] = "historical_explanation"

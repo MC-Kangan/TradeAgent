@@ -16,6 +16,11 @@ from trade_research.domain import (
     ReportStatus,
     ResearchReport,
 )
+from trade_research.domain.models import (
+    FactorStudyPreview,
+    FactorStudyPreviewColumn,
+    FactorStudyPreviewRow,
+)
 from trade_research.providers import (
     CcxtPriceProvider,
     CikResolver,
@@ -31,7 +36,11 @@ from trade_research.providers import (
     SecFilingsProvider,
     YahooPriceProvider,
 )
-from trade_research.providers.factor_fx import InlineFxProvider, YahooFxProvider
+from trade_research.providers.factor_fx import (
+    BloombergFxProvider,
+    InlineFxProvider,
+    YahooFxProvider,
+)
 from trade_research.providers.factor_returns import (
     BloombergReturnProvider,
     InlineReturnProvider,
@@ -62,6 +71,7 @@ from trade_research.skills import (
     WorthBuyStocksSkill,
 )
 from trade_research.skills.factor_regression import FactorRegressionSkill
+from trade_research.skills.factor_study import prepare_study
 from trade_research.skills.parameters import PORTFOLIO_SKILLS, configure_skill
 
 
@@ -153,6 +163,44 @@ class ResearchEngine:
         for skill in self._skills.discover(selected):
             capabilities.extend(skill.required_capabilities)
         active_providers.ensure_capabilities(tuple(dict.fromkeys(capabilities)))
+
+    def factor_study_preview(self, request: AnalysisRequest) -> FactorStudyPreview:
+        """Fetch normalized aligned inputs for an ephemeral local data inspection."""
+        request = AnalysisRequest.model_validate(request.model_dump())
+        selected = self.configure_request(request)
+        if len(selected) != 1 or not isinstance(selected[0], FactorRegressionSkill):
+            raise ValueError("factor preview requires exactly one factor-regression analyst")
+        providers = self._providers_for(request)
+        self.validate_analysts(request.analysts, providers)
+        skill = selected[0]
+        params = skill.parameters.resolve_dates(skill.as_of or self._clock().date())
+        data = prepare_study(request.instrument, params, providers)
+        columns = (
+            FactorStudyPreviewColumn(
+                term="stock",
+                label=f"{request.instrument.market}:{request.instrument.symbol}",
+                unit="decimal_return",
+            ),
+            *(
+                FactorStudyPreviewColumn(term=item.id, label=item.label, unit=item.unit)
+                for item in data.definitions
+            ),
+        )
+        rows = tuple(
+            FactorStudyPreviewRow(
+                start_date=start,
+                end_date=end,
+                values=(float(data.y[index]), *(float(value) for value in data.x[index])),
+            )
+            for index, (start, end) in enumerate(data.intervals)
+        )
+        return FactorStudyPreview(
+            columns=columns,
+            rows=rows,
+            inputs=data.inputs,
+            datasets=data.datasets,
+            coverage=data.coverage,
+        )
 
     async def analyze(self, request: AnalysisRequest) -> ResearchReport:
         """Analyze one request without allowing evidence to affect selection."""
@@ -297,6 +345,7 @@ def _compose_providers(settings: Settings) -> dict[str, CapabilityProvider]:
                 port=settings.bloomberg_port,
             )
             providers["factor_returns"] = return_provider
+            providers["fx"] = BloombergFxProvider(return_provider)
             if settings.bloomberg_factor_pack and settings.bloomberg_factor_pack.level_factors:
                 providers["research_factors"] = PackFactorProvider(
                     settings.bloomberg_factor_pack, return_provider

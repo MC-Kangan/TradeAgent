@@ -85,19 +85,29 @@ def test_retryable_status_retries_before_success():
         assert get.call_count == 2
 
 
-def test_bloomberg_mapping_requires_total_returns():
+def test_bloomberg_equity_px_last_requires_adjusted_close_semantics():
     from pydantic import ValidationError
 
     from trade_research.providers.factor_returns import BloombergReturnMapping
 
+    values = dict(
+        instrument=InstrumentId(symbol="ACME", market="US"),
+        security="ACME US Equity",
+        field="PX_LAST",
+        currency="USD",
+    )
+    mapping = BloombergReturnMapping(**values, return_basis="adjusted_close_return")
+    assert mapping.field == "PX_LAST"
     with pytest.raises(ValidationError):
-        BloombergReturnMapping(
-            instrument=InstrumentId(symbol="ACME", market="US"),
-            security="ACME US Equity",
-            field="PX_LAST",
-            currency="USD",
-            return_basis="gross_total_return",
-        )
+        BloombergReturnMapping(**values, return_basis="gross_total_return")
+    index = BloombergReturnMapping(
+        instrument=InstrumentId(symbol="MSCI-EU-GTR-EUR", market="INDEX"),
+        security="MXEU Index",
+        field="PX_LAST",
+        currency="EUR",
+        return_basis="gross_total_return",
+    )
+    assert index.return_basis == "gross_total_return"
 
 
 @pytest.mark.parametrize("problem", [None, "wrong_security", "field_error"])
@@ -202,6 +212,113 @@ def test_bloomberg_correlated_historical_response(monkeypatch, problem):
         assert session.identity is identity
         assert session.request.values["fields"] == mapping.field
     assert not session.stopped
+
+
+def test_bloomberg_equity_px_last_sets_explicit_corporate_action_adjustments(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from trade_research.providers.factor_returns import (
+        BloombergReturnMapping,
+        BloombergReturnProvider,
+    )
+
+    instrument = InstrumentId(symbol="ACME", market="US")
+    mapping = BloombergReturnMapping(
+        instrument=instrument,
+        security="ACME US Equity",
+        field="PX_LAST",
+        currency="USD",
+        return_basis="adjusted_close_return",
+    )
+
+    class Request:
+        def __init__(self):
+            self.values = {}
+
+        def append(self, key, value):
+            self.values[key] = value
+
+        def set(self, key, value):
+            self.values[key] = value
+
+    class Message(dict):
+        def correlationIds(self):
+            return (session.correlation,)
+
+    class Event(list):
+        def eventType(self):
+            return 1
+
+    class Session:
+        def openService(self, _name):
+            return True
+
+        def getService(self, _name):
+            return self
+
+        def createRequest(self, _name):
+            self.request = Request()
+            return self.request
+
+        def sendRequest(self, _request, identity):
+            self.correlation = object()
+            return self.correlation
+
+        def nextEvent(self, timeout):
+            return Event(
+                [
+                    Message(
+                        securityData={
+                            "security": mapping.security,
+                            "fieldData": [
+                                {"date": "2024-01-02", "PX_LAST": 100},
+                                {"date": "2024-01-03", "PX_LAST": 101},
+                            ],
+                        }
+                    )
+                ]
+            )
+
+    session = Session()
+    monkeypatch.setitem(
+        sys.modules,
+        "blpapi",
+        SimpleNamespace(Event=SimpleNamespace(RESPONSE=1, PARTIAL_RESPONSE=2, REQUEST_STATUS=3)),
+    )
+    BloombergReturnProvider((mapping,), session=session).return_history(
+        instrument, date(2024, 1, 1), date(2024, 1, 5)
+    )
+
+    assert session.request.values["adjustmentFollowDPDF"] is False
+    assert session.request.values["adjustmentNormal"] is True
+    assert session.request.values["adjustmentAbnormal"] is True
+    assert session.request.values["adjustmentSplit"] is True
+
+
+def test_bloomberg_fx_uses_px_last_through_the_shared_historical_adapter(monkeypatch):
+    from datetime import UTC, datetime
+
+    from trade_research.providers.factor_fx import BloombergFxProvider
+    from trade_research.providers.factor_returns import BloombergReturnProvider
+
+    seen = []
+
+    def levels(self, mapping, start, end):
+        seen.append((mapping.security, mapping.field, start, end))
+        return [(date(2024, 1, 2), 1.09), (date(2024, 1, 3), 1.10)]
+
+    monkeypatch.setattr(BloombergReturnProvider, "level_history", levels)
+    series = BloombergFxProvider(BloombergReturnProvider(())).fx_history(
+        "EUR", date(2024, 1, 2), date(2024, 1, 3), "USD"
+    )
+
+    assert series.source == "bloomberg"
+    assert series.base_currency == "EUR"
+    assert series.quote_currency == "USD"
+    assert [point.value for point in series.points] == [1.09, 1.10]
+    assert seen == [("EURUSD Curncy", "PX_LAST", date(2024, 1, 2), date(2024, 1, 3))]
+    assert series.retrieved_at <= datetime.now(UTC)
 
 
 @pytest.mark.parametrize("instrument_type", ["INDEX", "CURRENCY", None])

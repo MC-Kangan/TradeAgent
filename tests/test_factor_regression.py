@@ -85,6 +85,47 @@ def application(tmp_path):
     return ResearchApplication(ResearchEngine.from_settings(), ReportStore(tmp_path))
 
 
+def test_in_memory_factor_preview_exposes_aligned_values_without_vendor_payloads():
+    preview = ResearchEngine.from_settings().factor_study_preview(request())
+
+    assert preview.schema_version == "factor-study-preview-v1"
+    assert preview.columns[0].term == "stock"
+    assert [column.term for column in preview.columns[1:]] == [
+        "market",
+        "growth_minus_value",
+        "momentum_minus_market",
+    ]
+    assert len(preview.rows) == 300
+    assert len(preview.rows[0].values) == 4
+    assert preview.inputs[0].vendor_field == "TOTAL_RETURN"
+    assert "fieldData" not in preview.model_dump_json()
+
+
+def test_factor_preview_rejects_row_width_that_does_not_match_columns():
+    from datetime import date
+
+    from pydantic import ValidationError
+
+    from trade_research.domain.models import FactorStudyPreview
+
+    with pytest.raises(ValidationError, match="row values must match preview columns"):
+        FactorStudyPreview.model_validate(
+            {
+                "columns": [
+                    {"term": "stock", "label": "Stock", "unit": "decimal_return"},
+                    {"term": "market", "label": "Market", "unit": "decimal_return"},
+                ],
+                "rows": [
+                    {
+                        "start_date": date(2024, 1, 1),
+                        "end_date": date(2024, 1, 2),
+                        "values": [0.01],
+                    }
+                ],
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_recovers_exposures_and_exports_only_derived_results(tmp_path):
     app = application(tmp_path)

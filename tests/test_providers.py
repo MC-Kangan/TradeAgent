@@ -355,9 +355,15 @@ def test_bloomberg_provider_reuses_session_and_returns_ohlcv(
     )
     assert point.source == "bloomberg"
     assert point.provenance["provider_kind"] == "bloomberg"
-    assert point.provenance["vendor_field"] == "OHLCV"
+    assert point.provenance["vendor_field"] == "PX_LAST"
+    assert point.provenance["price_adjustment"] == "split_dividend_adjusted"
     assert str(point.provenance["reference"]).startswith("sha256:")
     assert str(point.provenance["snapshot_ref"]).startswith("sha256:")
+    request = session.sendRequest.call_args.args[0]
+    assert request.values["adjustmentFollowDPDF"] is False
+    assert request.values["adjustmentNormal"] is True
+    assert request.values["adjustmentAbnormal"] is True
+    assert request.values["adjustmentSplit"] is True
 
 
 def test_bloomberg_provider_raises_on_response_error(

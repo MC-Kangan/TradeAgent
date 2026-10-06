@@ -77,8 +77,8 @@ class FactorPack(DomainModel):
             inputs = [self.inputs[key] for key in f.legs]
             if len({item.unit for item in inputs}) != 1:
                 raise ValueError("spread legs must have compatible normalized units")
-            if any(item.currency != self.currency for item in inputs):
-                raise ValueError("level inputs must match the explicit study currency")
+            if len({item.currency for item in inputs}) != 1:
+                raise ValueError("spread legs must have compatible currencies")
             if not any(f.legs.values()):
                 raise ValueError("factor legs cannot all have zero weight")
         return self
@@ -90,18 +90,59 @@ class FactorPack(DomainModel):
         )
 
     def subset(self, selected: set[str]) -> FactorPack:
+        level_factors = [f for f in self.level_factors if f.id in selected]
+        required_inputs = {key for factor in level_factors for key in factor.legs}
+        updates: dict[str, object] = {
+            "factors": [f for f in self.factors if f.id in selected],
+            "level_factors": level_factors,
+            "inputs": {key: item for key, item in self.inputs.items() if key in required_inputs},
+            "calendar": self.calendar if level_factors else None,
+            "currency": self.currency if level_factors else None,
+        }
         return FactorPack.model_validate(
-            self.model_dump()
-            | {
-                "factors": [f for f in self.factors if f.id in selected],
-                "level_factors": [f for f in self.level_factors if f.id in selected],
-                **(
-                    {}
-                    if any(f.id in selected for f in self.level_factors)
-                    else {"inputs": {}, "calendar": None, "currency": None}
-                ),
-            }
+            self.model_dump() | updates
         )
+
+
+def merge_factor_packs(
+    packs: tuple[FactorPack, ...], *, study_currency: Currency
+) -> FactorPack:
+    """Combine selected pack subsets into one bounded research panel configuration."""
+    if not packs:
+        raise ValueError("choose at least one factor pack")
+    factors = tuple(factor for pack in packs for factor in pack.factors)
+    level_factors = tuple(factor for pack in packs for factor in pack.level_factors)
+    factor_ids = [factor.id for factor in factors] + [factor.id for factor in level_factors]
+    if len(factor_ids) != len(set(factor_ids)):
+        raise ValueError("duplicate factor ID across selected packs")
+    inputs: dict[FactorId, LevelInput] = {}
+    for pack in packs:
+        for key, item in pack.inputs.items():
+            if key in inputs and inputs[key] != item:
+                raise ValueError("duplicate level input ID across selected packs")
+            inputs[key] = item
+    calendars = {pack.calendar for pack in packs if pack.level_factors}
+    if len(calendars) > 1:
+        raise ValueError("selected level packs require the same calendar")
+    sources = tuple(
+        source
+        for source in ("demo", "yahoo", "configured")
+        if all(source in pack.sources for pack in packs)
+    )
+    if not sources:
+        raise ValueError("selected factor packs have no common data source")
+    return FactorPack(
+        id="combined",
+        label="Combined factor packs",
+        enabled=all(pack.enabled for pack in packs),
+        description=" + ".join(pack.label for pack in packs),
+        sources=sources,
+        factors=factors,
+        inputs=inputs,
+        level_factors=level_factors,
+        currency=study_currency if level_factors else None,
+        calendar=next(iter(calendars)) if calendars else None,
+    )
 
 
 def load_factor_packs(directory: Path) -> dict[str, FactorPack]:

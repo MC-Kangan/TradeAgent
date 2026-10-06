@@ -124,9 +124,9 @@ Bloomberg before using it:
     {
       "instrument": {"market": "BME", "symbol": "REP"},
       "security": "REP SM Equity",
-      "field": "TOTAL_RETURN_INDEX_GROSS_DVDS",
+      "field": "PX_LAST",
       "currency": "EUR",
-      "return_basis": "gross_total_return"
+      "return_basis": "adjusted_close_return"
     }
   ]
 }
@@ -140,24 +140,35 @@ $env:FACTOR_PLAYGROUND_PACK_DIR = "C:\Research\private-config\factor_packs"
 .\.venv\Scripts\python.exe app.py --open-browser
 ```
 
-Omit the second variable to use bundled packs. Select **Configured backend** in the
-app. Dash reads process environment, not `.env`; the backend CLI separately supports
+Omit the second variable to use bundled packs. When this configuration selects
+Bloomberg, **Configured providers · Bloomberg** becomes the app default. Dash reads
+process environment, not `.env`; the backend CLI separately supports
 `.env`. JSON settings are allowlisted, and explicit environment settings override them.
 Keep credentials/session identity outside YAML and JSON examples.
 
 Host/port alone is not a universal BPIPE integration. Firm-specific authorization,
 identity and entitlements may require a dedicated authorized session injected through
 the existing adapter. Validate that integration with IT before claiming live readiness.
-Configured Bloomberg does not silently fall back to Yahoo for FX. EUR Repsol and USD
-commodities require an authorized FX provider or genuinely USD-normalized stock data;
-relabelling currency does not convert prices.
+For equity `PX_LAST`, the adapter explicitly sends `adjustmentFollowDPDF=false` and
+enables normal-dividend, abnormal-dividend and split adjustments. This avoids silently
+depending on one user's DPDF terminal preference. Confirm the resulting series against
+an equivalent BDH request on the firm terminal. Bloomberg documents that the default
+DPDF-following behavior otherwise causes the individual adjustment flags to be ignored:
+[BLPAPI Core Developer Guide](https://data.bloomberglp.com/professional/sites/10/2017/03/BLPAPI-Core-Developer-Guide.pdf).
+
+Configured Bloomberg does not silently fall back to Yahoo for FX. Required currency
+levels are requested as Bloomberg `PX_LAST` pairs such as `EURUSD Curncy`; entitlements
+and the firm's preferred quotation mappings must be validated locally. Relabelling a
+factor currency never converts it.
 
 ## Factor packs and analysis settings
 
 Follow the [YAML schema and examples](factor-yaml-packs.md). The bundled energy and
 MSCI Bloomberg templates are disabled until entitled securities, units, calendars and
-scales are verified. Enable reviewed packs and restart. Select packs in **Starting
-factor set**, then select individual factors, daily/monthly frequency and dates.
+scales are verified. Enable reviewed packs and restart. **Factor packs** accepts multiple
+selections, so MSCI and energy definitions can be combined; the following selector lets
+the analyst remove individual factors before the run. Duplicate factor IDs or incompatible
+calendars fail explicitly.
 
 Price baskets are formed after unit normalization and before `simple_return`,
 `log_return` or `difference`. Crack spreads need compatible units; generic futures

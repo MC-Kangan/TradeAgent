@@ -33,6 +33,7 @@ from trade_research.providers.remote import (
     _bloomberg_scalar,
     _http_get,
     resolve_provider_symbol,
+    set_bloomberg_equity_adjustments,
 )
 
 
@@ -144,7 +145,7 @@ class BloombergLevelMapping(DomainModel):
     security: str = Field(
         min_length=1,
         max_length=64,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9./_-]{0,40} (?:[A-Z]{2} Equity|Index|Comdty)$",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9./_-]{0,40} (?:[A-Z]{2} Equity|Index|Comdty|Curncy)$",
     )
     field: Literal["PX_LAST", "TOTAL_RETURN_INDEX_GROSS_DVDS"]
 
@@ -160,12 +161,16 @@ class BloombergReturnMapping(DomainModel):
     )
     field: Literal["PX_LAST", "TOTAL_RETURN_INDEX_GROSS_DVDS"]
     currency: str = Field(pattern=r"^[A-Z]{3}$")
-    return_basis: Literal["gross_total_return", "net_total_return"]
+    return_basis: Literal["gross_total_return", "net_total_return", "adjusted_close_return"]
 
     @model_validator(mode="after")
     def validate_field(self) -> BloombergReturnMapping:
-        if self.field == "PX_LAST" and self.instrument.market != "INDEX":
-            raise ValueError("PX_LAST is allowed only for explicitly mapped total-return indexes")
+        if (
+            self.field == "PX_LAST"
+            and self.security.endswith(" Equity")
+            and self.return_basis != "adjusted_close_return"
+        ):
+            raise ValueError("PX_LAST requires adjusted-close return semantics")
         if (
             self.field == "TOTAL_RETURN_INDEX_GROSS_DVDS"
             and self.return_basis != "gross_total_return"
@@ -205,9 +210,7 @@ class BloombergReturnProvider:
     ) -> FactorReturnSeries:
         mapping = self._mappings.get(instrument)
         if mapping is None:
-            raise ProviderConfigurationError(
-                "a verified Bloomberg total-return mapping is required"
-            )
+            raise ProviderConfigurationError("a verified Bloomberg return mapping is required")
         levels = self.level_history(mapping, start, end)
         points = returns_from_levels(levels)
         return FactorReturnSeries(
@@ -254,6 +257,7 @@ class BloombergReturnProvider:
                 request.set("startDate", (start - timedelta(days=7)).strftime("%Y%m%d"))
                 request.set("endDate", end.strftime("%Y%m%d"))
                 request.set("periodicitySelection", "DAILY")
+                set_bloomberg_equity_adjustments(request, mapping.security, mapping.field)
                 correlation = session.sendRequest(request, identity=self._identity)
                 levels: list[tuple[date, float | None]] = []
                 deadline = time.monotonic() + 30
@@ -289,7 +293,7 @@ class BloombergReturnProvider:
                             raise ProviderContractError("Bloomberg returned the wrong security")
                         if _bloomberg_rows(_bloomberg_get(security, "fieldExceptions")):
                             raise ProviderConfigurationError(
-                                "Bloomberg total-return field is unavailable"
+                                "Bloomberg return field is unavailable"
                             )
                         for row in _bloomberg_rows(_bloomberg_get(security, "fieldData")):
                             day = date.fromisoformat(

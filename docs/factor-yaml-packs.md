@@ -92,25 +92,28 @@ they are never compounded as if they were simple returns. Nonpositive basket
 levels are rejected for simple/log returns; differences allow zero and negative
 levels, which are meaningful for crack spreads.
 
-The dependent stock remains a simple total return. Choosing a log factor does not
+The dependent stock remains a simple adjusted-close return. Choosing a log factor does not
 change the target into log returns. These are explanatory regressions, and a
 coefficient on a price change has units of stock return per price unit. The model
 intercept is not risk-adjusted alpha unless a cash/excess-return model is supplied.
 Generic commodity futures may jump on contract rolls; these packs do not invent
-roll adjustments. Bloomberg total-return mappings for the stock and funded
-benchmarks remain in `TRADE_RESEARCH_CONFIG`. Credentials, identity and B-PIPE
+roll adjustments. Bloomberg `PX_LAST` mappings for equities use explicit normal-dividend,
+abnormal-dividend and split adjustments and remain in `TRADE_RESEARCH_CONFIG`.
+Credentials, identity and B-PIPE
 entitlements remain adapter/session configuration, outside the pack.
 
-For Repsol with USD commodity inputs, use a verified USD-normalized stock history
-or inject the firm's FX provider. The configured Bloomberg workflow does not
-silently fetch Yahoo FX. An EUR MSCI pack can use EUR Repsol data directly when
-return conventions, intervals and calendars align. Exact entitled MSCI identifiers
+For Repsol with USD commodity inputs, the configured Bloomberg workflow requests the
+required Bloomberg FX pair and never silently fetches Yahoo FX. Multiple enabled packs
+can be combined when their factor IDs are unique and their calendars agree; every
+spread's own legs must still share units and currency. An EUR MSCI pack can use EUR
+Repsol data directly when return conventions, intervals and calendars align. Exact entitled MSCI identifiers
 are deliberately not guessed. Disabled Bloomberg templates ship with the app.
 
 ## Backend use
 
-`load_factor_packs(Path(...))` returns validated `FactorPack` objects. Select a
-pack (or call `pack.subset(...)`), set `Settings(price_provider="bloomberg",
+`load_factor_packs(Path(...))` returns validated `FactorPack` objects. Select packs,
+call `pack.subset(...)`, and combine them with `merge_factor_packs(...)`; then set
+`Settings(price_provider="bloomberg",
 bloomberg_factor_pack=pack, bloomberg_return_mappings=...)`, and build a custom
 factor request using `pack.selected_factors()`. This composes a `PackFactorProvider`
 into the same engine used by native, HTTP and MCP entry points. The UI only selects

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from trade_research.domain.models import FxLevelPoint, FxLevelSeries
 from trade_research.providers.contracts import ProviderConfigurationError, ProviderContractError
+from trade_research.providers.factor_returns import BloombergLevelMapping, BloombergReturnProvider
 from trade_research.providers.remote import HttpGet, _http_get
 
 
@@ -48,6 +49,34 @@ class YahooFxProvider:
             )
         except (ValueError, KeyError, TypeError, IndexError, OverflowError) as error:
             raise ProviderContractError("Invalid Yahoo FX data") from error
+
+
+class BloombergFxProvider:
+    """Bloomberg PX_LAST currency levels through the shared historical adapter."""
+
+    def __init__(self, provider: BloombergReturnProvider) -> None:
+        self._provider = provider
+
+    def fx_history(
+        self, currency: str, start: date, end: date, quote_currency: str = "USD"
+    ) -> FxLevelSeries:
+        if currency == quote_currency:
+            raise ProviderConfigurationError("FX conversion requires different currencies")
+        mapping = BloombergLevelMapping(
+            security=f"{currency}{quote_currency} Curncy", field="PX_LAST"
+        )
+        levels = self._provider.level_history(mapping, start, end)
+        return FxLevelSeries(
+            base_currency=currency,
+            quote_currency=quote_currency,
+            source="bloomberg",
+            retrieved_at=datetime.now(UTC),
+            points=tuple(
+                FxLevelPoint(date=day, value=value)
+                for day, value in levels
+                if value is not None
+            ),
+        )
 
 
 class InlineFxProvider:

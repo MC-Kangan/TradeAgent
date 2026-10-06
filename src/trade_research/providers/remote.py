@@ -75,6 +75,17 @@ _BLOOMBERG_SUFFIXES = {
 }
 
 
+def set_bloomberg_equity_adjustments(request: object, security: str, field: str) -> None:
+    """Make adjusted PX_LAST semantics independent of a terminal's DPDF settings."""
+    if field != "PX_LAST" or not security.endswith(" Equity"):
+        return
+    setter = cast(Any, request).set
+    setter("adjustmentFollowDPDF", False)
+    setter("adjustmentNormal", True)
+    setter("adjustmentAbnormal", True)
+    setter("adjustmentSplit", True)
+
+
 def resolve_provider_symbol(provider: str, instrument: InstrumentId) -> str:
     """Map a validated market to one provider's bounded symbol convention."""
 
@@ -294,6 +305,7 @@ class BloombergPriceProvider:
         request.set("startDate", start.strftime("%Y%m%d"))
         request.set("endDate", today.strftime("%Y%m%d"))
         request.set("periodicitySelection", "DAILY")
+        set_bloomberg_equity_adjustments(request, ticker, "PX_LAST")
         session.sendRequest(request)
 
         raw_rows: list[dict[str, object]] = []
@@ -323,7 +335,8 @@ class BloombergPriceProvider:
                     source="bloomberg",
                     provenance={
                         "provider_kind": "bloomberg",
-                        "vendor_field": "OHLCV",
+                        "vendor_field": "PX_LAST",
+                        "price_adjustment": "split_dividend_adjusted",
                         "snapshot_ref": snapshot,
                         "reference": _canonical_reference(row),
                     },
