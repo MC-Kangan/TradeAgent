@@ -41,18 +41,28 @@ SUPPORTED_MARKETS = frozenset(
         "EU",
         "ETF",
         "EURONEXT",
+        "EURONEXT_AMSTERDAM",
+        "EURONEXT_BRUSSELS",
+        "EURONEXT_LISBON",
+        "EURONEXT_PARIS",
+        "COPENHAGEN",
+        "EURONEXT_DUBLIN",
+        "HELSINKI",
         "INDEX",
         "LSE",
         "NASDAQ",
         "NYSE",
+        "OSLO",
         "OTC",
         "PORTFOLIO",
         "SIX",
+        "STOCKHOLM",
         "SSE",
         "SZSE",
         "BJSE",
         "UK",
         "US",
+        "VIENNA",
         "XETRA",
     }
 )
@@ -282,6 +292,7 @@ Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 
 
 class FactorDefinition(DomainModel):
+    currency: Currency | None = None
     id: FactorId
     label: str = Field(min_length=1, max_length=96)
     kind: Literal["asset_return", "excess_return", "spread", "change"]
@@ -305,6 +316,7 @@ class FactorSpec(DomainModel):
     instrument: InstrumentId | None = None
     short_instrument: InstrumentId | None = None
     research_key: FactorId | None = None
+    research_source: Literal["kenneth_french", "pack"] | None = None
     calendar: str | None = Field(default=None, max_length=32)
     short_calendar: str | None = Field(default=None, max_length=32)
 
@@ -317,7 +329,11 @@ class FactorSpec(DomainModel):
                 (self.instrument, self.short_instrument, self.calendar, self.short_calendar)
             ):
                 raise ValueError("research factors require only a research key")
-        elif self.instrument is None or self.research_key is not None:
+        elif (
+            self.instrument is None
+            or self.research_key is not None
+            or self.research_source is not None
+        ):
             raise ValueError("asset factors require an instrument, not a research key")
         elif self.kind == "spread":
             if self.short_instrument is None or self.short_instrument == self.instrument:
@@ -366,7 +382,26 @@ class FactorReturnSeries(DomainModel):
         return self
 
 
+class FactorDatasetSummary(DomainModel):
+    source: ProviderKind
+    reference: OpaqueReference
+    retrieved_at: datetime
+    currency: str
+    label: str
+    observation_count: int
+
+
+class FactorCoverage(DomainModel):
+    role: str
+    expected_periods: int
+    available_periods: int
+    invalid_or_missing_periods: int
+    fx_endpoint_losses: int = 0
+    alignment_losses: int = 0
+
+
 class ResearchFactorPoint(DomainModel):
+    start_date: date | None = None
     date: date
     values: dict[FactorId, FiniteFloat] = Field(min_length=1, max_length=MAX_FACTOR_COUNT)
     risk_free: FiniteFloat | None = Field(default=None, ge=-1)
@@ -384,10 +419,14 @@ class ResearchFactorPanel(DomainModel):
     retrieved_at: datetime
     reference: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
     points: tuple[ResearchFactorPoint, ...] = Field(max_length=4096)
+    datasets: tuple[FactorDatasetSummary, ...] = Field(default=(), max_length=64)
+    coverage: tuple[FactorCoverage, ...] = Field(default=(), max_length=64)
 
     @model_validator(mode="after")
     def validate_dates(self) -> Self:
         days = [p.date for p in self.points]
+        if any(p.start_date is not None and p.start_date >= p.date for p in self.points):
+            raise ValueError("factor start must precede end")
         if self.frequency == "monthly" and any(
             d.day != calendar.monthrange(d.year, d.month)[1] for d in days
         ):
@@ -1268,24 +1307,6 @@ class RollingFactorFit(DomainModel):
     r_squared: FiniteFloat
 
 
-class FactorDatasetSummary(DomainModel):
-    source: ProviderKind
-    reference: OpaqueReference
-    retrieved_at: datetime
-    currency: str
-    label: str
-    observation_count: int
-
-
-class FactorCoverage(DomainModel):
-    role: str
-    expected_periods: int
-    available_periods: int
-    invalid_or_missing_periods: int
-    fx_endpoint_losses: int = 0
-    alignment_losses: int = 0
-
-
 class FactorModelSpec(DomainModel):
     name: str = Field(min_length=1, max_length=64)
     factor_ids: tuple[FactorId, ...] = Field(min_length=1, max_length=MAX_FACTOR_COUNT)
@@ -1366,6 +1387,7 @@ class FactorResidualDiagnostics(DomainModel):
 
 
 class FactorStudyPreviewColumn(DomainModel):
+    currency: Currency | None = None
     term: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=96)
     unit: str = Field(min_length=1, max_length=48)

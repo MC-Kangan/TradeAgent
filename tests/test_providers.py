@@ -22,6 +22,7 @@ from trade_research.providers import (
     ReadOnlySqlPriceProvider,
     SecCompanyFactsProvider,
     YahooPriceProvider,
+    parse_bloomberg_equity_identifier,
     resolve_provider_symbol,
 )
 
@@ -312,6 +313,41 @@ def test_bloomberg_symbol_resolution_for_supported_markets(
 def test_bloomberg_symbol_resolution_rejects_crypto() -> None:
     with pytest.raises(ProviderConfigurationError, match="does not support market"):
         resolve_provider_symbol("bloomberg", InstrumentId(symbol="BTC-USD", market="CRYPTO"))
+
+
+@pytest.mark.parametrize(
+    ("security", "market", "symbol", "currency", "yahoo"),
+    [
+        ("AAPL US Equity", "US", "AAPL", "USD", "AAPL"),
+        ("REP SM Equity", "BME", "REP", "EUR", "REP.MC"),
+        ("SAP GY Equity", "XETRA", "SAP", "EUR", "SAP.DE"),
+        ("SHEL LN Equity", "LSE", "SHEL", "GBP", "SHEL.L"),
+        ("TTE FP Equity", "EURONEXT_PARIS", "TTE", "EUR", "TTE.PA"),
+        ("ASML NA Equity", "EURONEXT_AMSTERDAM", "ASML", "EUR", "ASML.AS"),
+        ("DANSKE DC Equity", "COPENHAGEN", "DANSKE", "DKK", "DANSKE.CO"),
+        ("EQNR NO Equity", "OSLO", "EQNR", "NOK", "EQNR.OL"),
+        ("TELIA SS Equity", "STOCKHOLM", "TELIA", "SEK", "TELIA.ST"),
+        ("XOM UN Equity", "US", "XOM", "USD", "XOM"),
+        ("BRK/B US Equity", "US", "BRK-B", "USD", "BRK-B"),
+    ],
+)
+def test_bloomberg_equity_identifier_maps_to_provider_instrument(
+    security: str, market: str, symbol: str, currency: str, yahoo: str
+) -> None:
+    identity = parse_bloomberg_equity_identifier(security)
+
+    assert identity.security == security
+    assert identity.instrument == InstrumentId(market=market, symbol=symbol)
+    assert identity.currency == currency
+    assert resolve_provider_symbol("yahoo", identity.instrument) == yahoo
+
+
+@pytest.mark.parametrize("security", ["US:AAPL", "AAPL Equity", "AAPL XX Equity"])
+def test_bloomberg_equity_identifier_rejects_non_bloomberg_or_unknown_market(
+    security: str,
+) -> None:
+    with pytest.raises(ValueError, match="Bloomberg equity identifier"):
+        parse_bloomberg_equity_identifier(security)
 
 
 def test_bloomberg_provider_requires_optional_dependency(monkeypatch: pytest.MonkeyPatch) -> None:

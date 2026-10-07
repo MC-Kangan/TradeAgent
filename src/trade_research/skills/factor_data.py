@@ -25,6 +25,16 @@ CALENDARS = {
     "SIX": "XSWX",
     "BME": "XMAD",
     "BORSA_ITALIANA": "XMIL",
+    "EURONEXT_PARIS": "XPAR",
+    "EURONEXT_AMSTERDAM": "XAMS",
+    "EURONEXT_BRUSSELS": "XBRU",
+    "EURONEXT_LISBON": "XLIS",
+    "COPENHAGEN": "XCSE",
+    "HELSINKI": "XHEL",
+    "EURONEXT_DUBLIN": "XDUB",
+    "OSLO": "XOSL",
+    "STOCKHOLM": "XSTO",
+    "VIENNA": "XWBO",
 }
 type PeriodRows = dict[date, tuple[date, date, float]]
 

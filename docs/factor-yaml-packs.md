@@ -134,3 +134,10 @@ Focused tests cover daily/monthly transforms, missing dates, unit conversion,
 negative spreads, nonpositive log inputs, invalid YAML and engine integration with
 synthetic Bloomberg histories. Live firm Bloomberg access still requires validation
 on an entitled terminal or authorized B-PIPE session.
+
+## Combining with Fama–French
+
+Fama–French and enabled Bloomberg level packs can be selected together. See
+[panel composition](factor-panel-composition.md) for currency meanings, interval
+alignment, cash treatment and source coverage. Bloomberg price-change drivers keep
+their quotation units; the dependent stock uses USD excess returns in a French model.

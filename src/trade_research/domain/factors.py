@@ -18,7 +18,13 @@ FRENCH_DEFINITIONS = tuple(
 def preset_factors(preset: str) -> tuple[FactorSpec, ...]:
     if preset == "french":
         return tuple(
-            FactorSpec(id=d.id, label=d.label, kind="research", research_key=d.id)
+            FactorSpec(
+                id=d.id,
+                label=d.label,
+                kind="research",
+                research_key=d.id,
+                research_source="kenneth_french",
+            )
             for d in FRENCH_DEFINITIONS
         )
     if preset == "us_etf":

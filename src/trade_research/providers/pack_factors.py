@@ -11,6 +11,15 @@ class PackFactorProvider:
     def __init__(self, pack: FactorPack, provider: BloombergReturnProvider) -> None:
         self._pack, self._provider = pack, provider
 
+    @property
+    def factor_ids(self) -> frozenset[str]:
+        return frozenset(f.id for f in self._pack.level_factors)
+
+    def selected(self, keys: frozenset[str]) -> "PackFactorProvider":
+        if not keys <= {f.id for f in self._pack.level_factors}:
+            raise ValueError("requested Bloomberg factor columns are unavailable")
+        return PackFactorProvider(self._pack.subset(set(keys)), self._provider)
+
     def research_factors(
         self, region: FactorRegion, frequency: FactorFrequency, start: date, end: date
     ) -> ResearchFactorPanel:

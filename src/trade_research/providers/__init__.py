@@ -38,9 +38,11 @@ from trade_research.providers.local import (
 )
 from trade_research.providers.registry import CapabilityName, ProviderRegistry
 from trade_research.providers.remote import (
+    BloombergEquityIdentifier,
     BloombergPriceProvider,
     CcxtPriceProvider,
     YahooPriceProvider,
+    parse_bloomberg_equity_identifier,
     resolve_provider_symbol,
 )
 from trade_research.providers.sec import (
@@ -53,6 +55,7 @@ __all__ = [
     "FactorReturnProvider",
     "BloombergReturnMapping",
     "BloombergReturnProvider",
+    "BloombergEquityIdentifier",
     "InlineReturnProvider",
     "YahooReturnProvider",
     "CcxtPriceProvider",
@@ -89,5 +92,6 @@ __all__ = [
     "SecCompanyFactsProvider",
     "SecFilingsProvider",
     "YahooPriceProvider",
+    "parse_bloomberg_equity_identifier",
     "resolve_provider_symbol",
 ]

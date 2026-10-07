@@ -16,11 +16,13 @@ from trade_research.domain import (
     ReportStatus,
     ResearchReport,
 )
+from trade_research.domain.factors import FRENCH_DEFINITIONS
 from trade_research.domain.models import (
     FactorStudyPreview,
     FactorStudyPreviewColumn,
     FactorStudyPreviewRow,
 )
+from trade_research.factor_monitor import FactorMonitorSnapshot, monitor_snapshot
 from trade_research.providers import (
     CcxtPriceProvider,
     CikResolver,
@@ -36,6 +38,8 @@ from trade_research.providers import (
     SecFilingsProvider,
     YahooPriceProvider,
 )
+from trade_research.providers.contracts import ResearchFactorProvider
+from trade_research.providers.factor_composition import CompositeResearchFactorProvider
 from trade_research.providers.factor_fx import (
     BloombergFxProvider,
     InlineFxProvider,
@@ -70,6 +74,7 @@ from trade_research.skills import (
     VolatilityRegimeSkill,
     WorthBuyStocksSkill,
 )
+from trade_research.skills.factor_parameters import FactorRegressionParameters
 from trade_research.skills.factor_regression import FactorRegressionSkill
 from trade_research.skills.factor_study import prepare_study
 from trade_research.skills.parameters import PORTFOLIO_SKILLS, configure_skill
@@ -164,6 +169,20 @@ class ResearchEngine:
             capabilities.extend(skill.required_capabilities)
         active_providers.ensure_capabilities(tuple(dict.fromkeys(capabilities)))
 
+    def factor_monitor_snapshot(self, request: AnalysisRequest) -> FactorMonitorSnapshot:
+        """Return the latest aligned close with betas fitted strictly before that interval."""
+        request = AnalysisRequest.model_validate(request.model_dump())
+        selected = self.configure_request(request)
+        if len(selected) != 1 or not isinstance(selected[0], FactorRegressionSkill):
+            raise ValueError("monitor requires exactly one factor-regression analyst")
+        skill = selected[0]
+        params = skill.parameters.resolve_dates(skill.as_of or self._clock().date())
+        if params.frequency != "daily" or params.attribution_rules():
+            raise ValueError("monitor requires daily original-factor attribution")
+        providers = self._providers_for(request)
+        self.validate_analysts(request.analysts, providers)
+        return monitor_snapshot(prepare_study(request.instrument, params, providers), params)
+
     def factor_study_preview(self, request: AnalysisRequest) -> FactorStudyPreview:
         """Fetch normalized aligned inputs for an ephemeral local data inspection."""
         request = AnalysisRequest.model_validate(request.model_dump())
@@ -180,9 +199,12 @@ class ResearchEngine:
                 term="stock",
                 label=f"{request.instrument.market}:{request.instrument.symbol}",
                 unit="decimal_return",
+                currency=data.currency,
             ),
             *(
-                FactorStudyPreviewColumn(term=item.id, label=item.label, unit=item.unit)
+                FactorStudyPreviewColumn(
+                    term=item.id, label=item.label, unit=item.unit, currency=item.currency
+                )
                 for item in data.definitions
             ),
         )
@@ -287,19 +309,44 @@ class ResearchEngine:
         return await self._run_skill(skill, request, providers)
 
     def _providers_for(self, request: AnalysisRequest) -> ProviderRegistry:
-        if not any(
-            (
-                request.price_series,
-                request.outcome_series,
-                request.factor_series,
-                request.research_factors,
-                request.fx_series,
-            )
-        ):
-            return self._providers
         providers: dict[str, CapabilityProvider] = {
             name.value: provider for name, provider in self._providers.providers.items()
         }
+        research = providers.get("research_factors")
+        if (
+            request.research_factors is None
+            and "factor-regression" in request.analysts
+            and isinstance(research, PackFactorProvider)
+        ):
+            params = FactorRegressionParameters.model_validate(
+                request.skill_parameters.get("factor-regression", {})
+            )
+            keys = frozenset(
+                f.research_key for f in params.selected_factors() if f.research_key is not None
+            )
+            french_keys = frozenset(
+                f.research_key
+                for f in params.selected_factors()
+                if f.research_source != "pack"
+                and f.research_key in {d.id for d in FRENCH_DEFINITIONS}
+            )
+            explicit_pack_keys = {
+                f.research_key
+                for f in params.selected_factors()
+                if f.research_source == "pack" and f.research_key is not None
+            }
+            if french_keys & explicit_pack_keys:
+                raise ValueError("Selected research keys conflict; give pack factors unique IDs")
+            pack_keys = keys - french_keys
+            if french_keys or params.return_mode == "excess_return":
+                sources: list[tuple[ResearchFactorProvider, frozenset[str]]] = [
+                    (FrenchFactorProvider(), french_keys or frozenset({"market_excess"}))
+                ]
+                if pack_keys:
+                    sources.append((research.selected(pack_keys), pack_keys))
+                providers["research_factors"] = CompositeResearchFactorProvider(tuple(sources))
+            elif pack_keys:
+                providers["research_factors"] = research.selected(pack_keys)
         if request.research_factors is not None:
             providers["research_factors"] = InlineResearchFactorProvider(request.research_factors)
         if request.fx_series:

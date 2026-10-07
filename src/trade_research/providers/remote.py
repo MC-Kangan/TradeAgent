@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import ModuleType
 from typing import Any, cast
@@ -42,14 +44,24 @@ _YAHOO_SUFFIXES = {
     "AIM": ".L",
     "EU": ".PA",
     "EURONEXT": ".PA",
+    "EURONEXT_AMSTERDAM": ".AS",
+    "EURONEXT_BRUSSELS": ".BR",
+    "EURONEXT_LISBON": ".LS",
+    "EURONEXT_PARIS": ".PA",
+    "COPENHAGEN": ".CO",
+    "EURONEXT_DUBLIN": ".IR",
+    "HELSINKI": ".HE",
     "INDEX": "",
+    "OSLO": ".OL",
     "XETRA": ".DE",
     "BME": ".MC",
     "BORSA_ITALIANA": ".MI",
     "SIX": ".SW",
+    "STOCKHOLM": ".ST",
     "SSE": ".SS",
     "SZSE": ".SZ",
     "BJSE": ".BJ",
+    "VIENNA": ".VI",
 }
 
 _BLOOMBERG_SUFFIXES = {
@@ -64,15 +76,82 @@ _BLOOMBERG_SUFFIXES = {
     "AIM": " LN Equity",
     "EU": " EB Equity",
     "EURONEXT": " NA Equity",
+    "EURONEXT_AMSTERDAM": " NA Equity",
+    "EURONEXT_BRUSSELS": " BB Equity",
+    "EURONEXT_LISBON": " PL Equity",
+    "EURONEXT_PARIS": " FP Equity",
+    "COPENHAGEN": " DC Equity",
+    "EURONEXT_DUBLIN": " ID Equity",
+    "HELSINKI": " FH Equity",
     "INDEX": " Index",
+    "OSLO": " NO Equity",
     "XETRA": " GY Equity",
     "BME": " SM Equity",
     "BORSA_ITALIANA": " IM Equity",
     "SIX": " SW Equity",
+    "STOCKHOLM": " SS Equity",
     "SSE": " CH Equity",
     "SZSE": " CH Equity",
     "BJSE": " CH Equity",
+    "VIENNA": " AV Equity",
 }
+
+_BLOOMBERG_EQUITY_EXCHANGES = {
+    "US": ("US", "USD"),
+    "UA": ("US", "USD"),
+    "UN": ("US", "USD"),
+    "UQ": ("US", "USD"),
+    "UW": ("US", "USD"),
+    "LN": ("LSE", "GBP"),
+    "GY": ("XETRA", "EUR"),
+    "SM": ("BME", "EUR"),
+    "IM": ("BORSA_ITALIANA", "EUR"),
+    "SW": ("SIX", "CHF"),
+    "FP": ("EURONEXT_PARIS", "EUR"),
+    "NA": ("EURONEXT_AMSTERDAM", "EUR"),
+    "BB": ("EURONEXT_BRUSSELS", "EUR"),
+    "PL": ("EURONEXT_LISBON", "EUR"),
+    "DC": ("COPENHAGEN", "DKK"),
+    "FH": ("HELSINKI", "EUR"),
+    "ID": ("EURONEXT_DUBLIN", "EUR"),
+    "NO": ("OSLO", "NOK"),
+    "SS": ("STOCKHOLM", "SEK"),
+    "AV": ("VIENNA", "EUR"),
+}
+_BLOOMBERG_EQUITY_PATTERN = re.compile(
+    r"(?P<symbol>[A-Za-z0-9][A-Za-z0-9./=^-]{0,31}) (?P<exchange>[A-Za-z]{2}) Equity"
+)
+
+
+@dataclass(frozen=True)
+class BloombergEquityIdentifier:
+    security: str
+    instrument: InstrumentId
+    currency: str
+
+
+def parse_bloomberg_equity_identifier(value: str) -> BloombergEquityIdentifier:
+    """Normalize a bounded Bloomberg equity security for Bloomberg and public adapters."""
+    candidate = value.strip()
+    match = _BLOOMBERG_EQUITY_PATTERN.fullmatch(candidate)
+    if match is None:
+        raise ValueError("Use a Bloomberg equity identifier such as REP SM Equity")
+    exchange = match.group("exchange").upper()
+    try:
+        market, currency = _BLOOMBERG_EQUITY_EXCHANGES[exchange]
+    except KeyError as error:
+        raise ValueError("Bloomberg equity identifier uses an unsupported exchange code") from error
+    vendor_symbol = match.group("symbol").upper()
+    canonical_symbol = vendor_symbol.replace("/", "-")
+    try:
+        instrument = InstrumentId(market=market, symbol=canonical_symbol)
+    except ValueError as error:
+        raise ValueError("Bloomberg equity identifier contains an unsupported symbol") from error
+    return BloombergEquityIdentifier(
+        security=f"{vendor_symbol} {exchange} Equity",
+        instrument=instrument,
+        currency=currency,
+    )
 
 
 def set_bloomberg_equity_adjustments(request: object, security: str, field: str) -> None:

@@ -703,3 +703,7 @@ Run an offline European example with
 
 Sector-independent [model comparison and attribution](docs/factor-model-comparison.md)
 includes an offline European energy illustration: `.venv/bin/python examples/factor_model_comparison.py`.
+
+
+See [Watchlist attribution](docs/watchlist-attribution.md) for the separate Factor Playground
+monitoring tab, daily attribution conventions, refresh behaviour and limitations.

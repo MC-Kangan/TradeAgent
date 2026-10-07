@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from trade_research.domain.factors import preset_factors
+from trade_research.domain.factors import FRENCH_DEFINITIONS, preset_factors
 from trade_research.domain.models import (
     MAX_FACTOR_COUNT,
     DomainModel,
@@ -54,7 +54,17 @@ class FactorRegressionParameters(DomainModel):
                     ("rolling_window", 60),
                 ):
                     values.setdefault(name, value)
-            if values.get("preset") == "french":
+            french_keys = {d.id for d in FRENCH_DEFINITIONS}
+            factors = values.get("factors") or ()
+            uses_french = any(
+                (f.research_key if isinstance(f, FactorSpec) else f.get("research_key"))
+                in french_keys
+                for f in factors
+                if isinstance(f, FactorSpec | dict)
+                and (f.research_source if isinstance(f, FactorSpec) else f.get("research_source"))
+                != "pack"
+            )
+            if values.get("preset") == "french" or uses_french:
                 values.setdefault("return_mode", "excess_return")
         return values
 

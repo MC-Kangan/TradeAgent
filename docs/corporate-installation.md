@@ -146,6 +146,14 @@ process environment, not `.env`; the backend CLI separately supports
 `.env`. JSON settings are allowlisted, and explicit environment settings override them.
 Keep credentials/session identity outside YAML and JSON examples.
 
+The app accepts Bloomberg equity identifiers for stocks in every data-source mode, for
+example `REP SM Equity`, `AAPL US Equity`, `SAP GY Equity`, `SHEL LN Equity`,
+`TTE FP Equity` and `ASML NA Equity`. Bloomberg receives the exact entered identifier.
+Yahoo studies translate the supported exchange code to the corresponding public ticker
+suffix, such as `REP.MC`, `SAP.DE`, `SHEL.L`, `TTE.PA` or `ASML.AS`. This translation
+does not resolve vendor-specific root-symbol differences; use a verified supported
+identifier and inspect the data before relying on the result.
+
 Host/port alone is not a universal BPIPE integration. Firm-specific authorization,
 identity and entitlements may require a dedicated authorized session injected through
 the existing adapter. Validate that integration with IT before claiming live readiness.

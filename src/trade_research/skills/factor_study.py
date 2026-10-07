@@ -155,14 +155,17 @@ def prepare_study(
     if params.frequency == "daily":
         common = {day for day in common if len({r[day][:2] for r in rows.values()}) == 1}
     if panel:
-        datasets.append(
-            FactorDatasetSummary(
-                source=panel.source,
-                reference=panel.reference,
-                retrieved_at=panel.retrieved_at,
-                currency=panel.currency,
-                label="Research factors",
-                observation_count=len(panel.points),
+        datasets.extend(
+            panel.datasets
+            or (
+                FactorDatasetSummary(
+                    source=panel.source,
+                    reference=panel.reference,
+                    retrieved_at=panel.retrieved_at,
+                    currency=panel.currency,
+                    label="Research factors",
+                    observation_count=len(panel.points),
+                ),
             )
         )
         common &= factor_points.keys()
@@ -174,8 +177,14 @@ def prepare_study(
             except ValueError as error:
                 raise StudyError("calendar_unavailable", "normalize") from error
             prior = dict(zip(dates[1:], dates[:-1], strict=True))
-            common = {d for d in common if rows[instrument][d][0] == prior.get(d)}
-        if panel.source.value == "kenneth_french":
+            common = {
+                d
+                for d in common
+                if rows[instrument][d][0] == (factor_points[d].start_date or prior.get(d))
+            }
+        if panel.source.value == "kenneth_french" or any(
+            item.source.value == "kenneth_french" for item in panel.datasets
+        ):
             warnings.extend(("research_data_revised", "return_convention_difference"))
         if factor_points and max(factor_points) < end - timedelta(
             days=7 if params.frequency == "daily" else 32
@@ -196,6 +205,11 @@ def prepare_study(
         )
         for asset, p in prepared.items()
     )
+    if panel and panel.coverage:
+        coverage += tuple(
+            c.model_copy(update={"alignment_losses": c.available_periods - len(days)})
+            for c in panel.coverage
+        )
     if any(
         c.invalid_or_missing_periods or c.fx_endpoint_losses or c.alignment_losses for c in coverage
     ):

@@ -85,7 +85,10 @@ class FactorPack(DomainModel):
 
     def selected_factors(self) -> tuple[FactorSpec, ...]:
         return self.factors + tuple(
-            FactorSpec(id=f.id, label=f.label, kind="research", research_key=f.id)
+            FactorSpec(
+                id=f.id, label=f.label, kind="research", research_key=f.id,
+                research_source="pack",
+            )
             for f in self.level_factors
         )
 
@@ -222,6 +225,7 @@ def transform_levels(
         definitions.append(
             FactorDefinition(
                 id=factor.id,
+                currency=pack.inputs[next(iter(factor.legs))].currency,
                 label=factor.label,
                 kind="change",
                 unit=unit
@@ -263,7 +267,10 @@ def transform_levels(
             rows[factor.id][label] = value
     common = sorted(set.intersection(*(set(row) for row in rows.values())))
     points = tuple(
-        ResearchFactorPoint(date=day, values={key: row[day] for key, row in rows.items()})
+        ResearchFactorPoint(
+            date=day, start_date=periods[day][0],
+            values={key: row[day] for key, row in rows.items()}
+        )
         for day in common
     )
     digest = hashlib.sha256(pack.model_dump_json().encode())
