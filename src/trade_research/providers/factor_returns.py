@@ -10,6 +10,7 @@ import math
 import threading
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import quote
@@ -76,6 +77,14 @@ class InlineReturnProvider:
         return self._series[instrument]
 
 
+@dataclass(frozen=True)
+class YahooPriceHistory:
+    adjusted: tuple[tuple[date, float | None], ...]
+    currency: str
+    quotation: str
+    symbol: str
+
+
 class YahooReturnProvider:
     """Daily dividend-adjusted close returns, separate from execution OHLCV."""
 
@@ -85,6 +94,22 @@ class YahooReturnProvider:
     def return_history(
         self, instrument: InstrumentId, start: date, end: date
     ) -> FactorReturnSeries:
+        history = self.price_history(instrument, start, end)
+        points = returns_from_levels(history.adjusted)
+        return FactorReturnSeries(
+            instrument=instrument,
+            currency=history.currency,
+            return_basis="adjusted_close_return",
+            source="yahoo",
+            vendor_field="ADJ_CLOSE",
+            retrieved_at=datetime.now(UTC),
+            points=tuple(p for p in points if start <= p.start_date and p.end_date <= end),
+        )
+
+    def price_history(
+        self, instrument: InstrumentId, start: date, end: date
+    ) -> YahooPriceHistory:
+        """Vendor levels for ephemeral inspection, before currency conversion."""
         if instrument.market in {"EU", "EURONEXT", "CRYPTO", "PORTFOLIO"}:
             raise ProviderConfigurationError(
                 "factor returns require a precise supported equity venue"
@@ -123,16 +148,8 @@ class YahooReturnProvider:
                 (datetime.fromtimestamp(float(t), timezone).date(), None if v is None else float(v))
                 for t, v in zip(timestamps, adjusted, strict=True)
             ]
-            points = returns_from_levels(levels)
-            return FactorReturnSeries(
-                instrument=instrument,
-                currency=currency,
-                return_basis="adjusted_close_return",
-                source="yahoo",
-                vendor_field="ADJ_CLOSE",
-                retrieved_at=datetime.now(UTC),
-                points=tuple(p for p in points if start <= p.start_date and p.end_date <= end),
-            )
+            returns_from_levels(levels)  # Validate bounded, ordered observations.
+            return YahooPriceHistory(tuple(levels), currency, meta["currency"], symbol)
         except (KeyError, IndexError, TypeError, ValueError, OverflowError) as error:
             raise ProviderContractError(
                 "Yahoo returned invalid adjusted-close history or metadata"
@@ -222,6 +239,44 @@ class BloombergReturnProvider:
             retrieved_at=datetime.now(UTC),
             points=tuple(p for p in points if start <= p.start_date and p.end_date <= end),
         )
+
+    def level_histories(
+        self,
+        mappings: Sequence[BloombergReturnMapping | BloombergLevelMapping],
+        start: date,
+        end: date,
+    ) -> tuple[list[tuple[date, float | None]], ...]:
+        """Read several histories through one Bloomberg session.
+
+        Requests remain sequential because Desktop API event streams are stateful, but
+        session startup and authentication are shared across the inspection batch.
+        """
+        if self._session is not None:
+            return tuple(self.level_history(mapping, start, end) for mapping in mappings)
+        try:
+            import blpapi
+        except ImportError as error:
+            raise OptionalProviderDependencyError(
+                "Bloomberg requires the optional blpapi dependency"
+            ) from error
+        options = blpapi.SessionOptions()
+        options.setServerHost(self._host)
+        options.setServerPort(self._port)
+        session = blpapi.Session(options)
+        if not session.start():
+            session.stop()
+            raise ProviderConfigurationError("Bloomberg session could not start")
+        shared = BloombergReturnProvider(
+            tuple(self._mappings.values()),
+            host=self._host,
+            port=self._port,
+            session=session,
+            identity=self._identity,
+        )
+        try:
+            return tuple(shared.level_history(mapping, start, end) for mapping in mappings)
+        finally:
+            session.stop()
 
     def level_history(
         self, mapping: BloombergReturnMapping | BloombergLevelMapping, start: date, end: date

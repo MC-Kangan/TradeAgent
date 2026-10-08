@@ -22,6 +22,8 @@ with IT before transfer. Windows/live Bloomberg acceptance still needs to run at
 For an interactive factor workflow, keep the standalone **FactorPlayground** repository
 next to this checkout and follow its README. It imports this package directly; no HTTP
 service, Docker or LLM is needed. Cloning this backend does not include the separate app.
+When integrating the published repositories with company code, follow the
+[GitHub merge guide](docs/github-merge-guide.md) and merge the backend first.
 
 | Workflow | Current functionality / guide |
 |---|---|

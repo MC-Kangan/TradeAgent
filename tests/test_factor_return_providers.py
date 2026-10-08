@@ -69,6 +69,18 @@ def test_missing_level_breaks_return_chain():
     assert points[0].start_date == date(2024, 1, 4)
 
 
+def test_price_inspection_retains_native_quotation_and_gaps():
+    data = payload()
+    data["chart"]["result"][0]["meta"]["currency"] = "GBp"
+    data["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"] = [100, None, 102]
+    history = YahooReturnProvider(http_get=lambda *_: json.dumps(data)).price_history(
+        InstrumentId(symbol="ACME", market="US"), date(2024, 1, 1), date(2024, 1, 10)
+    )
+    assert history.quotation == "GBp"
+    assert history.currency == "GBP"
+    assert [value for _, value in history.adjusted] == [100, None, 102]
+
+
 def test_retryable_status_retries_before_success():
     req = httpx.Request("GET", "https://example.com")
     with (
@@ -294,6 +306,65 @@ def test_bloomberg_equity_px_last_sets_explicit_corporate_action_adjustments(mon
     assert session.request.values["adjustmentNormal"] is True
     assert session.request.values["adjustmentAbnormal"] is True
     assert session.request.values["adjustmentSplit"] is True
+
+
+def test_bloomberg_level_batch_reuses_one_owned_session(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from trade_research.providers.factor_returns import (
+        BloombergLevelMapping,
+        BloombergReturnProvider,
+    )
+
+    sessions = []
+
+    class SessionOptions:
+        def setServerHost(self, _host):
+            pass
+
+        def setServerPort(self, _port):
+            pass
+
+    class Session:
+        def __init__(self, _options):
+            self.started = 0
+            self.stopped = 0
+            sessions.append(self)
+
+        def start(self):
+            self.started += 1
+            return True
+
+        def stop(self):
+            self.stopped += 1
+
+    seen_sessions = []
+
+    def level_history(self, mapping, start, end):
+        seen_sessions.append(self._session)
+        return [(start, 1.0), (end, 2.0)]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "blpapi",
+        SimpleNamespace(SessionOptions=SessionOptions, Session=Session),
+    )
+    monkeypatch.setattr(BloombergReturnProvider, "level_history", level_history)
+    mappings = (
+        BloombergLevelMapping(security="CO1 Comdty", field="PX_LAST"),
+        BloombergLevelMapping(security="QS1 Comdty", field="PX_LAST"),
+    )
+
+    result = BloombergReturnProvider(()).level_histories(
+        mappings, date(2024, 1, 1), date(2024, 1, 5)
+    )
+
+    assert len(result) == 2
+    assert len(sessions) == 1
+    assert sessions[0].started == 1
+    assert sessions[0].stopped == 1
+    assert seen_sessions == [sessions[0], sessions[0]]
 
 
 def test_bloomberg_fx_uses_px_last_through_the_shared_historical_adapter(monkeypatch):
